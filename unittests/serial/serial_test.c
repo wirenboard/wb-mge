@@ -140,6 +140,7 @@ static void init_default_config(serial_config_t *config)
     config->parity = UART_PARITY_DISABLE;
     config->stopbits = UART_STOP_BITS_2;
     config->databits = UART_DATA_8_BITS;
+    config->mode = UART_MODE_RS485_HALF_DUPLEX;
 }
 
 static void verify_uart_driver_install_args(void)
@@ -793,6 +794,38 @@ void test_serial_init_success_no_task_execution(void)
     verify_task_created();
     verify_xEventGroupWaitBits_args(0, EVENT_TASK_STARTED, pdFALSE, pdTRUE, portMAX_DELAY);
     verify_malloc_tracking(1, 0);
+}
+
+// The UART mode comes from serial_config_t, not from a constant compiled into serial.c:
+// a port with no RS-485 transceiver (the WBE2 bus inside a WB-MGU) must be opened as a
+// plain full-duplex UART, where there is nothing for direction control to switch.
+void test_serial_init_uart_mode_comes_from_config(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test serial_init passes the configured UART mode through");
+    LOG_MESSAGE();
+
+    serial_config_t config;
+    init_default_config(&config);
+    config.mode = UART_MODE_UART;
+
+    mock_xEventGroupWaitBits_data.return_value = EVENT_TASK_STARTED;
+
+    serial_desc_t *desc = serial_init(&config, mock_receive_handler);
+
+    TEST_ASSERT_NOT_NULL_MESSAGE(desc, "serial_init should return non-NULL descriptor on success");
+    TEST_ASSERT_EQUAL_MESSAGE(
+        UART_NUM_1,
+        mock_uart_set_mode_data.uart_num,
+        "uart_set_mode should be called with correct UART port number"
+    );
+    TEST_ASSERT_EQUAL_MESSAGE(
+        UART_MODE_UART,
+        mock_uart_set_mode_data.mode,
+        "uart_set_mode should be called with the mode taken from serial_config_t"
+    );
+    // The pin routing, direction pin included, is untouched by the mode.
+    verify_uart_set_pin_args(GPIO_NUM_10, GPIO_NUM_9, GPIO_NUM_4);
 }
 
 // Test serial_init initialization with task execution and EVENT_TASK_EXIT_REQ event,
@@ -2438,6 +2471,7 @@ int main(void)
     RUN_TEST(test_serial_init_task_create_failure);
 
     RUN_TEST(test_serial_init_success_no_task_execution);
+    RUN_TEST(test_serial_init_uart_mode_comes_from_config);
     RUN_TEST(test_serial_init_success_with_task_execution_no_uart_event);
 
     RUN_TEST(test_serial_init_success_with_uart_data_event_tout);

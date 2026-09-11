@@ -7,6 +7,7 @@
 #include "settings_update.h"
 #include "settings_save_timer.h"
 #include "rs485_control.h"
+#include "airzone_gw.h"
 
 #include <esp_log.h>
 #include <esp_system.h>
@@ -31,6 +32,7 @@ static const char *TAG = "cmd_handler";
 typedef enum {
     CMD_REBOOT,
     CMD_SET_DEFAULT_SETTINGS,
+    CMD_ZWAVE_INCLUDE,
 } cmd_code_t;
 
 typedef struct {
@@ -42,6 +44,7 @@ typedef struct {
 static const cmd_t available_commands[] = {
     {CMD_REBOOT, "reboot", "Restart the device"},
     {CMD_SET_DEFAULT_SETTINGS, "set_default_settings", "Reset all settings to factory defaults"},
+    {CMD_ZWAVE_INCLUDE, "zwave_include", "Ask the Z-Wave board to enter inclusion mode"},
 };
 
 static void reboot_task(void *pvParameters)
@@ -116,15 +119,46 @@ static esp_err_t cmd_execute(int cmd_code)
         cmd_reboot_device();
         break;
 
-    case CMD_SET_DEFAULT_SETTINGS:
+    /* setting_items_set_defaults() rewrites every stored key, the two Airzone counters
+     * included — and those must not move. The Z-Wave board reads ANY difference from the
+     * value it last read as exactly one event, so a counter put back to 0 here would, after
+     * the next reboot, look like an inclusion request nobody made. They are captured before
+     * the reset and written back after it, leaving NVS and the RAM copies in step.
+     *
+     * The four Airzone SETTINGS are the opposite case: they really did change, so the board
+     * has to be told. The values are reloaded first and the settings counter moves once
+     * afterwards — the same values-then-counter order the POST /settings path keeps, because
+     * the board reads the four registers only in the instant the counter changes. */
+    case CMD_SET_DEFAULT_SETTINGS: {
         settings_save_timer_auto_init();
         settings_save_timer_wait();
+
+        int airzone_incl_cnt = setting_items_read_int(KEY_AIRZONE_INCL_CNT);
+        int airzone_set_cnt  = setting_items_read_int(KEY_AIRZONE_SET_CNT);
+
         if (setting_items_set_defaults(false) != ESP_OK) {
             result = ESP_FAIL;
         } else {
+            if (setting_items_save_int(KEY_AIRZONE_INCL_CNT, airzone_incl_cnt) != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to preserve the Z-Wave inclusion counter across the reset");
+            }
+            if (setting_items_save_int(KEY_AIRZONE_SET_CNT, airzone_set_cnt) != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to preserve the Airzone settings counter across the reset");
+            }
+            airzone_gw_reload_settings();
+            airzone_gw_inc_settings_counter();
             settings_update();
             ESP_LOGI(TAG, "All default settings applied successfully");
         }
+        break;
+    }
+
+    /* The request travels to the Z-Wave board as a counter and not as a flag on purpose: the
+     * channel to the board is read-only, so the board can never report "seen" and a flag would
+     * have nobody to clear it — it would re-arm inclusion for ever. The board remembers the value
+     * it last read and treats any difference as exactly one request. */
+    case CMD_ZWAVE_INCLUDE:
+        airzone_gw_inc_inclusion_counter();
         break;
 
     default:

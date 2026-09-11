@@ -27,6 +27,10 @@ typedef struct {
     uart_parity_t parity;
     uart_stop_bits_t stopbits;
     uart_word_length_t databits;
+    // UART driver mode for this port: UART_MODE_RS485_HALF_DUPLEX where a transceiver
+    // needs dir_pin driven, UART_MODE_UART on a full-duplex line with no transceiver
+    // (the WBE2 bus inside a WB-MGU). Filled per port from the board pin map.
+    uart_mode_t mode;
 } serial_config_t;
 
 typedef struct serial_desc_t serial_desc_t;

@@ -15,6 +15,7 @@ AUX_SRC += $(PROJ_DIR)/main/bridge/modbus_helpers.c
 AUX_SRC += mocks/voltage_monitor.c
 AUX_SRC += mocks/setting_items.c
 AUX_SRC += mocks/cache_multimaster.c
+AUX_SRC += mocks/airzone_gw.c
 AUX_SRC += mocks/esp_heap_caps.c
 AUX_SRC += mocks/esp_system.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/esp_timer.c

@@ -53,6 +53,7 @@ typedef enum {
 } uart_event_type_t;
 
 typedef enum {
+    UART_MODE_UART = 0x00,                      /*!< mode: regular UART mode */
     UART_MODE_RS485_HALF_DUPLEX = 0x01,         /*!< mode: half duplex RS485 UART mode control by RTS pin */
 } uart_mode_t;
 

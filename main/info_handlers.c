@@ -11,6 +11,7 @@
 #include "sys_info.h"
 #include "voltage_monitor.h"
 #include "config_button.h"
+#include "airzone_gw.h"
 
 #include <esp_log.h>
 #include <esp_wifi.h>
@@ -350,6 +351,31 @@ esp_err_t info_get_handler(httpd_req_t *req)
         cJSON_AddNumberToObject(repeater_json, "dropped_1", (double)rep.dropped_1);
         cJSON_AddNumberToObject(repeater_json, "dropped_2", (double)rep.dropped_2);
         cJSON_AddItemToObject(response_json, "repeater", repeater_json);
+    }
+
+    // State the Z-Wave board mirrors into this firmware (registers 541..551), reported as the
+    // top-level "airzone_gw" object.
+    //
+    // Emitted whether or not the board has ever written, because "valid": false and the zeros
+    // behind it are what the page uses to say "nothing reported yet" — an omitted object would
+    // instead be indistinguishable from a firmware that does not know this feature at all. It is
+    // also emitted on every model: airzone_gw.c is built everywhere and the page hides itself on
+    // non-MGU boards by device signature.
+    airzone_gw_mirror_t airzone = {0};
+    airzone_gw_mirror_get(&airzone);
+    cJSON *airzone_json = cJSON_CreateObject();
+    if (airzone_json) {
+        // One name per mirror register, in register order.
+        static const char *const airzone_field_names[AIRZONE_GW_MIRROR_COUNT] = {
+            "slave", "zone", "product", "baud_code", "link_state", "errors",
+            "last_exception", "scale", "dead_runs", "bus_load", "setpoint_model",
+        };
+        cJSON_AddBoolToObject(airzone_json, "valid", airzone.valid);
+        cJSON_AddNumberToObject(airzone_json, "age_s", (double)airzone.age_s);
+        for (size_t i = 0; i < AIRZONE_GW_MIRROR_COUNT; i++) {
+            cJSON_AddNumberToObject(airzone_json, airzone_field_names[i], (double)airzone.values[i]);
+        }
+        cJSON_AddItemToObject(response_json, "airzone_gw", airzone_json);
     }
 
     // Report the configured port from NVS, not the runtime state.

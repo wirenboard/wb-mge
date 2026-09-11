@@ -31,12 +31,20 @@ Register map (unit 0xFF), confirmed against main/bridge/mb_device.c:
                528-529 packets u32; 530-531 last-pkt-age u32;
                532 devices_on_bus; 533 bus poll ppm; 534 cache timeout s.
                (330-337 stay undefined: the 8-register WB bootloader-version field.)
-               290-301 signature string (MEM_8: 1 char/reg, in the LOW byte).
+               290-301 signature string (MEM_8: 1 char/reg, in the LOW byte);
+               535 inclusion-request counter; 536 settings-change counter;
+               537 Airzone address; 538 zone; 539 line-speed code (x1200 baud);
+               540 product type — 535-540 are read by the Z-Wave board as ONE
+               FC03, so they are contiguous on purpose;
+               541-551 the mirror block the Z-Wave board writes about itself.
   FC03 holding: the SAME map. FC03 and FC04 share one address space — every
                address above, the signature included, answers on both function
                codes with the same value.
+  FC16 write:  541-551 only, and only when the WHOLE requested range lies inside
+               that block.
   An address defined in neither map -> exception 0x02.
-  Any fc not in {0x03,0x04} on unit 0xFF -> exception 0x01.
+  Any fc not in {0x03,0x04,0x10} on unit 0xFF -> exception 0x01.
+  FC16 whose range leaves 541-551 -> exception 0x02.
 """
 
 import qemu_ports

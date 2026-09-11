@@ -1,5 +1,6 @@
 #include "repeater.h"
 #include "bridge.h"            // BRIDGES_COUNT
+#include "board_pins.h"        // MB_SELF_RTU_PORT_INDEX, where the board defines one
 #include "rs485_stats.h"       // rs485_busy_monitor_update_activity
 #include "freertos/FreeRTOS.h"
 #include "esp_timer.h"         // esp_timer_get_time (64-bit monotonic microseconds since boot)
@@ -7,6 +8,10 @@
 #include "freertos/task.h"     // vTaskDelay (teardown drain wait)
 #include "esp_log.h"
 #include <string.h>
+
+#ifdef MB_SELF_RTU_PORT_INDEX
+    #include "mb_self_rtu.h"
+#endif
 
 static const char *TAG = "repeater";
 
@@ -57,6 +62,16 @@ static void repeater_unlock(void)
 // polling shape as tcp_server_deinit()'s wait for active_connections (tcp_server.c).
 #define REPEATER_DRAIN_POLL_MS  10U
 
+#ifdef MB_SELF_RTU_PORT_INDEX
+// Requests addressed to this gateway's own unit id are answered on the port they arrived
+// on instead of being relayed. Both buffers are file-scope statics rather than locals of
+// the RX handler: the only code that touches them is the intercepted port's own UART
+// event task, which is single-threaded, and a 256-byte frame buffer plus a 256-byte
+// response buffer are not worth putting on that task's stack.
+static mb_self_rtu_t s_self_rtu;
+static uint8_t s_self_rtu_resp[MODBUS_RTU_MAX_FRAME_LEN];
+#endif
+
 void repeater_init(void)
 {
     // Idempotent: create the global lock once, before any port concurrency starts.
@@ -93,6 +108,17 @@ static void repeater_drop_handler(serial_desc_t *desc, size_t dropped_len)
     if (index < 0) {
         return;
     }
+#ifdef MB_SELF_RTU_PORT_INDEX
+    // Bytes thrown away by the port may be part of the frame being accumulated, and the
+    // stream that continues after them is offset against frame boundaries. Keeping the
+    // partial frame would let it swallow the start of a relayed Airzone request until the
+    // CRC check and the 100 ms gap recovered on their own, so it is abandoned here instead.
+    // Safe without the lock for the same reason the feed is: both run in this port's own
+    // UART task, and a single UART event takes exactly one of the two branches.
+    if ((unsigned)index == MB_SELF_RTU_PORT_INDEX) {
+        mb_self_rtu_reset(&s_self_rtu);
+    }
+#endif
     repeater_lock();
     s_dropped[index] += (uint64_t)dropped_len;
     repeater_unlock();
@@ -143,6 +169,39 @@ static void repeater_rx_handler(serial_desc_t *desc, uint8_t *data, size_t len)
 
     unsigned peer = (index == 0) ? 1 : 0;
     rs485_busy_monitor_update_activity((unsigned)index);   // RX arrived on this port
+
+#ifdef MB_SELF_RTU_PORT_INDEX
+    // On the port the board names, a request addressed to this gateway's own unit id is
+    // answered here and never reaches the peer. Everything else falls through to the
+    // forward below with its timing untouched: mb_self_rtu_feed() buffers only what is
+    // ours, so a foreign frame costs one comparison of its first byte.
+    //
+    // The answer goes back on the SAME port. That is safe only because the port this
+    // runs on is full duplex with no transceiver to turn around (see SERIAL_MODE_2 in
+    // the board header) — transmitting into a frame we are still receiving is fine there.
+    //
+    // Sent straight from the UART event callback: for the requests the board actually
+    // sends — a six-register read and an eleven-register write — the response is 17 bytes
+    // and 8, so the write returns immediately. (The map itself would allow a 125-register
+    // read, i.e. 255 bytes; nothing on this link asks for one.)
+    // A longer callback would be a problem for the reason
+    // serial.c spells out above uart_event_task() — the UART event queue overflows and
+    // packets get merged or dropped — which is why nothing heavier belongs here.
+    if ((unsigned)index == MB_SELF_RTU_PORT_INDEX) {
+        size_t resp_len = 0;
+        mb_self_rtu_result_t action = mb_self_rtu_feed(&s_self_rtu, data, len,
+                                                       esp_timer_get_time(),
+                                                       s_self_rtu_resp, &resp_len);
+        if (action != MB_SELF_RTU_RELAY) {
+            // Bytes addressed to us are neither forwarded nor dropped traffic, so they
+            // are deliberately left out of both counters.
+            if (action == MB_SELF_RTU_RESPOND) {
+                serial_send(desc, s_self_rtu_resp, resp_len);
+            }
+            return;
+        }
+    }
+#endif
 
     repeater_lock();
     serial_desc_t *peer_desc = s_ctx[peer].serial_desc;

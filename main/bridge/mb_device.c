@@ -6,6 +6,7 @@
 #include "voltage_monitor.h"
 #include "setting_items.h"
 #include "cache_multimaster.h"
+#include "airzone_gw.h"
 
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
@@ -29,9 +30,25 @@
 #define MB_DEV_FC_READ_HOLDING_REGS  MODBUS_FC_READ_HOLDING_REGS
 #define MB_DEV_FC_READ_INPUT_REGS    MODBUS_FC_READ_INPUT_REGS
 
+/* FC16, write multiple registers. It has no canonical constant in modbus_helpers.h
+ * because nothing else in the gateway has to name it. */
+#define MB_DEV_FC_WRITE_MULTI_REGS   0x10u
+
 /* ---- Modbus limits ------------------------------------------------------- */
 
-#define MB_DEV_MAX_REGISTERS         125u  /* max registers per FC03/FC04 read */
+#define MB_DEV_MAX_REGISTERS         125u  /* max registers per FC03/FC04 read  */
+#define MB_DEV_MAX_WRITE_REGISTERS   123u  /* max registers per FC16 write      */
+
+/* ---- Modbus RTU framing -------------------------------------------------- */
+
+#define MB_DEV_RTU_HDR_LEN           2u  /* unit id + function code        */
+#define MB_DEV_RTU_CRC_LEN           2u  /* CRC16, low byte first          */
+/* unit + fc + start(2) + quantity(2) + CRC(2) */
+#define MB_DEV_RTU_READ_REQ_LEN      8u
+/* unit + fc + start(2) + quantity(2) + byte count(1) + CRC(2), before the data */
+#define MB_DEV_RTU_WRITE_REQ_OVERHEAD 9u
+/* unit + fc + start(2) + quantity(2) + CRC(2) */
+#define MB_DEV_RTU_WRITE_RESP_LEN    8u
 
 /* ---- Register address map (shared by FC03 and FC04) ----------------------- */
 
@@ -96,6 +113,24 @@
 #define REG_DEVICES_ON_BUS    532u  /* 0x0214 */
 #define REG_POLL_FREQ_PPM     533u  /* 0x0215 */
 #define REG_CACHE_TIMEOUT     534u  /* 0x0216 */
+
+/* Airzone gateway block, 535..551 (0x0217..0x0227), immediately above the statistics
+ * block and clear of the WB common map.
+ *
+ * 535..540 are READ BY THE Z-WAVE BOARD IN ONE FC03 TRANSACTION, and this firmware
+ * refuses a read whole at the first unresolved address (see device_get_reg's callers),
+ * so all six have to answer — a gap anywhere in that range breaks the whole block.
+ *
+ * 541..551 are the board's mirror: the board WRITES them (FC16) and this firmware only
+ * hands them back. They are the only writable registers in the map. */
+#define REG_AZ_INCL_COUNTER   535u  /* 0x0217 Z-Wave inclusion request counter  */
+#define REG_AZ_SET_COUNTER    536u  /* 0x0218 Airzone settings change counter   */
+#define REG_AZ_ADDRESS        537u  /* 0x0219 Airzone Modbus address, setting   */
+#define REG_AZ_ZONE           538u  /* 0x021A Airzone zone, setting             */
+#define REG_AZ_SPEED          539u  /* 0x021B Airzone line speed code, setting  */
+#define REG_AZ_PRODUCT        540u  /* 0x021C Airzone product type, setting     */
+#define REG_AZ_MIRROR_BASE    541u  /* 0x021D .. 0x0227, written by the board   */
+#define REG_AZ_MIRROR_COUNT   AIRZONE_GW_MIRROR_COUNT
 
 #define REG_TOTAL_RAM         65505u /* 0xFFE1 */
 #define REG_USED_RAM          65506u /* 0xFFE2 */
@@ -355,6 +390,38 @@ static bool device_get_reg(uint16_t addr, uint16_t *val)
         return true;
     }
 
+    /* Airzone gateway block: the two event counters and the four installer settings,
+     * all six contiguous so the board can read them in one FC03. */
+    if (addr == REG_AZ_INCL_COUNTER) {
+        *val = airzone_gw_get_inclusion_counter();
+        return true;
+    }
+    if (addr == REG_AZ_SET_COUNTER) {
+        *val = airzone_gw_get_settings_counter();
+        return true;
+    }
+    if (addr == REG_AZ_ADDRESS) {
+        *val = airzone_gw_get_address();
+        return true;
+    }
+    if (addr == REG_AZ_ZONE) {
+        *val = airzone_gw_get_zone();
+        return true;
+    }
+    if (addr == REG_AZ_SPEED) {
+        *val = airzone_gw_get_speed_code();
+        return true;
+    }
+    if (addr == REG_AZ_PRODUCT) {
+        *val = airzone_gw_get_product_type();
+        return true;
+    }
+
+    /* the board's mirror block, read back exactly as the board wrote it */
+    if (addr >= REG_AZ_MIRROR_BASE && addr < REG_AZ_MIRROR_BASE + REG_AZ_MIRROR_COUNT) {
+        return airzone_gw_mirror_get_reg((unsigned)(addr - REG_AZ_MIRROR_BASE), val);
+    }
+
     /* RAM diagnostics, laid out as in the WB common register map: 0xFFE1 total,
      * 0xFFE2 used, 0xFFE3 free. Reported in KILOBYTES, deliberately not the bytes
      * that map specifies: an ESP32 heap is hundreds of KB and a byte count would
@@ -385,6 +452,108 @@ static bool device_get_reg(uint16_t addr, uint16_t *val)
     return false;
 }
 
+/*
+ * Write one register by address. The mirror block (541..551) is the only writable
+ * range in the map — everything else this device serves is derived from settings or
+ * from the running system and has no meaningful write.
+ *
+ * Returns true if the address is writable, false otherwise.
+ */
+static bool device_set_reg(uint16_t addr, uint16_t val)
+{
+    if (addr >= REG_AZ_MIRROR_BASE && addr < REG_AZ_MIRROR_BASE + REG_AZ_MIRROR_COUNT) {
+        airzone_gw_mirror_set_reg((unsigned)(addr - REG_AZ_MIRROR_BASE), val);
+        return true;
+    }
+    return false;
+}
+
+/*
+ * Read count registers starting at start_addr into out, two bytes per register, MSB
+ * first. Any unresolved address anywhere in the range refuses the WHOLE request with
+ * ILLEGAL DATA ADDRESS — there are no partial answers, so out is meaningful only when
+ * this returns true.
+ */
+static bool device_get_regs(uint16_t start_addr, uint16_t count, uint8_t *out, uint8_t *exc_out)
+{
+    /* Reject ranges that overflow the 16-bit address space. */
+    if ((uint32_t)start_addr + (uint32_t)count > 0x10000u) {
+        *exc_out = MB_DEV_EX_ILLEGAL_ADDRESS;
+        return false;
+    }
+
+    for (uint16_t i = 0; i < count; i++) {
+        uint16_t addr  = (uint16_t)(start_addr + i);
+        uint16_t value = 0;
+        /* One shared map: FC03 and FC04 resolve the same addresses. */
+        if (!device_get_reg(addr, &value)) {
+            *exc_out = MB_DEV_EX_ILLEGAL_ADDRESS;
+            return false;
+        }
+        out[i * 2]     = (uint8_t)(value >> 8);
+        out[i * 2 + 1] = (uint8_t)(value & 0xFFu);
+    }
+    return true;
+}
+
+/*
+ * Write count registers starting at start_addr from in, two bytes per register, MSB
+ * first. Mirrors the read rule: if ANY address in the range is not writable the whole
+ * request is refused with ILLEGAL DATA ADDRESS and nothing is written, so a range
+ * that merely overlaps the writable block changes nothing.
+ */
+static bool device_set_regs(uint16_t start_addr, uint16_t count, const uint8_t *in, uint8_t *exc_out)
+{
+    if ((uint32_t)start_addr + (uint32_t)count > 0x10000u) {
+        *exc_out = MB_DEV_EX_ILLEGAL_ADDRESS;
+        return false;
+    }
+
+    /* Check the whole range before writing any of it. */
+    for (uint16_t i = 0; i < count; i++) {
+        uint16_t addr = (uint16_t)(start_addr + i);
+        if (!(addr >= REG_AZ_MIRROR_BASE && addr < REG_AZ_MIRROR_BASE + REG_AZ_MIRROR_COUNT)) {
+            *exc_out = MB_DEV_EX_ILLEGAL_ADDRESS;
+            return false;
+        }
+    }
+
+    for (uint16_t i = 0; i < count; i++) {
+        uint16_t addr  = (uint16_t)(start_addr + i);
+        uint16_t value = (uint16_t)(((uint16_t)in[i * 2] << 8) | in[i * 2 + 1]);
+        device_set_reg(addr, value);
+    }
+    return true;
+}
+
+/* ---- Modbus RTU framing helpers ------------------------------------------ */
+
+/*
+ * Append the RTU CRC to the len bytes already in buf and return the full ADU length.
+ * modbus_crc16() hands back a native word; RTU puts its LOW byte on the wire first
+ * (the convention note at the top of stream_splitter.c).
+ */
+static size_t rtu_append_crc(uint8_t *buf, size_t len)
+{
+    uint16_t crc = modbus_crc16(buf, (uint16_t)len);
+    buf[len]     = (uint8_t)(crc & 0xFFu);
+    buf[len + 1] = (uint8_t)(crc >> 8);
+    return len + MB_DEV_RTU_CRC_LEN;
+}
+
+/*
+ * Build an RTU exception ADU: unit, fc | 0x80, exception code, CRC. Not
+ * modbus_pdu_build_exception() — that one builds the TCP shape, with an MBAP header
+ * and no CRC.
+ */
+static size_t rtu_build_exception(uint8_t *buf, uint8_t unit_id, uint8_t fc, uint8_t exc)
+{
+    buf[0] = unit_id;
+    buf[1] = (uint8_t)(fc | 0x80u);
+    buf[2] = exc;
+    return rtu_append_crc(buf, 3u);
+}
+
 /* ---- Public API ---------------------------------------------------------- */
 
 bool mb_device_is_self(uint8_t unit_id)
@@ -402,12 +571,6 @@ size_t mb_device_build_read_response(uint8_t unit_id, uint8_t fc,
         return 0;
     }
 
-    /* Reject ranges that overflow the 16-bit address space. */
-    if ((uint32_t)start_addr + (uint32_t)count > 0x10000u) {
-        *exc_out = MB_DEV_EX_ILLEGAL_ADDRESS;
-        return 0;
-    }
-
     mb_tcp_header_t *resp_hdr = (mb_tcp_header_t *)resp_buf;
     resp_hdr->transaction_id = transaction_id_net; /* echoed verbatim (network order) */
     resp_hdr->protocol_id    = MODBUS_TCP_PROTOCOL_ID;
@@ -418,18 +581,9 @@ size_t mb_device_build_read_response(uint8_t unit_id, uint8_t fc,
     uint8_t  byte_count = (uint8_t)(count * 2u);
     payload[0] = byte_count;
 
-    for (uint16_t i = 0; i < count; i++) {
-        uint16_t addr  = (uint16_t)(start_addr + i);
-        uint16_t value = 0;
-        /* One shared map: FC03 and FC04 resolve the same addresses. */
-        bool found = device_get_reg(addr, &value);
-        if (!found) {
-            /* Any undefined register in the range -> ILLEGAL DATA ADDRESS. */
-            *exc_out = MB_DEV_EX_ILLEGAL_ADDRESS;
-            return 0;
-        }
-        payload[1 + i * 2]     = (uint8_t)(value >> 8);
-        payload[1 + i * 2 + 1] = (uint8_t)(value & 0xFFu);
+    /* Any undefined register in the range -> ILLEGAL DATA ADDRESS, whole request. */
+    if (!device_get_regs(start_addr, count, payload + 1, exc_out)) {
+        return 0;
     }
 
     /* MBAP length = unit_id(1) + FC(1) + byte_count_field(1) + data(byte_count) */
@@ -446,6 +600,47 @@ size_t mb_device_handle_self_request(const uint8_t *req, size_t req_len,
     uint16_t tid     = req_hdr->transaction_id; /* network byte order, echoed verbatim */
     uint8_t  unit_id = req_hdr->unit_id;
     uint8_t  fc      = req_hdr->function;
+
+    /* FC16 is served by the shared device layer, so it answers here as well as on the
+     * RTU path: the writable mirror block is a property of the device, not of the
+     * transport the write arrived over. */
+    if (fc == MB_DEV_FC_WRITE_MULTI_REGS) {
+        if (req_len < sizeof(mb_tcp_header_t) + 5u) {
+            return modbus_pdu_build_exception(resp_buf, tid, unit_id, fc, MB_DEV_EX_ILLEGAL_DATA_VALUE);
+        }
+
+        const uint8_t *pdu = req + sizeof(mb_tcp_header_t);
+        uint16_t start = 0;
+        uint16_t count = 0;
+        modbus_pdu_parse_read_request(pdu, &start, &count);   /* same [start][quantity] head */
+        uint8_t byte_count = pdu[4];
+
+        if ((count < 1u) || (count > MB_DEV_MAX_WRITE_REGISTERS) ||
+            (byte_count != (uint8_t)(count * 2u)) ||
+            (req_len < sizeof(mb_tcp_header_t) + 5u + (size_t)byte_count)) {
+            return modbus_pdu_build_exception(resp_buf, tid, unit_id, fc, MB_DEV_EX_ILLEGAL_DATA_VALUE);
+        }
+
+        uint8_t exc = MB_DEV_EX_ILLEGAL_ADDRESS;
+        if (!device_set_regs(start, count, pdu + 5, &exc)) {
+            return modbus_pdu_build_exception(resp_buf, tid, unit_id, fc, exc);
+        }
+
+        /* Normal FC16 response: the request's start address and quantity, echoed. */
+        mb_tcp_header_t *resp_hdr = (mb_tcp_header_t *)resp_buf;
+        resp_hdr->transaction_id = tid;
+        resp_hdr->protocol_id    = MODBUS_TCP_PROTOCOL_ID;
+        resp_hdr->length         = modbus_swap16(6u);   /* unit + fc + start(2) + quantity(2) */
+        resp_hdr->unit_id        = unit_id;
+        resp_hdr->function       = fc;
+
+        uint8_t *payload = resp_buf + sizeof(mb_tcp_header_t);
+        payload[0] = (uint8_t)(start >> 8);
+        payload[1] = (uint8_t)(start & 0xFFu);
+        payload[2] = (uint8_t)(count >> 8);
+        payload[3] = (uint8_t)(count & 0xFFu);
+        return sizeof(mb_tcp_header_t) + 4u;
+    }
 
     if (fc != MB_DEV_FC_READ_HOLDING_REGS && fc != MB_DEV_FC_READ_INPUT_REGS) {
         return modbus_pdu_build_exception(resp_buf, tid, unit_id, fc, MB_DEV_EX_ILLEGAL_FUNCTION);
@@ -469,4 +664,77 @@ size_t mb_device_handle_self_request(const uint8_t *req, size_t req_len,
         return modbus_pdu_build_exception(resp_buf, tid, unit_id, fc, exc);
     }
     return rlen;
+}
+
+size_t mb_device_rtu_handle_request(const uint8_t *req, size_t req_len, uint8_t *resp_buf)
+{
+    /* Not ours: say so and let the caller do whatever it does with foreign traffic.
+     * A frame shorter than a header plus a CRC cannot have been CRC-verified by the
+     * caller either, so it is treated the same way. */
+    if ((req_len < MB_DEV_RTU_HDR_LEN + MB_DEV_RTU_CRC_LEN) || !mb_device_is_self(req[0])) {
+        return 0;
+    }
+
+    uint8_t        unit_id = req[0];
+    uint8_t        fc      = req[1];
+    const uint8_t *pdu     = req + MB_DEV_RTU_HDR_LEN;
+
+    if ((fc == MB_DEV_FC_READ_HOLDING_REGS) || (fc == MB_DEV_FC_READ_INPUT_REGS)) {
+        if (req_len < MB_DEV_RTU_READ_REQ_LEN) {
+            return rtu_build_exception(resp_buf, unit_id, fc, MB_DEV_EX_ILLEGAL_DATA_VALUE);
+        }
+
+        uint16_t start = 0;
+        uint16_t count = 0;
+        modbus_pdu_parse_read_request(pdu, &start, &count);
+        if ((count < 1u) || (count > MB_DEV_MAX_REGISTERS)) {
+            return rtu_build_exception(resp_buf, unit_id, fc, MB_DEV_EX_ILLEGAL_DATA_VALUE);
+        }
+
+        uint8_t byte_count = (uint8_t)(count * 2u);
+        resp_buf[0] = unit_id;
+        resp_buf[1] = fc;
+        resp_buf[2] = byte_count;
+
+        uint8_t exc = MB_DEV_EX_ILLEGAL_ADDRESS;
+        if (!device_get_regs(start, count, resp_buf + 3, &exc)) {
+            /* One unresolved address refuses the whole read — no partial answers. */
+            return rtu_build_exception(resp_buf, unit_id, fc, exc);
+        }
+        return rtu_append_crc(resp_buf, 3u + (size_t)byte_count);
+    }
+
+    if (fc == MB_DEV_FC_WRITE_MULTI_REGS) {
+        if (req_len < MB_DEV_RTU_WRITE_REQ_OVERHEAD) {
+            return rtu_build_exception(resp_buf, unit_id, fc, MB_DEV_EX_ILLEGAL_DATA_VALUE);
+        }
+
+        uint16_t start = 0;
+        uint16_t count = 0;
+        modbus_pdu_parse_read_request(pdu, &start, &count);   /* same [start][quantity] head */
+        uint8_t byte_count = pdu[4];
+
+        if ((count < 1u) || (count > MB_DEV_MAX_WRITE_REGISTERS) ||
+            (byte_count != (uint8_t)(count * 2u)) ||
+            (req_len < MB_DEV_RTU_WRITE_REQ_OVERHEAD + (size_t)byte_count)) {
+            return rtu_build_exception(resp_buf, unit_id, fc, MB_DEV_EX_ILLEGAL_DATA_VALUE);
+        }
+
+        uint8_t exc = MB_DEV_EX_ILLEGAL_ADDRESS;
+        if (!device_set_regs(start, count, pdu + 5, &exc)) {
+            /* Anything outside the writable block refuses the whole write. */
+            return rtu_build_exception(resp_buf, unit_id, fc, exc);
+        }
+
+        /* Normal FC16 response: the request's start address and quantity, echoed. */
+        resp_buf[0] = unit_id;
+        resp_buf[1] = fc;
+        resp_buf[2] = (uint8_t)(start >> 8);
+        resp_buf[3] = (uint8_t)(start & 0xFFu);
+        resp_buf[4] = (uint8_t)(count >> 8);
+        resp_buf[5] = (uint8_t)(count & 0xFFu);
+        return rtu_append_crc(resp_buf, MB_DEV_RTU_WRITE_RESP_LEN - MB_DEV_RTU_CRC_LEN);
+    }
+
+    return rtu_build_exception(resp_buf, unit_id, fc, MB_DEV_EX_ILLEGAL_FUNCTION);
 }

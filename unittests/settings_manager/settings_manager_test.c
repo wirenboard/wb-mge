@@ -24,6 +24,17 @@ extern int       mock_settings_update_call_count;
 extern esp_err_t mock_settings_update_cache_apply_result;
 void             mock_settings_update_reset(void);
 
+// How many times the Airzone settings counter was bumped, and the four stored values as they
+// were at the moment of the last bump — what the Z-Wave board would have read.
+extern int       mock_airzone_settings_counter;
+extern int       mock_airzone_seen_slave;
+extern int       mock_airzone_seen_zone;
+extern int       mock_airzone_seen_baud_code;
+extern int       mock_airzone_seen_product;
+extern int       mock_airzone_reload_called;
+extern int       mock_airzone_reloads_at_settings_bump;
+void             mock_airzone_gw_reset(void);
+
 // -------------------------------------------------------------------
 // Helpers
 // -------------------------------------------------------------------
@@ -32,6 +43,20 @@ static void reset_all(void)
 {
     mock_setting_items_reset();
     mock_settings_update_reset();
+    mock_airzone_gw_reset();
+}
+
+// Build a request carrying the whole airzone group: {"airzone": {slave, zone, baud_code, product}}.
+static cJSON *make_airzone_request(int slave, int zone, int baud_code, int product)
+{
+    cJSON *req = cJSON_CreateObject();
+    cJSON *airzone = cJSON_CreateObject();
+    cJSON_AddNumberToObject(airzone, "slave", slave);
+    cJSON_AddNumberToObject(airzone, "zone", zone);
+    cJSON_AddNumberToObject(airzone, "baud_code", baud_code);
+    cJSON_AddNumberToObject(airzone, "product", product);
+    cJSON_AddItemToObject(req, "airzone", airzone);
+    return req;
 }
 
 // Build a minimal valid request JSON containing a single top-level string field.
@@ -1316,6 +1341,246 @@ void test_port_mode_collision_out_of_range_index_ok(void)
         "a port index outside the RS-485 range must be a no-op, not a rejection");
 }
 
+// ===================================================================
+// Airzone gateway settings group
+// ===================================================================
+
+// POST /settings carrying the airzone group must persist all four values under the NVS keys the
+// Z-Wave board reads them from.
+void test_airzone_group_saved_to_nvs(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "process: airzone group -> all four values persisted to NVS");
+    LOG_MESSAGE();
+
+    cJSON *req = make_airzone_request(5, 7, 48, 2);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_TRUE_MESSAGE(response_success(resp), "success must be true");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(5, setting_items_read_int(KEY_AIRZONE_ADDRESS),
+        "airzone.slave must be persisted as az_address");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(7, setting_items_read_int(KEY_AIRZONE_ZONE),
+        "airzone.zone must be persisted as az_zone");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(48, setting_items_read_int(KEY_AIRZONE_SPEED),
+        "airzone.baud_code must be persisted as az_speed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, setting_items_read_int(KEY_AIRZONE_PRODUCT),
+        "airzone.product must be persisted as az_product");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// A change must move the settings counter, and it must move it only after all four values are
+// already stored: the board reads the four registers in the instant the counter changes, so a
+// counter that moved first would hand it a half-written form.
+void test_airzone_change_bumps_settings_counter_after_the_values(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "process: changed airzone values -> counter +1, bumped after the values are stored");
+    LOG_MESSAGE();
+
+    cJSON *req = make_airzone_request(5, 7, 48, 2);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_TRUE_MESSAGE(response_success(resp), "success must be true");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_airzone_settings_counter,
+        "a changed value must bump the settings counter exactly once");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(5, mock_airzone_seen_slave,
+        "az_address must already hold the new value when the counter moves");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(7, mock_airzone_seen_zone,
+        "az_zone must already hold the new value when the counter moves");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(48, mock_airzone_seen_baud_code,
+        "az_speed must already hold the new value when the counter moves");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_airzone_seen_product,
+        "az_product must already hold the new value when the counter moves");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// The register block serves the four settings out of a RAM cache — the poll that reads them comes
+// from the UART event task, which must not block on NVS — so a save is only half applied until the
+// cache has been refreshed. The refresh has to land before the counter moves, for the same reason
+// the NVS writes do: the board reads the registers in the instant the counter changes.
+void test_airzone_save_refreshes_the_cache_before_the_counter(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "process: airzone save -> cache refreshed, and refreshed before the counter moves");
+    LOG_MESSAGE();
+
+    cJSON *req = make_airzone_request(5, 7, 48, 2);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_TRUE_MESSAGE(response_success(resp), "success must be true");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_airzone_reload_called,
+        "a successful airzone save must refresh the cached settings");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_airzone_reloads_at_settings_bump,
+        "the cache must already hold the new values when the counter moves");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// A save that stores nothing must leave the cache alone as well: there is nothing new to publish,
+// and the reload is not free — it is four NVS reads.
+void test_airzone_rejected_save_does_not_refresh_the_cache(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "process: rejected airzone value -> cache not refreshed");
+    LOG_MESSAGE();
+
+    cJSON *req = make_airzone_request(999, 7, 48, 2);
+    cJSON *resp = NULL;
+
+    mock_setting_items_validate_error = ESP_ERR_INVALID_ARG;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_FALSE_MESSAGE(response_success(resp),
+        "an airzone value the validator rejects must fail the request");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_airzone_reload_called,
+        "a save that stored nothing must not refresh the cached settings");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// Saving the values that are already stored must leave the counter alone. The board applies these
+// parameters by restarting into its INIT state, so a bump here would restart a healthy gateway
+// every time the installer pressed Save.
+void test_airzone_identical_values_do_not_bump_counter(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "process: airzone values identical to the stored ones -> counter untouched");
+    LOG_MESSAGE();
+
+    // The values the mock store is initialised with.
+    cJSON *req = make_airzone_request(1, 1, 16, 1);
+    cJSON *resp = NULL;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret, "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_TRUE_MESSAGE(response_success(resp),
+        "a save that changes nothing is still a successful save");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_airzone_settings_counter,
+        "a save that changes no value must not bump the settings counter");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// The same request sent twice must move the counter once: the second save changes nothing, and
+// that is judged against the stored values rather than against the request.
+void test_airzone_repeated_save_bumps_counter_once(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "process: the same airzone request twice -> counter moves only for the first one");
+    LOG_MESSAGE();
+
+    cJSON *first_req = make_airzone_request(9, 3, 96, 0);
+    cJSON *first_resp = NULL;
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_process_request_json(first_req, &first_resp),
+        "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_airzone_settings_counter,
+        "the first save changes the values, so it must bump the counter");
+
+    cJSON *second_req = make_airzone_request(9, 3, 96, 0);
+    cJSON *second_resp = NULL;
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_process_request_json(second_req, &second_resp),
+        "settings_process_request_json must return ESP_OK");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_airzone_settings_counter,
+        "the second save changes nothing, so the counter must stay where it was");
+
+    cJSON_Delete(first_req);
+    cJSON_Delete(first_resp);
+    cJSON_Delete(second_req);
+    cJSON_Delete(second_resp);
+}
+
+// A value the validator rejects must fail the whole request in Phase 1: nothing written, and the
+// counter left alone so the board is never told to reload a set of values that was not applied.
+void test_airzone_invalid_value_writes_nothing_and_keeps_counter(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "process: rejected airzone value -> success:false, no write, no counter bump");
+    LOG_MESSAGE();
+
+    cJSON *req = make_airzone_request(999, 7, 48, 2);
+    cJSON *resp = NULL;
+
+    // Simulate validate_airzone_address rejecting the out-of-range Modbus address.
+    mock_setting_items_validate_error = ESP_ERR_INVALID_ARG;
+
+    esp_err_t ret = settings_process_request_json(req, &resp);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, ret,
+        "settings_process_request_json must return ESP_OK so HTTP layer sends the error JSON");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+    TEST_ASSERT_FALSE_MESSAGE(response_success(resp),
+        "an airzone value the validator rejects must fail the request");
+    TEST_ASSERT_NOT_NULL_MESSAGE(response_error(resp),
+        "a rejected request must carry an error message");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_setting_items_save_call_count,
+        "No NVS write should occur when an airzone value fails validation");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_airzone_settings_counter,
+        "A rejected request must not bump the settings counter");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, setting_items_read_int(KEY_AIRZONE_ADDRESS),
+        "az_address must keep its stored value when the request is rejected");
+
+    cJSON_Delete(req);
+    cJSON_Delete(resp);
+}
+
+// GET /settings must carry the airzone group: the web page reads the four fields from there.
+void test_build_response_includes_airzone_group(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE,
+        "build: GET /settings carries the airzone group with all four fields");
+    LOG_MESSAGE();
+
+    cJSON *resp = NULL;
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, settings_build_response_json(&resp),
+        "settings_build_response_json must succeed");
+    TEST_ASSERT_NOT_NULL_MESSAGE(resp, "Response JSON must be allocated");
+
+    cJSON *airzone = cJSON_GetObjectItem(resp, "airzone");
+    TEST_ASSERT_NOT_NULL_MESSAGE(airzone, "the response must carry an airzone group");
+    TEST_ASSERT_TRUE_MESSAGE(cJSON_IsObject(airzone), "airzone must be an object");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, cJSON_GetObjectItem(airzone, "slave")->valueint,
+        "airzone.slave must report az_address");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, cJSON_GetObjectItem(airzone, "zone")->valueint,
+        "airzone.zone must report az_zone");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(16, cJSON_GetObjectItem(airzone, "baud_code")->valueint,
+        "airzone.baud_code must report az_speed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, cJSON_GetObjectItem(airzone, "product")->valueint,
+        "airzone.product must report az_product");
+
+    cJSON_Delete(resp);
+}
+
 // -------------------------------------------------------------------
 // Test runner
 // -------------------------------------------------------------------
@@ -1380,6 +1645,16 @@ int main(void)
     RUN_TEST(test_port_mode_collision_non_tcp_bridge_modes_never_collide);
     RUN_TEST(test_port_mode_collision_port2_onto_web_port_rejected);
     RUN_TEST(test_port_mode_collision_out_of_range_index_ok);
+
+    // Airzone gateway settings group and its settings counter
+    RUN_TEST(test_airzone_group_saved_to_nvs);
+    RUN_TEST(test_airzone_change_bumps_settings_counter_after_the_values);
+    RUN_TEST(test_airzone_save_refreshes_the_cache_before_the_counter);
+    RUN_TEST(test_airzone_rejected_save_does_not_refresh_the_cache);
+    RUN_TEST(test_airzone_identical_values_do_not_bump_counter);
+    RUN_TEST(test_airzone_repeated_save_bumps_counter_once);
+    RUN_TEST(test_airzone_invalid_value_writes_nothing_and_keeps_counter);
+    RUN_TEST(test_build_response_includes_airzone_group);
 
     return UNITY_END();
 }

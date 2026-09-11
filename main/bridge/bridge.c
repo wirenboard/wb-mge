@@ -156,11 +156,13 @@ static esp_err_t read_serial_port_config(const int index, serial_config_t* seria
     static const int tx_pins[BRIDGES_COUNT] = {SERIAL_OUTPUT_PIN_1, SERIAL_OUTPUT_PIN_2};
     static const int rx_pins[BRIDGES_COUNT] = {SERIAL_INPUT_PIN_1, SERIAL_INPUT_PIN_2};
     static const int dir_pins[BRIDGES_COUNT] = {SERIAL_IO_PIN_1, SERIAL_IO_PIN_2};
+    static const uart_mode_t modes[BRIDGES_COUNT] = {SERIAL_MODE_1, SERIAL_MODE_2};
 
     serial_config->port_num = port_nums[index];
     serial_config->tx_pin = tx_pins[index];
     serial_config->rx_pin = rx_pins[index];
     serial_config->dir_pin = dir_pins[index];
+    serial_config->mode = modes[index];
 
     char key_buf[SETTING_ITEM_MAX_STR_LEN];
     char value_str[SETTING_ITEM_MAX_STR_LEN];
@@ -439,6 +441,7 @@ static inline bool bridge_config_equal(const bridge_config_t *a, const bridge_co
            (a->serial_config.parity == b->serial_config.parity) &&
            (a->serial_config.stopbits == b->serial_config.stopbits) &&
            (a->serial_config.databits == b->serial_config.databits) &&
+           (a->serial_config.mode == b->serial_config.mode) &&
            (a->bridge_mode == b->bridge_mode) &&
            (a->bridge_ip == b->bridge_ip) &&
            (a->bridge_port == b->bridge_port) &&

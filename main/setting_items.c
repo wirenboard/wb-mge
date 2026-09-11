@@ -217,9 +217,9 @@ static const setting_item_t setting_items[] = {
     {KEY_BRIDGE_MB1, DEFAULT_BRIDGE_MB, validate_bool, SETTING_ITEM_TYPE_BOOL},
 
     // RS485 port 2 settings
-    {KEY_BAUDRATE2, DEFAULT_BAUDRATE, validate_baudrate, SETTING_ITEM_TYPE_INT},
-    {KEY_STOPBITS2, DEFAULT_STOPBITS, validate_stopbits, SETTING_ITEM_TYPE_STRING},
-    {KEY_PARITY2, DEFAULT_PARITY, validate_parity, SETTING_ITEM_TYPE_STRING},
+    {KEY_BAUDRATE2, DEFAULT_BAUDRATE_2, validate_baudrate, SETTING_ITEM_TYPE_INT},
+    {KEY_STOPBITS2, DEFAULT_STOPBITS_2, validate_stopbits, SETTING_ITEM_TYPE_STRING},
+    {KEY_PARITY2, DEFAULT_PARITY_2, validate_parity, SETTING_ITEM_TYPE_STRING},
     {KEY_DATABITS2, DEFAULT_DATABITS, validate_databits, SETTING_ITEM_TYPE_STRING},
     {KEY_485_TERM_2, DEFAULT_485_TERM, validate_bool, SETTING_ITEM_TYPE_BOOL},
     {KEY_485_FAIL_SAFE_2, DEFAULT_485_FAIL_SAFE, validate_bool, SETTING_ITEM_TYPE_BOOL},
@@ -229,6 +229,12 @@ static const setting_item_t setting_items[] = {
     {KEY_BRIDGE_PORT2, DEFAULT_BRIDGE_PORT2, validate_port, SETTING_ITEM_TYPE_INT},
     {KEY_BRIDGE_IP2, DEFAULT_BRIDGE_IP, validate_ip, SETTING_ITEM_TYPE_STRING},
     {KEY_BRIDGE_MB2, DEFAULT_BRIDGE_MB, validate_bool, SETTING_ITEM_TYPE_BOOL},
+
+    // Bookkeeping for the one-time port 2 line-format migration, not a user setting:
+    // it is deliberately absent from the settings_manager mappings, so it never reaches
+    // the settings API. It lives in this table anyway so that a factory reset restores
+    // it along with everything else.
+    {KEY_PORT2_MIGRATED, DEFAULT_PORT2_MIGRATED, validate_bool, SETTING_ITEM_TYPE_BOOL},
 
     // Port manager mode (per-port, mutually exclusive operating mode)
     {KEY_PORT_MODE1, PORT_MODE_TCP_BRIDGE_STR, validate_port_mode, SETTING_ITEM_TYPE_STRING},
@@ -242,6 +248,15 @@ static const setting_item_t setting_items[] = {
 
     // Firmware update channel: read by the web UI to pick a version from the release manifest
     {KEY_UPDATE_CHANNEL, DEFAULT_UPDATE_CHANNEL, validate_update_channel, SETTING_ITEM_TYPE_STRING},
+
+    // Airzone gateway: the four installer settings the Z-Wave board reads out of this
+    // firmware, plus the two event counters it watches for changes (airzone_gw.c).
+    {KEY_AIRZONE_ADDRESS,  DEFAULT_AIRZONE_ADDRESS, validate_airzone_address, SETTING_ITEM_TYPE_INT},
+    {KEY_AIRZONE_ZONE,     DEFAULT_AIRZONE_ZONE,    validate_airzone_zone,    SETTING_ITEM_TYPE_INT},
+    {KEY_AIRZONE_SPEED,    DEFAULT_AIRZONE_SPEED,   validate_airzone_speed,   SETTING_ITEM_TYPE_INT},
+    {KEY_AIRZONE_PRODUCT,  DEFAULT_AIRZONE_PRODUCT, validate_airzone_product, SETTING_ITEM_TYPE_INT},
+    {KEY_AIRZONE_INCL_CNT, DEFAULT_AIRZONE_COUNTER, validate_airzone_counter, SETTING_ITEM_TYPE_INT},
+    {KEY_AIRZONE_SET_CNT,  DEFAULT_AIRZONE_COUNTER, validate_airzone_counter, SETTING_ITEM_TYPE_INT},
 };
 
 static const setting_item_t *find_setting_item(const char *key)
@@ -419,6 +434,89 @@ esp_err_t setting_items_migrate_port_mode(void)
     return ESP_OK;
 }
 
+#ifdef MODEL_mgu_v1
+// One-time migration of port 2's line format, WB-MGU only. On this board port 2 is not a
+// user-facing RS-485 header but the internal WBE2 bus to the Z-Wave board, which opens
+// the link as 115200 8E1 — a constant on its side, not a parameter — so all three of
+// rate, parity and stop bits have to match or the link never comes up.
+//
+// The board-conditional defaults in config.h settle that for a factory-fresh unit, but
+// not for one already in the field: setting_items_set_defaults(true) only writes keys
+// that are MISSING, and baudrate_2 / parity_2 / stopbits_2 exist in NVS on any unit that
+// was ever powered up with an earlier build. There they still hold the port 1 defaults
+// (9600 8N2) and the new defaults would never reach them, leaving the link silently dead.
+//
+// Hence the rewrite here, and hence the marker: unlike the port_mode migration above
+// there is no "is the new key absent?" question to ask, because all three keys already
+// exist. Without KEY_PORT2_MIGRATED the rewrite would repeat on every boot and stamp
+// over a value an installer had deliberately set by hand afterwards — the one thing this
+// must not do. So the marker is what makes it a migration rather than a policy.
+//
+// Runs BEFORE set_defaults(), like the port_mode migration: the marker is itself a
+// setting item, so letting defaults run first would create it and the migration would
+// never fire at all.
+//
+// All-or-nothing: a failed write records the marker as false and the next boot retries the
+// whole rewrite. Partially migrated line parameters are useless anyway — the link is down
+// until every one of the three matches.
+//
+// Writing false rather than simply leaving the marker unwritten is what makes that retry
+// real. set_defaults() runs immediately after this and creates every ABSENT key from its
+// default, and this marker's default is "true" — so a half-done rewrite that left the
+// marker alone would be stamped "already migrated" by the very next call, and port 2 would
+// stay on the old line format for the life of the device with the link silently down.
+esp_err_t setting_items_migrate_port2_line_format(void)
+{
+    static const struct {
+        const char *key;
+        const char *value;
+    } port2_line_format[] = {
+        {KEY_BAUDRATE2, DEFAULT_BAUDRATE_2},
+        {KEY_PARITY2,   DEFAULT_PARITY_2},
+        {KEY_STOPBITS2, DEFAULT_STOPBITS_2},
+    };
+
+    if (!storage_iface) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    // Present AND true, not merely present. An absent key reads back as its default, which
+    // is "true", so the presence test has to stay — but presence on its own would also
+    // swallow the false written by a failed run below.
+    if (storage_iface->has_key(KEY_PORT2_MIGRATED) && setting_items_read_bool(KEY_PORT2_MIGRATED)) {
+        return ESP_OK;
+    }
+
+    for (unsigned i = 0; i < ARRAY_SIZE(port2_line_format); i++) {
+        // Write through setting_items_save() so each value is validated before it lands
+        // in NVS, exactly as a value coming from the settings API would be.
+        esp_err_t save_ret = setting_items_save(port2_line_format[i].key, port2_line_format[i].value);
+        if (save_ret != ESP_OK) {
+            ESP_LOGE(TAG, "Migration: failed to set %s = %s (%s); will retry on the next boot",
+                     port2_line_format[i].key, port2_line_format[i].value, esp_err_to_name(save_ret));
+            // Claim the key with an explicit false so the set_defaults() call that follows
+            // cannot create it as "true" and declare this half-done rewrite finished.
+            (void)setting_items_save_bool(KEY_PORT2_MIGRATED, false);
+            return save_ret;
+        }
+        ESP_LOGI(TAG, "Migration: set %s = %s for the WBE2 link to the Z-Wave board",
+                 port2_line_format[i].key, port2_line_format[i].value);
+    }
+
+    esp_err_t marker_ret = setting_items_save_bool(KEY_PORT2_MIGRATED, true);
+    if (marker_ret != ESP_OK) {
+        // Not a problem for the device: all three values did land, and the set_defaults()
+        // call that follows creates the marker from its "true" default, which is the
+        // truthful state here. Logged because a storage that refuses a write is worth
+        // knowing about.
+        ESP_LOGE(TAG, "Migration: line format written, but failed to record %s (%s)",
+                 KEY_PORT2_MIGRATED, esp_err_to_name(marker_ret));
+    }
+
+    return marker_ret;
+}
+#endif
+
 esp_err_t setting_items_init(void)
 {
     ESP_LOGI(TAG, "Initializing settings with string storage");
@@ -430,6 +528,15 @@ esp_err_t setting_items_init(void)
     if (migrate_ret != ESP_OK) {
         ESP_LOGW(TAG, "port_mode migration reported an error: %s", esp_err_to_name(migrate_ret));
     }
+
+#ifdef MODEL_mgu_v1
+    // Also before defaults: the three port 2 line-format keys already exist on an
+    // upgraded unit, so set_defaults() would leave them at the old values.
+    esp_err_t port2_ret = setting_items_migrate_port2_line_format();
+    if (port2_ret != ESP_OK) {
+        ESP_LOGW(TAG, "port 2 line-format migration reported an error: %s", esp_err_to_name(port2_ret));
+    }
+#endif
 
     return setting_items_set_defaults(true);
 }
@@ -444,6 +551,13 @@ esp_err_t setting_items_init_with_storage(const setting_storage_iface_t *test_st
     if (migrate_ret != ESP_OK) {
         ESP_LOGW(TAG, "port_mode migration reported an error: %s", esp_err_to_name(migrate_ret));
     }
+
+#ifdef MODEL_mgu_v1
+    esp_err_t port2_ret = setting_items_migrate_port2_line_format();
+    if (port2_ret != ESP_OK) {
+        ESP_LOGW(TAG, "port 2 line-format migration reported an error: %s", esp_err_to_name(port2_ret));
+    }
+#endif
 
     return setting_items_set_defaults(true);
 }

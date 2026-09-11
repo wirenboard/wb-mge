@@ -17,6 +17,7 @@ bool mock_validate_wifi_auth_called = false;
 bool mock_validate_bridge_mode_called = false;
 bool mock_validate_port_mode_called = false;
 bool mock_validate_update_channel_called = false;
+bool mock_validate_airzone_called = false;
 bool mock_validate_bool_called = false;
 bool mock_validate_login_called = false;
 bool mock_validate_password_called = false;
@@ -39,6 +40,7 @@ void mock_reset_validator_flags(void)
     mock_validate_bridge_mode_called = false;
     mock_validate_port_mode_called = false;
     mock_validate_update_channel_called = false;
+    mock_validate_airzone_called = false;
     mock_validate_bool_called = false;
     mock_validate_login_called = false;
     mock_validate_password_called = false;
@@ -150,6 +152,44 @@ bool validate_update_channel(const char *value)
 {
     (void)value;
     mock_validate_update_channel_called = true;
+    return true;
+}
+
+// One flag for all five Airzone validators: this suite only cares that the table rows
+// are wired to a validator at all, and the ranges themselves are checked against the
+// real implementations in the setting_validators suite.
+bool validate_airzone_address(const char *value)
+{
+    (void)value;
+    mock_validate_airzone_called = true;
+    return true;
+}
+
+bool validate_airzone_zone(const char *value)
+{
+    (void)value;
+    mock_validate_airzone_called = true;
+    return true;
+}
+
+bool validate_airzone_speed(const char *value)
+{
+    (void)value;
+    mock_validate_airzone_called = true;
+    return true;
+}
+
+bool validate_airzone_product(const char *value)
+{
+    (void)value;
+    mock_validate_airzone_called = true;
+    return true;
+}
+
+bool validate_airzone_counter(const char *value)
+{
+    (void)value;
+    mock_validate_airzone_called = true;
     return true;
 }
 

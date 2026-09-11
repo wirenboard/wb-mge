@@ -21,6 +21,12 @@
 #define KEY_PARITY2                 "parity_2"
 #define KEY_DATABITS2               "databits_2"
 
+// Marker recording that the one-time port 2 line-format migration has already run on
+// this unit (max 15 chars for ESP32 NVS). It is a plain setting item on every board so
+// that the settings table stays board-independent; only the WB-MGU build has a
+// migration that reads it, and no board exposes it over the settings API.
+#define KEY_PORT2_MIGRATED          "port2_migrated"
+
 #define KEY_ETH_IP_STATIC           "eth_ip_static"
 #define KEY_ETH_MASK_STATIC         "eth_mask_static"
 #define KEY_ETH_GW_STATIC           "eth_gw_static"
@@ -111,6 +117,15 @@
 // Firmware update channel NVS key (max 15 chars for ESP32 NVS)
 #define KEY_UPDATE_CHANNEL                  "upd_channel"
 
+// Airzone gateway settings and event counters (max 15 chars for ESP32 NVS).
+// az_speed holds a multiplier of 1200 baud, not a baud rate.
+#define KEY_AIRZONE_ADDRESS                 "az_address"
+#define KEY_AIRZONE_ZONE                    "az_zone"
+#define KEY_AIRZONE_SPEED                   "az_speed"
+#define KEY_AIRZONE_PRODUCT                 "az_product"
+#define KEY_AIRZONE_INCL_CNT                "az_incl_cnt"
+#define KEY_AIRZONE_SET_CNT                 "az_set_cnt"
+
 // Port manager mode string values (transport-only)
 #define PORT_MODE_DISABLED_STR      "disabled"
 #define PORT_MODE_TCP_BRIDGE_STR    "tcp_bridge"
@@ -157,6 +172,15 @@ esp_err_t setting_items_set_defaults(bool only_uninitialized);
 // (old single-axis firmware) when port_mode_N is absent. Idempotent and best-effort
 // per port. Must run after the storage interface is set and BEFORE set_defaults().
 esp_err_t setting_items_migrate_port_mode(void);
+
+#ifdef MODEL_mgu_v1
+// One-time migration of port 2's line format to the fixed WBE2 parameters of the Z-Wave
+// board. Runs exactly once per unit, guarded by KEY_PORT2_MIGRATED; after that the three
+// keys are the installer's to set. Must run after the storage interface is set and
+// BEFORE set_defaults(). WB-MGU only — on every other board port 2 is a user-facing
+// RS-485 header with nothing to migrate to.
+esp_err_t setting_items_migrate_port2_line_format(void);
+#endif
 
 // Iterator functions for all settings
 size_t setting_items_get_count(void);

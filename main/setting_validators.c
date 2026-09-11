@@ -13,6 +13,21 @@
 #define BAUDRATE_MIN                        1200
 #define BAUDRATE_MAX                        115200
 
+// Airzone gateway setting ranges. These are the ranges the Z-Wave board enforces on
+// its side; they must stay identical, or a value accepted here is rejected there.
+#define AIRZONE_ADDRESS_MIN                 1
+#define AIRZONE_ADDRESS_MAX                 247
+#define AIRZONE_ZONE_MIN                    1
+#define AIRZONE_ZONE_MAX                    32
+// Speed CODE, a multiplier of 1200 baud: 4 = 4800 ... 96 = 115200
+#define AIRZONE_SPEED_MIN                   4
+#define AIRZONE_SPEED_MAX                   96
+#define AIRZONE_PRODUCT_MIN                 0
+#define AIRZONE_PRODUCT_MAX                 3
+// The counters are 16-bit and wrap, so every u16 value is a legal stored value
+#define AIRZONE_COUNTER_MIN                 0
+#define AIRZONE_COUNTER_MAX                 65535
+
 // Validation functions
 bool validate_hostname(const char *value)
 {
@@ -448,4 +463,48 @@ bool validate_wifi_password(const char *value)
         }
     }
     return true;
+}
+
+// Range check shared by the Airzone gateway settings: the value must be a bare
+// decimal integer (no trailing characters) inside [min, max].
+static bool validate_int_range(const char *value, long min, long max)
+{
+    if (!value || (*value == '\0')) {
+        return false;
+    }
+
+    char *endptr;
+    long v = strtol(value, &endptr, 10);
+    return ((*endptr == '\0') && (v >= min) && (v <= max));
+}
+
+// Airzone Modbus address of the air conditioner: a regular Modbus unit id.
+bool validate_airzone_address(const char *value)
+{
+    return validate_int_range(value, AIRZONE_ADDRESS_MIN, AIRZONE_ADDRESS_MAX);
+}
+
+// Airzone zone number.
+bool validate_airzone_zone(const char *value)
+{
+    return validate_int_range(value, AIRZONE_ZONE_MIN, AIRZONE_ZONE_MAX);
+}
+
+// Airzone line speed CODE, which is a multiplier of 1200 baud and not a baud
+// rate: 4 is 4800, 16 is 19200, 96 is 115200.
+bool validate_airzone_speed(const char *value)
+{
+    return validate_int_range(value, AIRZONE_SPEED_MIN, AIRZONE_SPEED_MAX);
+}
+
+// Airzone product type code.
+bool validate_airzone_product(const char *value)
+{
+    return validate_int_range(value, AIRZONE_PRODUCT_MIN, AIRZONE_PRODUCT_MAX);
+}
+
+// Airzone event counter: a 16-bit wrapping counter, so the whole u16 range is valid.
+bool validate_airzone_counter(const char *value)
+{
+    return validate_int_range(value, AIRZONE_COUNTER_MIN, AIRZONE_COUNTER_MAX);
 }

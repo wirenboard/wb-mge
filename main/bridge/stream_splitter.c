@@ -66,12 +66,8 @@ static size_t fm_expected_len(const uint8_t *buf, size_t avail)
     return result;
 }
 
-/* Return the expected full frame length (including slave_id + 2 CRC bytes) for
- * a Modbus RTU frame starting at buf[0..avail-1].
- * is_response selects the response-length formula for FCs that differ between
- * request and response (e.g. FC 01/02/03/04).
- * Returns 0 when the length cannot be determined or exceeds avail. */
-static size_t frame_expected_len(const uint8_t *buf, size_t avail, bool is_response)
+/* See stream_splitter.h for the contract. */
+size_t stream_frame_expected_len(const uint8_t *buf, size_t avail, bool is_response)
 {
     if (avail < 2) return 0;
 
@@ -181,7 +177,7 @@ int stream_split(const uint8_t *buf, size_t len,
          * a slave response to the last known master request. */
         if (first_frame && context_fc != 0) {
             first_frame = false;
-            size_t ctx_len = frame_expected_len(rem, rem_len, /*is_response=*/true);
+            size_t ctx_len = stream_frame_expected_len(rem, rem_len, /*is_response=*/true);
             if (ctx_len != 0 && frame_crc_ok(rem, ctx_len)) {
                 frame_len = ctx_len;
             }
@@ -192,13 +188,13 @@ int stream_split(const uint8_t *buf, size_t len,
 
         /* Level 2: length table — try request interpretation first, then response. */
         if (frame_len == 0) {
-            size_t req_len = frame_expected_len(rem, rem_len, /*is_response=*/false);
+            size_t req_len = stream_frame_expected_len(rem, rem_len, /*is_response=*/false);
             if (req_len != 0 && frame_crc_ok(rem, req_len)) {
                 frame_len = req_len;
             }
         }
         if (frame_len == 0) {
-            size_t res_len = frame_expected_len(rem, rem_len, /*is_response=*/true);
+            size_t res_len = stream_frame_expected_len(rem, rem_len, /*is_response=*/true);
             if (res_len != 0 && frame_crc_ok(rem, res_len)) {
                 frame_len = res_len;
             }

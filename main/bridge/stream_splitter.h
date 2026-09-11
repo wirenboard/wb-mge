@@ -15,6 +15,19 @@ typedef struct {
 } stream_frame_t;
 
 /*
+ * Return the expected full frame length (slave_id + PDU + 2 CRC bytes) of the Modbus
+ * RTU frame starting at buf[0..avail-1].
+ *
+ * is_response selects the response-length formula for the FCs whose request and
+ * response differ in length (FC 01/02/03/04, 0F, 10).
+ *
+ * Returns 0 both when the function code has no known length AND when the length is
+ * known but exceeds avail — a caller that needs to tell those apart has to ask about a
+ * buffer long enough for the answer to fit.
+ */
+size_t stream_frame_expected_len(const uint8_t *buf, size_t avail, bool is_response);
+
+/*
  * Split a merged Modbus RTU byte stream into individual frames.
  *
  * buf          — input buffer (may contain multiple back-to-back frames)

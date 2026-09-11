@@ -3,10 +3,12 @@
 /*
  * Board-dependent RS485 UART GPIO map, selected at build time by device
  * signature (Makefile MODEL_LIST / TARGET). Each board header defines the same
- * SERIAL_{INPUT,OUTPUT,IO}_PIN_{1,2} symbols with board-specific pin numbers.
+ * SERIAL_{INPUT,OUTPUT,IO}_PIN_{1,2} symbols with board-specific pin numbers,
+ * and the same SERIAL_MODE_{1,2} UART driver modes.
  */
 
 #include "driver/gpio.h"
+#include "driver/uart.h"   /* UART_MODE_*, used by the SERIAL_MODE_* below */
 
 #if defined(MODEL_mgu_v1)
     #include "boards/mgu_v1.h"

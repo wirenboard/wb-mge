@@ -19,6 +19,11 @@ bool mock_rams_write_str_called = false;
 int mock_storage_read_error_code = ESP_OK;
 int mock_storage_write_error_code = ESP_OK;
 
+// When set, writes to this one key fail while every other key still writes normally.
+// mock_storage_write_error_code cannot express that: it fails the whole storage, which
+// hides any bug whose trigger is "one write failed and the ones after it succeeded".
+const char *mock_storage_write_fail_key = NULL;
+
 static storage_item_t storage[MAX_ITEM_NUM];
 
 void rams_init()
@@ -48,6 +53,11 @@ int rams_write_str(const char* key, const char* value)
 
     if (mock_storage_write_error_code != ESP_OK) {
         return mock_storage_write_error_code;
+    }
+
+    if (mock_storage_write_fail_key && key &&
+        (strncmp(key, mock_storage_write_fail_key, MAX_KEY_LEN) == 0)) {
+        return ESP_ERR_NO_MEM;
     }
 
     if (!key || !value) return ESP_ERR_INVALID_ARG;

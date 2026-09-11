@@ -43,6 +43,12 @@ void mock_reset_reason_reset(void);
 /* unittests/mocks/esp_timer.c */
 void mock_esp_timer_reset(void);
 
+/* mocks/airzone_gw.c */
+void mock_airzone_set_settings(uint16_t address, uint16_t zone, uint16_t speed, uint16_t product);
+void mock_airzone_set_counters(uint16_t inclusion, uint16_t settings);
+uint16_t mock_airzone_get_mirror(unsigned index);
+void mock_airzone_reset(void);
+
 /* ---- Constants mirrored from mb_device.c (Unit ID, FCs, exceptions) ------ */
 
 #define DEV_UNIT_ID   0xFFu
@@ -133,6 +139,7 @@ void setUp(void)
     mock_heap_reset();
     mock_reset_reason_reset();
     mock_esp_timer_reset();
+    mock_airzone_reset();
 
     /* Deterministic device identity for every test. */
     memset(&sys_info, 0, sizeof(sys_info));
@@ -1085,6 +1092,352 @@ void test_info_block_readable_via_fc03(void)
     TEST_ASSERT_EQUAL_UINT8_MESSAGE(0x02u, exc, "undefined address -> ILLEGAL DATA ADDRESS");
 }
 
+/* ---- Airzone block and the Modbus RTU entry point ------------------------ */
+
+/* Build an RTU request ADU (header + PDU + CRC) into buf. pdu_len counts the bytes
+ * after the unit id, function code included. Returns the full ADU length. */
+static size_t make_rtu(uint8_t *buf, size_t pdu_len)
+{
+    uint16_t crc = modbus_crc16(buf, (uint16_t)(1u + pdu_len));
+    buf[1 + pdu_len]     = (uint8_t)(crc & 0xFFu);   /* RTU puts the low byte first */
+    buf[1 + pdu_len + 1] = (uint8_t)(crc >> 8);
+    return 1u + pdu_len + 2u;
+}
+
+/* Build an RTU read request: unit, fc, start(2), quantity(2), CRC. */
+static size_t make_rtu_read(uint8_t *buf, uint8_t unit, uint8_t fc, uint16_t start, uint16_t count)
+{
+    buf[0] = unit;
+    buf[1] = fc;
+    buf[2] = (uint8_t)(start >> 8);
+    buf[3] = (uint8_t)(start & 0xFFu);
+    buf[4] = (uint8_t)(count >> 8);
+    buf[5] = (uint8_t)(count & 0xFFu);
+    return make_rtu(buf, 5u);
+}
+
+/* Build an RTU FC16 request: unit, 0x10, start(2), quantity(2), byte count, data, CRC.
+ * byte_count is passed in so a test can deliberately make it disagree with count. */
+static size_t make_rtu_write(uint8_t *buf, uint8_t unit, uint16_t start, uint16_t count,
+                             uint8_t byte_count, const uint16_t *values)
+{
+    buf[0] = unit;
+    buf[1] = 0x10u;
+    buf[2] = (uint8_t)(start >> 8);
+    buf[3] = (uint8_t)(start & 0xFFu);
+    buf[4] = (uint8_t)(count >> 8);
+    buf[5] = (uint8_t)(count & 0xFFu);
+    buf[6] = byte_count;
+    for (uint16_t i = 0; i < count; i++) {
+        buf[7 + i * 2]     = (uint8_t)(values[i] >> 8);
+        buf[7 + i * 2 + 1] = (uint8_t)(values[i] & 0xFFu);
+    }
+    return make_rtu(buf, (size_t)(6u + count * 2u));
+}
+
+/* Assert that an ADU carries a valid RTU CRC, low byte first. */
+static void assert_rtu_crc(const uint8_t *buf, size_t len)
+{
+    uint16_t crc = modbus_crc16(buf, (uint16_t)(len - 2u));
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE((uint8_t)(crc & 0xFFu), buf[len - 2u],
+        "RTU CRC low byte must come first");
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE((uint8_t)(crc >> 8), buf[len - 1u],
+        "RTU CRC high byte must come last");
+}
+
+/* All six Airzone registers 535..540 must answer ONE FC03: the Z-Wave board reads
+ * them in a single transaction, and a gap anywhere in the range would refuse the
+ * whole read. */
+void test_airzone_settings_block_single_read(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Airzone 535..540 answer one FC03");
+    LOG_MESSAGE();
+
+    mock_airzone_set_counters(7u, 9u);
+    mock_airzone_set_settings(33u, 5u, 16u, 2u);
+
+    uint8_t buf[260];
+    uint8_t exc = 0xAA;
+    size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
+                                             535u, 6u, buf, &exc);
+
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(MBAP_LEN + 1u + 12u, n, "six registers must answer one read");
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(7u,  resp_reg(buf, 0), "535 = inclusion counter");
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(9u,  resp_reg(buf, 1), "536 = settings counter");
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(33u, resp_reg(buf, 2), "537 = Airzone Modbus address");
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(5u,  resp_reg(buf, 3), "538 = zone");
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(16u, resp_reg(buf, 4), "539 = speed code");
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(2u,  resp_reg(buf, 5), "540 = product type");
+}
+
+/* The whole Airzone block, settings and mirror together, is one contiguous read. */
+void test_airzone_whole_block_readable(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Airzone 535..551 answer one FC03");
+    LOG_MESSAGE();
+
+    uint8_t buf[260];
+    uint8_t exc = 0xAA;
+    size_t n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
+                                             535u, 17u, buf, &exc);
+
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(MBAP_LEN + 1u + 34u, n, "535..551 must answer one read");
+
+    /* 552 is past the block and belongs to nobody. */
+    exc = 0xAA;
+    n = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001, 552u, 1u, buf, &exc);
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, n, "552 must not be served");
+    TEST_ASSERT_EQUAL_UINT8(EX_ILLEGAL_ADDRESS, exc);
+}
+
+/* A request for another unit id is not ours: no response, not even an exception. */
+void test_rtu_foreign_unit_id(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "RTU: a foreign unit id gets no answer");
+    LOG_MESSAGE();
+
+    uint8_t req[16];
+    uint8_t resp[MODBUS_RTU_MAX_FRAME_LEN];
+    size_t req_len = make_rtu_read(req, 0x01u, FC_READ_HOLDING, 535u, 6u);
+
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(0u, mb_device_rtu_handle_request(req, req_len, resp),
+        "a request addressed elsewhere must produce no response");
+}
+
+/* FC03 over RTU: full ADU shape, values, and the CRC byte order. */
+void test_rtu_read_response_shape(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "RTU: FC03 response shape and CRC order");
+    LOG_MESSAGE();
+
+    mock_airzone_set_counters(0x1234u, 0x00FFu);
+    mock_airzone_set_settings(1u, 1u, 16u, 1u);
+
+    uint8_t req[16];
+    uint8_t resp[MODBUS_RTU_MAX_FRAME_LEN];
+    size_t req_len = make_rtu_read(req, DEV_UNIT_ID, FC_READ_HOLDING, 535u, 2u);
+    size_t n = mb_device_rtu_handle_request(req, req_len, resp);
+
+    /* unit + fc + byte count + 4 data bytes + CRC */
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(3u + 4u + 2u, n, "FC03 response length");
+    TEST_ASSERT_EQUAL_HEX8(DEV_UNIT_ID, resp[0]);
+    TEST_ASSERT_EQUAL_HEX8(FC_READ_HOLDING, resp[1]);
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(4u, resp[2], "byte count = 2 registers");
+    TEST_ASSERT_EQUAL_HEX8(0x12u, resp[3]);
+    TEST_ASSERT_EQUAL_HEX8(0x34u, resp[4]);
+    TEST_ASSERT_EQUAL_HEX8(0x00u, resp[5]);
+    TEST_ASSERT_EQUAL_HEX8(0xFFu, resp[6]);
+    assert_rtu_crc(resp, n);
+
+    /* FC04 resolves the same map over the same framing. */
+    req_len = make_rtu_read(req, DEV_UNIT_ID, FC_READ_INPUT, 535u, 2u);
+    n = mb_device_rtu_handle_request(req, req_len, resp);
+    TEST_ASSERT_EQUAL_UINT(3u + 4u + 2u, n);
+    TEST_ASSERT_EQUAL_HEX8(FC_READ_INPUT, resp[1]);
+    TEST_ASSERT_EQUAL_HEX8(0x12u, resp[3]);
+    assert_rtu_crc(resp, n);
+}
+
+/* An unsupported function code answers 0x01 in the RTU exception shape (five bytes
+ * with a CRC), NOT the TCP one. */
+void test_rtu_illegal_function(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "RTU: unsupported FC -> exception 0x01");
+    LOG_MESSAGE();
+
+    uint8_t req[16];
+    uint8_t resp[MODBUS_RTU_MAX_FRAME_LEN];
+    size_t req_len = make_rtu_read(req, DEV_UNIT_ID, 0x06u, 535u, 1u);   /* FC06 write single */
+    size_t n = mb_device_rtu_handle_request(req, req_len, resp);
+
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(5u, n, "RTU exception ADU is 5 bytes");
+    TEST_ASSERT_EQUAL_HEX8(DEV_UNIT_ID, resp[0]);
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x86u, resp[1], "function code with the error bit set");
+    TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_FUNCTION, resp[2]);
+    assert_rtu_crc(resp, n);
+}
+
+/* Quantity out of range answers 0x03. */
+void test_rtu_bad_quantity(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "RTU: bad quantity -> exception 0x03");
+    LOG_MESSAGE();
+
+    uint8_t req[16];
+    uint8_t resp[MODBUS_RTU_MAX_FRAME_LEN];
+
+    size_t req_len = make_rtu_read(req, DEV_UNIT_ID, FC_READ_HOLDING, 535u, 0u);
+    size_t n = mb_device_rtu_handle_request(req, req_len, resp);
+    TEST_ASSERT_EQUAL_UINT(5u, n);
+    TEST_ASSERT_EQUAL_HEX8(0x83u, resp[1]);
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03u, resp[2], "zero registers is an illegal data value");
+
+    req_len = make_rtu_read(req, DEV_UNIT_ID, FC_READ_HOLDING, 535u, 126u);
+    n = mb_device_rtu_handle_request(req, req_len, resp);
+    TEST_ASSERT_EQUAL_UINT(5u, n);
+    TEST_ASSERT_EQUAL_HEX8_MESSAGE(0x03u, resp[2], "more than 125 registers is an illegal data value");
+    assert_rtu_crc(resp, n);
+}
+
+/* One unresolved address refuses the WHOLE read with 0x02 — no partial answer, even
+ * though every other register in the range resolves. */
+void test_rtu_unresolved_address_refuses_whole_read(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "RTU: one bad address refuses the whole read");
+    LOG_MESSAGE();
+
+    uint8_t req[16];
+    uint8_t resp[MODBUS_RTU_MAX_FRAME_LEN];
+
+    /* 535..551 all resolve; 552 does not, and it is the last register of the range. */
+    size_t req_len = make_rtu_read(req, DEV_UNIT_ID, FC_READ_HOLDING, 535u, 18u);
+    size_t n = mb_device_rtu_handle_request(req, req_len, resp);
+
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(5u, n, "the answer is an exception, not a short read");
+    TEST_ASSERT_EQUAL_HEX8(0x83u, resp[1]);
+    TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_ADDRESS, resp[2]);
+    assert_rtu_crc(resp, n);
+}
+
+/* FC16 writes the mirror block and echoes start address and quantity. */
+void test_rtu_fc16_writes_mirror_block(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "RTU: FC16 writes 541..551");
+    LOG_MESSAGE();
+
+    static const uint16_t values[3] = {0xAA55u, 0x0001u, 0xFFFFu};
+
+    uint8_t req[64];
+    uint8_t resp[MODBUS_RTU_MAX_FRAME_LEN];
+    size_t req_len = make_rtu_write(req, DEV_UNIT_ID, 541u, 3u, 6u, values);
+    size_t n = mb_device_rtu_handle_request(req, req_len, resp);
+
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(8u, n, "FC16 response is unit + fc + start + quantity + CRC");
+    TEST_ASSERT_EQUAL_HEX8(DEV_UNIT_ID, resp[0]);
+    TEST_ASSERT_EQUAL_HEX8(0x10u, resp[1]);
+    TEST_ASSERT_EQUAL_HEX8(0x02u, resp[2]);   /* 541 = 0x021D */
+    TEST_ASSERT_EQUAL_HEX8(0x1Du, resp[3]);
+    TEST_ASSERT_EQUAL_HEX8(0x00u, resp[4]);
+    TEST_ASSERT_EQUAL_HEX8(0x03u, resp[5]);
+    assert_rtu_crc(resp, n);
+
+    TEST_ASSERT_EQUAL_HEX16(0xAA55u, mock_airzone_get_mirror(0));
+    TEST_ASSERT_EQUAL_HEX16(0x0001u, mock_airzone_get_mirror(1));
+    TEST_ASSERT_EQUAL_HEX16(0xFFFFu, mock_airzone_get_mirror(2));
+
+    /* What was written comes back out of the read path unchanged. */
+    uint8_t rbuf[260];
+    uint8_t exc = 0xAA;
+    size_t rn = mb_device_build_read_response(DEV_UNIT_ID, FC_READ_HOLDING, 0x0001,
+                                              541u, 3u, rbuf, &exc);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u + 6u, rn);
+    TEST_ASSERT_EQUAL_HEX16(0xAA55u, resp_reg(rbuf, 0));
+    TEST_ASSERT_EQUAL_HEX16(0xFFFFu, resp_reg(rbuf, 2));
+}
+
+/* A write whose range is not entirely inside 541..551 is refused with 0x02, and
+ * nothing is written — not even the part that is inside the block. */
+void test_rtu_fc16_range_outside_block_refused(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "RTU: FC16 outside 541..551 -> exception 0x02");
+    LOG_MESSAGE();
+
+    static const uint16_t values[3] = {0x1111u, 0x2222u, 0x3333u};
+
+    uint8_t req[64];
+    uint8_t resp[MODBUS_RTU_MAX_FRAME_LEN];
+
+    /* Starts one register below the block: 540 is a read-only setting. */
+    size_t req_len = make_rtu_write(req, DEV_UNIT_ID, 540u, 3u, 6u, values);
+    size_t n = mb_device_rtu_handle_request(req, req_len, resp);
+    TEST_ASSERT_EQUAL_UINT(5u, n);
+    TEST_ASSERT_EQUAL_HEX8(0x90u, resp[1]);
+    TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_ADDRESS, resp[2]);
+    assert_rtu_crc(resp, n);
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(0u, mock_airzone_get_mirror(0),
+        "a refused write must not write the part of the range that was inside the block");
+
+    /* Runs one register past the end of the block. */
+    req_len = make_rtu_write(req, DEV_UNIT_ID, 550u, 3u, 6u, values);
+    n = mb_device_rtu_handle_request(req, req_len, resp);
+    TEST_ASSERT_EQUAL_UINT(5u, n);
+    TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_ADDRESS, resp[2]);
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(0u, mock_airzone_get_mirror(9),
+        "a refused write must leave the whole block untouched");
+
+    /* Nowhere near the block at all. */
+    req_len = make_rtu_write(req, DEV_UNIT_ID, 104u, 1u, 2u, values);
+    n = mb_device_rtu_handle_request(req, req_len, resp);
+    TEST_ASSERT_EQUAL_UINT(5u, n);
+    TEST_ASSERT_EQUAL_HEX8(EX_ILLEGAL_ADDRESS, resp[2]);
+}
+
+/* A byte count that disagrees with the quantity is an illegal data value. */
+void test_rtu_fc16_byte_count_mismatch(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "RTU: FC16 byte count mismatch -> exception 0x03");
+    LOG_MESSAGE();
+
+    static const uint16_t values[2] = {0x1111u, 0x2222u};
+
+    uint8_t req[64];
+    uint8_t resp[MODBUS_RTU_MAX_FRAME_LEN];
+    size_t req_len = make_rtu_write(req, DEV_UNIT_ID, 541u, 2u, 6u, values);   /* says 6, sends 4 */
+    size_t n = mb_device_rtu_handle_request(req, req_len, resp);
+
+    TEST_ASSERT_EQUAL_UINT(5u, n);
+    TEST_ASSERT_EQUAL_HEX8(0x90u, resp[1]);
+    TEST_ASSERT_EQUAL_HEX8(0x03u, resp[2]);
+    TEST_ASSERT_EQUAL_HEX16_MESSAGE(0u, mock_airzone_get_mirror(0), "nothing may be written");
+}
+
+/* The same FC16 write served over Modbus TCP: the writable block is a property of the
+ * device, not of the transport. */
+void test_tcp_fc16_writes_mirror_block(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "TCP: FC16 writes 541..551 as well");
+    LOG_MESSAGE();
+
+    uint8_t req[64];
+    uint8_t resp[MODBUS_TCP_MAX_ADU_LEN];
+
+    mb_tcp_header_t *h = (mb_tcp_header_t *)req;
+    h->transaction_id = 0x3412u;
+    h->protocol_id    = 0x0000u;
+    h->length         = modbus_swap16(9u);   /* unit + fc + start(2) + qty(2) + bc(1) + data(2) */
+    h->unit_id        = DEV_UNIT_ID;
+    h->function       = 0x10u;
+    req[MBAP_LEN + 0] = 0x02u;   /* start = 541 */
+    req[MBAP_LEN + 1] = 0x1Du;
+    req[MBAP_LEN + 2] = 0x00u;   /* quantity = 1 */
+    req[MBAP_LEN + 3] = 0x01u;
+    req[MBAP_LEN + 4] = 0x02u;   /* byte count */
+    req[MBAP_LEN + 5] = 0xBEu;
+    req[MBAP_LEN + 6] = 0xEFu;
+
+    size_t n = mb_device_handle_self_request(req, MBAP_LEN + 7u, resp);
+
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(MBAP_LEN + 4u, n, "FC16 TCP response echoes start and quantity");
+    const mb_tcp_header_t *rh = (const mb_tcp_header_t *)resp;
+    TEST_ASSERT_EQUAL_HEX16(0x3412u, rh->transaction_id);
+    TEST_ASSERT_EQUAL_HEX16(modbus_swap16(6u), rh->length);
+    TEST_ASSERT_EQUAL_HEX8(0x10u, rh->function);
+    TEST_ASSERT_EQUAL_HEX8(0x02u, resp[MBAP_LEN + 0]);
+    TEST_ASSERT_EQUAL_HEX8(0x1Du, resp[MBAP_LEN + 1]);
+    TEST_ASSERT_EQUAL_HEX16(0xBEEFu, mock_airzone_get_mirror(0));
+}
+
 /* ---- main ---------------------------------------------------------------- */
 
 int main(void)
@@ -1125,6 +1478,19 @@ int main(void)
     RUN_TEST(test_fw_numeric_no_suffix);
     RUN_TEST(test_pack_string_odd_boundary);
     RUN_TEST(test_info_block_readable_via_fc03);
+
+    /* Airzone register block and the Modbus RTU entry point */
+    RUN_TEST(test_airzone_settings_block_single_read);
+    RUN_TEST(test_airzone_whole_block_readable);
+    RUN_TEST(test_rtu_foreign_unit_id);
+    RUN_TEST(test_rtu_read_response_shape);
+    RUN_TEST(test_rtu_illegal_function);
+    RUN_TEST(test_rtu_bad_quantity);
+    RUN_TEST(test_rtu_unresolved_address_refuses_whole_read);
+    RUN_TEST(test_rtu_fc16_writes_mirror_block);
+    RUN_TEST(test_rtu_fc16_range_outside_block_refused);
+    RUN_TEST(test_rtu_fc16_byte_count_mismatch);
+    RUN_TEST(test_tcp_fc16_writes_mirror_block);
 
     return UNITY_END();
 }

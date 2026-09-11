@@ -9,3 +9,8 @@
 #define SERIAL_INPUT_PIN_2   GPIO_NUM_12   /* RS485-2 RX */
 #define SERIAL_OUTPUT_PIN_2  GPIO_NUM_14   /* RS485-2 TX */
 #define SERIAL_IO_PIN_2      GPIO_NUM_15   /* RS485-2 direction (DE/RE) */
+
+/* UART driver mode per port: both ports are real RS-485 headers with a
+ * transceiver whose direction pin the driver has to drive. */
+#define SERIAL_MODE_1        UART_MODE_RS485_HALF_DUPLEX
+#define SERIAL_MODE_2        UART_MODE_RS485_HALF_DUPLEX

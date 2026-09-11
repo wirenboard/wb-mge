@@ -6,6 +6,7 @@
 extern bool mock_rams_write_str_called;
 extern int mock_storage_read_error_code;
 extern int mock_storage_write_error_code;
+extern const char *mock_storage_write_fail_key;
 
 void rams_init(void);
 

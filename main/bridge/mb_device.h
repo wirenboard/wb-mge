@@ -39,3 +39,20 @@ size_t mb_device_build_read_response(uint8_t unit_id, uint8_t fc,
  */
 size_t mb_device_handle_self_request(const uint8_t *req, size_t req_len,
                                      uint8_t *resp_buf);
+
+/*
+ * Handle a Modbus RTU request addressed to the gateway itself (Unit ID 0xFF) and build
+ * a complete RTU ADU — CRC included, low byte first — into resp_buf.
+ *
+ * Supports FC03/FC04 (the whole register map) and FC16 (the writable mirror block).
+ * Anything else answers with an RTU exception ADU (unit, fc | 0x80, code, CRC), as do
+ * a bad quantity (0x03) and any unresolved address in the requested range (0x02 for
+ * the WHOLE request — this device never answers partially).
+ *
+ * The caller must have verified the frame's length and CRC before calling.
+ *   req      : complete RTU ADU, CRC bytes included.
+ *   req_len  : its length in bytes.
+ *   resp_buf : output buffer, at least MODBUS_RTU_MAX_FRAME_LEN bytes.
+ * Returns the response length, or 0 when the request is not addressed to this device.
+ */
+size_t mb_device_rtu_handle_request(const uint8_t *req, size_t req_len, uint8_t *resp_buf);

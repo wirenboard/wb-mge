@@ -260,7 +260,7 @@ static esp_err_t configure_uart_parameters(serial_config_t *serial_config)
      * without RTS/CTS or RS485 direction control. */
     err = uart_set_mode(serial_config->port_num, UART_MODE_UART);
 #else
-    err = uart_set_mode(serial_config->port_num, UART_MODE_RS485_HALF_DUPLEX);
+    err = uart_set_mode(serial_config->port_num, serial_config->mode);
 #endif
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Error during UART mode set");

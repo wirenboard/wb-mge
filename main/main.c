@@ -13,6 +13,7 @@
 #include "network.h"
 #include "settings_update.h"
 #include "debug_log.h"
+#include "airzone_gw.h"
 
 // Hardware-logic headers: needed by both builds. In QEMU these resolve to the
 // virtual IO bus (gpio_expander.h symbols come from virtual_io_qemu.c).
@@ -130,6 +131,9 @@ void app_main(void)
 
     ESP_ERROR_CHECK(nvs_init());
     ESP_ERROR_CHECK(setting_items_init());
+
+    // Loads the persisted Airzone counters, so it has to follow setting_items_init().
+    airzone_gw_init();
 
     update_io_bus_control();
 

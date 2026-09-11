@@ -218,6 +218,10 @@ static const mock_type_entry_t type_table[] = {
     { "cache_mb_srv_en",    SETTING_ITEM_TYPE_BOOL,   "true"              },
     { "cache_val_tout",     SETTING_ITEM_TYPE_INT,    "60"                },
     { "upd_channel",        SETTING_ITEM_TYPE_STRING, "stable"            },
+    { "az_address",         SETTING_ITEM_TYPE_INT,    "1"                 },
+    { "az_zone",            SETTING_ITEM_TYPE_INT,    "1"                 },
+    { "az_speed",           SETTING_ITEM_TYPE_INT,    "16"                },
+    { "az_product",         SETTING_ITEM_TYPE_INT,    "1"                 },
 };
 
 #define TYPE_TABLE_SIZE (sizeof(type_table) / sizeof(type_table[0]))

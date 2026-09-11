@@ -70,9 +70,19 @@ const mock_setting_item_t expected_items[] = {
     {"bridge_ip_1", "192.168.5.2", SETTING_ITEM_TYPE_STRING},
     {"bridge_modbus_1", "false", SETTING_ITEM_TYPE_BOOL},
 
+    // Port 2's line format is the one board-conditional entry of the table: on a WB-MGU
+    // port 2 is the internal WBE2 bus to the Z-Wave board, which talks 115200 8E1 only.
+    // Spelled out literally on both sides rather than through the DEFAULT_* macros, so
+    // this stays a check of the values and not a restatement of config.h.
+#ifdef MODEL_mgu_v1
+    {"baudrate_2", "115200", SETTING_ITEM_TYPE_INT},
+    {"stopbits_2", "1", SETTING_ITEM_TYPE_STRING},
+    {"parity_2", "even", SETTING_ITEM_TYPE_STRING},
+#else
     {"baudrate_2", "9600", SETTING_ITEM_TYPE_INT},
     {"stopbits_2", "2", SETTING_ITEM_TYPE_STRING},
     {"parity_2", "none", SETTING_ITEM_TYPE_STRING},
+#endif
     {"databits_2", "8", SETTING_ITEM_TYPE_STRING},
     {"485_term_2", "true", SETTING_ITEM_TYPE_BOOL},
     {"485_fail_safe_2", "true", SETTING_ITEM_TYPE_BOOL},
@@ -83,6 +93,10 @@ const mock_setting_item_t expected_items[] = {
     {"bridge_ip_2", "192.168.5.2", SETTING_ITEM_TYPE_STRING},
     {"bridge_modbus_2", "false", SETTING_ITEM_TYPE_BOOL},
 
+    // Marker of the one-time port 2 line-format migration. It defaults to "true" because
+    // a unit whose defaults have just been written already carries the right format.
+    {"port2_migrated", "true", SETTING_ITEM_TYPE_BOOL},
+
     {"port_mode_1", "tcp_bridge", SETTING_ITEM_TYPE_STRING},
     {"port_mode_2", "tcp_bridge", SETTING_ITEM_TYPE_STRING},
     {"cache_mb_port", "504", SETTING_ITEM_TYPE_INT},
@@ -90,6 +104,15 @@ const mock_setting_item_t expected_items[] = {
     {"cache_val_tout", "60", SETTING_ITEM_TYPE_INT},
 
     {"upd_channel", "stable", SETTING_ITEM_TYPE_STRING},
+
+    // Airzone gateway settings and event counters. az_speed is a multiplier of
+    // 1200 baud (16 = 19200), not a baud rate.
+    {"az_address", "1", SETTING_ITEM_TYPE_INT},
+    {"az_zone", "1", SETTING_ITEM_TYPE_INT},
+    {"az_speed", "16", SETTING_ITEM_TYPE_INT},
+    {"az_product", "1", SETTING_ITEM_TYPE_INT},
+    {"az_incl_cnt", "0", SETTING_ITEM_TYPE_INT},
+    {"az_set_cnt", "0", SETTING_ITEM_TYPE_INT},
 };
 
 #define SETTING_ITEMS_COUNT         (ARRAY_SIZE(expected_items))
@@ -107,6 +130,7 @@ void setUp(void)
 
     mock_storage_read_error_code = ESP_OK;
     mock_storage_write_error_code = ESP_OK;
+    mock_storage_write_fail_key = NULL;
 
     rams_init();
 }
@@ -1327,6 +1351,194 @@ void test_migrate_port_mode_fresh_device_default(void)
                                      "Fresh device should get the default port_mode 'tcp_bridge'");
 }
 
+// ── One-time port 2 line-format migration (setting_items_migrate_port2_line_format) ───
+// WB-MGU only, so this suite is built with MODEL_mgu_v1 (see its Makefile). On that board
+// port 2 is not an RS-485 header but the internal WBE2 bus to the Z-Wave board, which
+// opens the link as 115200 8E1 and nothing else. The board-conditional defaults settle
+// that for a fresh unit; these tests are about the unit that already has the three keys
+// in NVS, where setting_items_set_defaults(true) never gets to write anything.
+
+// The line format an upgraded unit carries: port 1's defaults, which is what port 2 got
+// before it had its own.
+#define LEGACY_PORT2_BAUDRATE       "9600"
+#define LEGACY_PORT2_PARITY         "none"
+#define LEGACY_PORT2_STOPBITS       "2"
+
+// The WBE2 line format the Z-Wave board is hardwired to.
+#define WBE2_PORT2_BAUDRATE         "115200"
+#define WBE2_PORT2_PARITY           "even"
+#define WBE2_PORT2_STOPBITS         "1"
+
+static void seed_legacy_port2_line_format(void)
+{
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BAUDRATE2, LEGACY_PORT2_BAUDRATE),
+                                  "Pre-seeding legacy baudrate_2 should succeed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_PARITY2, LEGACY_PORT2_PARITY),
+                                  "Pre-seeding legacy parity_2 should succeed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_STOPBITS2, LEGACY_PORT2_STOPBITS),
+                                  "Pre-seeding legacy stopbits_2 should succeed");
+}
+
+static void assert_port2_line_format(const char *baudrate, const char *parity, const char *stopbits,
+                                     const char *context)
+{
+    static const char *keys[] = {KEY_BAUDRATE2, KEY_PARITY2, KEY_STOPBITS2};
+    const char *expected[] = {baudrate, parity, stopbits};
+
+    for (size_t i = 0; i < ARRAY_SIZE(keys); i++) {
+        char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+        TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(keys[i], value),
+                                      "Reading a port 2 line-format setting should succeed");
+
+        char log_message[TEST_BUFFER_SIZE];
+        snprintf(log_message, sizeof(log_message), "%s should be %s %s", keys[i], expected[i], context);
+        TEST_ASSERT_EQUAL_STRING_MESSAGE(expected[i], value, log_message);
+    }
+}
+
+// Unit upgraded from a build whose port 2 defaults were still those of port 1: all three
+// keys exist in NVS with the old values, so set_defaults(true) would leave them there and
+// the link to the Z-Wave board would stay dead. The migration must rewrite all three and
+// record that it has run.
+void test_migrate_port2_rewrites_legacy_line_format(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port 2 line format - legacy values rewritten");
+    LOG_MESSAGE();
+
+    seed_legacy_port2_line_format();
+    TEST_ASSERT_FALSE_MESSAGE(rams_has_key(KEY_PORT2_MIGRATED),
+                              "An upgraded unit carries no migration marker yet");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_init_with_storage(&test_storage),
+                                  "Initialization should succeed");
+
+    assert_port2_line_format(WBE2_PORT2_BAUDRATE, WBE2_PORT2_PARITY, WBE2_PORT2_STOPBITS,
+                             "after the migration");
+    TEST_ASSERT_TRUE_MESSAGE(setting_items_read_bool(KEY_PORT2_MIGRATED),
+                             "The migration must record that it has run");
+}
+
+// The marker is already in NVS and port 2 carries something else: the unit has been
+// migrated and the installer has since set the line format by hand. Running the rewrite
+// again would stamp over that, which is the one thing this migration must not do.
+void test_migrate_port2_skipped_when_marker_present(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port 2 line format - skipped once the marker is set");
+    LOG_MESSAGE();
+
+    seed_legacy_port2_line_format();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_PORT2_MIGRATED, "true"),
+                                  "Pre-seeding the migration marker should succeed");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_init_with_storage(&test_storage),
+                                  "Initialization should succeed");
+
+    assert_port2_line_format(LEGACY_PORT2_BAUDRATE, LEGACY_PORT2_PARITY, LEGACY_PORT2_STOPBITS,
+                             "when the marker says the migration has already run");
+}
+
+// Two boots with a manual change in between: the first boot migrates the upgraded unit,
+// the installer then sets port 2 by hand, and the second boot must leave that alone.
+// Without the marker the rewrite would repeat on every boot and this value would be lost.
+void test_migrate_port2_manual_change_survives_next_boot(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port 2 line format - a hand-set value survives a reboot");
+    LOG_MESSAGE();
+
+    seed_legacy_port2_line_format();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_init_with_storage(&test_storage),
+                                  "First boot should succeed");
+    assert_port2_line_format(WBE2_PORT2_BAUDRATE, WBE2_PORT2_PARITY, WBE2_PORT2_STOPBITS,
+                             "after the first boot");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_save(KEY_BAUDRATE2, "19200"),
+                                  "Setting baudrate_2 by hand should succeed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_save(KEY_PARITY2, "odd"),
+                                  "Setting parity_2 by hand should succeed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_save(KEY_STOPBITS2, "2"),
+                                  "Setting stopbits_2 by hand should succeed");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_init_with_storage(&test_storage),
+                                  "Second boot should succeed");
+    assert_port2_line_format("19200", "odd", "2", "after the second boot");
+}
+
+// Factory-fresh unit, nothing in NVS. The migration does run here — the marker is absent
+// until the defaults are written, which happens after it — but it writes exactly the values
+// the defaults would have written, so the unit ends up on the WBE2 line format either way.
+// What this pins is that outcome: a fresh unit needs no migration to be correct.
+void test_migrate_port2_fresh_unit_matches_defaults(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port 2 line format - fresh unit unchanged");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_init_with_storage(&test_storage),
+                                  "Initialization should succeed");
+
+    assert_port2_line_format(WBE2_PORT2_BAUDRATE, WBE2_PORT2_PARITY, WBE2_PORT2_STOPBITS,
+                             "on a fresh unit");
+
+    // The same thing the other way round: every value the fresh unit ends up with equals the
+    // table default, so the migration's pass over a fresh unit changed nothing observable.
+    static const char *keys[] = {KEY_BAUDRATE2, KEY_PARITY2, KEY_STOPBITS2};
+    for (size_t i = 0; i < ARRAY_SIZE(keys); i++) {
+        char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+        TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(keys[i], value),
+                                      "Reading a port 2 line-format setting should succeed");
+
+        char log_message[TEST_BUFFER_SIZE];
+        snprintf(log_message, sizeof(log_message),
+                 "%s on a fresh unit should be its own table default", keys[i]);
+        TEST_ASSERT_EQUAL_STRING_MESSAGE(setting_items_get_default_value(keys[i]), value, log_message);
+    }
+}
+
+// A migration that fails half way must come back and try again on the next boot, and the
+// trap is that set_defaults(true) runs immediately after it and creates every ABSENT key
+// from its default — the marker's default being "true". So a failed run that simply left
+// the marker alone would be declared finished by the very next call, and port 2 would keep
+// the old line format for the life of the device with the link silently down.
+void test_migrate_port2_failed_write_retries_on_next_boot(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port 2 line format - failed write retries next boot");
+    LOG_MESSAGE();
+
+    seed_legacy_port2_line_format();
+
+    // One key refuses the write; everything after it, the marker included, still stores.
+    mock_storage_write_fail_key = KEY_BAUDRATE2;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_init_with_storage(&test_storage),
+                                  "Init should still succeed: a failed migration is logged, not fatal");
+
+    TEST_ASSERT_TRUE_MESSAGE(rams_has_key(KEY_PORT2_MIGRATED),
+                             "The failed run must claim the marker so the defaults cannot create it as true");
+    TEST_ASSERT_FALSE_MESSAGE(setting_items_read_bool(KEY_PORT2_MIGRATED),
+                              "A migration that did not finish must read back as not migrated");
+
+    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_BAUDRATE2, value),
+                                  "Reading the port 2 baud rate should succeed");
+    TEST_ASSERT_EQUAL_STRING_MESSAGE(LEGACY_PORT2_BAUDRATE, value,
+                                     "The refused write must leave the legacy value in place");
+
+    // Next boot, storage healthy again.
+    mock_storage_write_fail_key = NULL;
+    setting_items_reset();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_init_with_storage(&test_storage),
+                                  "Second boot should succeed");
+
+    assert_port2_line_format(WBE2_PORT2_BAUDRATE, WBE2_PORT2_PARITY, WBE2_PORT2_STOPBITS,
+                             "after the retry");
+    TEST_ASSERT_TRUE_MESSAGE(setting_items_read_bool(KEY_PORT2_MIGRATED),
+                             "The completed retry must record that the migration has run");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1377,6 +1589,12 @@ int main(void)
     RUN_TEST(test_migrate_port_mode_stale_legacy_cleaned_after_reboot);
     RUN_TEST(test_migrate_port_mode_valid_legacy_kept_after_reboot);
     RUN_TEST(test_migrate_port_mode_fresh_device_default);
+
+    RUN_TEST(test_migrate_port2_rewrites_legacy_line_format);
+    RUN_TEST(test_migrate_port2_skipped_when_marker_present);
+    RUN_TEST(test_migrate_port2_manual_change_survives_next_boot);
+    RUN_TEST(test_migrate_port2_fresh_unit_matches_defaults);
+    RUN_TEST(test_migrate_port2_failed_write_retries_on_next_boot);
 
     return UNITY_END();
 }

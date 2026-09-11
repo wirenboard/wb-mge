@@ -5,6 +5,7 @@
 #include "array_size.h"
 #include "settings_update.h"
 #include "settings_save_timer.h"
+#include "airzone_gw.h"
 
 #include <esp_log.h>
 #include <string.h>
@@ -61,6 +62,16 @@ static const setting_mapping_t ethernet_mappings[] = {
     {"mask_static", KEY_ETH_MASK_STATIC},
     {"gw_static", KEY_ETH_GW_STATIC},
     {"dhcpc", KEY_ETH_DHCPC},
+};
+
+// The four Airzone gateway settings the Z-Wave board reads out of this firmware over Modbus.
+// There is exactly one Airzone gateway per module, so the group carries no instance suffix and is
+// built like "ethernet" rather than like the per-port "rs485_N" groups.
+static const setting_mapping_t airzone_mappings[] = {
+    {"slave", KEY_AIRZONE_ADDRESS},
+    {"zone", KEY_AIRZONE_ZONE},
+    {"baud_code", KEY_AIRZONE_SPEED},
+    {"product", KEY_AIRZONE_PRODUCT},
 };
 
 static const setting_mapping_t rs485_base_mappings[] = {
@@ -671,6 +682,14 @@ esp_err_t settings_build_response_json(cJSON **response_json)
         return ESP_FAIL;
     }
 
+    // Add Airzone gateway settings group
+    if (add_group_to_json(*response_json, "airzone", airzone_mappings,
+                         ARRAY_SIZE(airzone_mappings)) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to add Airzone settings to JSON");
+        cJSON_Delete(*response_json);
+        return ESP_FAIL;
+    }
+
     // Add RS485 settings (special case with port suffixes)
     if (add_rs485_settings_to_json(*response_json) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to add RS485 settings to JSON");
@@ -785,6 +804,53 @@ static esp_err_t process_rs485_settings(cJSON *request_json)
     return ESP_OK;
 }
 
+// Write the Airzone group and, when at least one of the four values really changed, bump the
+// settings counter the Z-Wave board watches.
+//
+// The two halves of that sentence are both load-bearing:
+//
+//   - the VALUES are written before the COUNTER moves. The board reads the four registers only in
+//     the instant it sees the counter change, so bumping first would hand it a half-written form;
+//   - the counter moves only on a real change. The board applies these parameters by restarting
+//     into its INIT state, so a bump for a Save that changed nothing would restart a perfectly
+//     healthy gateway every time the installer pressed the button.
+//
+// The comparison is made on the stored values read back, not on the fields the request carries, so
+// a request that repeats only some of the four still counts as unchanged.
+static esp_err_t process_airzone_settings(cJSON *request_json)
+{
+    cJSON *airzone_json = cJSON_GetObjectItem(request_json, "airzone");
+    if ((airzone_json == NULL) || (!cJSON_IsObject(airzone_json))) {
+        return ESP_OK;
+    }
+
+    int before[ARRAY_SIZE(airzone_mappings)];
+    for (size_t i = 0; i < ARRAY_SIZE(airzone_mappings); i++) {
+        before[i] = setting_items_read_int(airzone_mappings[i].setting_key);
+    }
+
+    if (save_group_settings(airzone_json, airzone_mappings, ARRAY_SIZE(airzone_mappings), NULL) != ESP_OK) {
+        return ESP_FAIL;
+    }
+
+    // The register block serves these four out of a RAM cache, so the write is only half done
+    // until the cache has been refreshed — and it has to happen before the counter moves.
+    airzone_gw_reload_settings();
+
+    bool changed = false;
+    for (size_t i = 0; i < ARRAY_SIZE(airzone_mappings); i++) {
+        if (setting_items_read_int(airzone_mappings[i].setting_key) != before[i]) {
+            changed = true;
+        }
+    }
+
+    if (changed) {
+        airzone_gw_inc_settings_counter();
+    }
+
+    return ESP_OK;
+}
+
 esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_json)
 {
     if ((request_json == NULL) || (response_json == NULL)) {
@@ -844,6 +910,8 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
         validate_group_settings(cJSON_GetObjectItem(request_json, "ethernet"), ethernet_mappings,
                                 ARRAY_SIZE(ethernet_mappings), NULL) &&
         validate_rs485_settings(request_json) &&
+        validate_group_settings(cJSON_GetObjectItem(request_json, "airzone"), airzone_mappings,
+                                ARRAY_SIZE(airzone_mappings), NULL) &&
         validate_port_collisions(request_json, warnings);
 
     if (!settings_valid) {
@@ -925,6 +993,16 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
         attach_warnings(*response_json, warnings);
         cJSON_AddBoolToObject(*response_json, "success", false);
         cJSON_AddStringToObject(*response_json, "error", "Failed to save RS485 settings");
+        return ESP_OK; // Return OK so HTTP layer sends the error JSON
+    }
+
+    // Return early on any NVS write failure inside Airzone processing; the settings counter is
+    // then left alone, so the board is not told about a set of values that was not fully written.
+    if (process_airzone_settings(request_json) != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to save Airzone settings");
+        attach_warnings(*response_json, warnings);
+        cJSON_AddBoolToObject(*response_json, "success", false);
+        cJSON_AddStringToObject(*response_json, "error", "Failed to save Airzone settings");
         return ESP_OK; // Return OK so HTTP layer sends the error JSON
     }
 

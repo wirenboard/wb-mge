@@ -353,6 +353,80 @@ paths:
                         format: int64
                         minimum: 0
                         description: "Bytes received on Port 2 that were lost: forward failures plus RX-stage drops (receive-buffer / driver-ring overflow)"
+                  airzone_gw:
+                    type: object
+                    description: >-
+                      State the Z-Wave board of a WB-MGU module mirrors into this firmware (Modbus
+                      registers 541..551 of unit 0xFF, rewritten by the board every 10 s). Always
+                      present, on every model and whether or not the board has ever written: until
+                      it has, valid is false and every other field reads 0, which is exactly what
+                      the "valid" flag exists to tell apart from a genuine reading of zeros.
+                    properties:
+                      valid:
+                        type: boolean
+                        description: "False until the board has written the block at least once since boot"
+                      age_s:
+                        type: integer
+                        minimum: 0
+                        description: >-
+                          Seconds since the board last wrote the block; 0 while valid is false. The
+                          board rewrites it every 10 s, so a larger age means the reports stopped
+                          coming rather than that this one is merely the second-newest.
+                      slave:
+                        type: integer
+                        minimum: 0
+                        maximum: 65535
+                        description: "Airzone Modbus address the board is actually polling"
+                      zone:
+                        type: integer
+                        minimum: 0
+                        maximum: 65535
+                        description: "Airzone zone the board is actually driving"
+                      product:
+                        type: integer
+                        minimum: 0
+                        maximum: 65535
+                        description: "Product type in use: 0 Airzone, 1 Aidoo Pro DX / Fan coil, 2 Aidoo Pro Air to Water, 3 Aidoo Pro Ventilation"
+                      baud_code:
+                        type: integer
+                        minimum: 0
+                        maximum: 65535
+                        description: "Line speed in use as a multiplier of 1200 baud, not a baud rate: 16 is 19200"
+                      link_state:
+                        type: integer
+                        minimum: 0
+                        maximum: 65535
+                        description: "Link to the Airzone unit: 0 initializing, 1 online, 2 degraded, 3 offline"
+                      errors:
+                        type: integer
+                        minimum: 0
+                        maximum: 65535
+                        description: "Modbus errors in a row on the board's own link to the Airzone unit"
+                      last_exception:
+                        type: integer
+                        minimum: 0
+                        maximum: 65535
+                        description: "Last Modbus exception code the Airzone unit answered with; 0 if none"
+                      scale:
+                        type: integer
+                        minimum: 0
+                        maximum: 65535
+                        description: "Temperature scale read from the unit: 0 Celsius, 1 Fahrenheit, 2 not read yet"
+                      dead_runs:
+                        type: integer
+                        minimum: 0
+                        maximum: 65535
+                        description: "Bitmap of poll runs that got no answer at all"
+                      bus_load:
+                        type: integer
+                        minimum: 0
+                        maximum: 65535
+                        description: "Load of the board's Modbus line, in percent. Zero for the first ten seconds after the board boots — not a fault"
+                      setpoint_model:
+                        type: integer
+                        minimum: 0
+                        maximum: 65535
+                        description: "Set-point model of the unit: 0 single, 1 double, 2 undetermined"
         '400':
           description: Bad request
           content:
@@ -447,7 +521,16 @@ paths:
               properties:
                 cmd:
                   type: string
-                  enum: [reboot, set_default_settings]
+                  enum: [reboot, set_default_settings, zwave_include]
+                  description: >-
+                    reboot — restart the device.
+                    set_default_settings — reset all settings to factory defaults.
+                    zwave_include — ask the Z-Wave board of a WB-MGU module to enter inclusion
+                    mode. The request is an increment of the inclusion counter the board polls,
+                    not a flag: the channel to the board is read-only, so the board can never
+                    report "seen" and a flag would have nobody to clear it. The board remembers
+                    the value it last read and treats any difference as exactly one request, so
+                    the command is safe to repeat and takes effect once per call.
               required: [cmd]
       responses:
         '200':
@@ -1488,6 +1571,43 @@ components:
               pattern: '^(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])){3}$'
             modbus: { type: boolean }
 
+    AirzoneSettings:
+      type: object
+      description: >-
+        Connection settings of the Airzone air conditioner, read out of this firmware over Modbus
+        by the Z-Wave board of a WB-MGU module. Writing any of them with a value that differs from
+        the stored one also bumps the counter the board watches, which makes it restart with the
+        new settings; a write that changes nothing leaves the counter — and the running gateway —
+        alone.
+      properties:
+        slave:
+          type: integer
+          minimum: 1
+          maximum: 247
+          default: 1
+          description: "Modbus address of the Airzone unit"
+        zone:
+          type: integer
+          minimum: 1
+          maximum: 32
+          default: 1
+          description: "Airzone zone to drive"
+        baud_code:
+          type: integer
+          minimum: 4
+          maximum: 96
+          default: 16
+          description: >-
+            Line speed as a multiplier of 1200 baud, not a baud rate: 4 is 4800, 16 is 19200, 96 is
+            115200. The whole range is accepted; the web UI offers the six codes the Airzone units
+            actually support (4, 8, 16, 32, 48, 96).
+        product:
+          type: integer
+          minimum: 0
+          maximum: 3
+          default: 1
+          description: "Product type: 0 Airzone, 1 Aidoo Pro DX / Fan coil, 2 Aidoo Pro Air to Water, 3 Aidoo Pro Ventilation"
+
     EthernetSettings:
       type: object
       properties:
@@ -1592,6 +1712,8 @@ components:
           $ref: '#/components/schemas/WiFiSettings'
         ethernet:
           $ref: '#/components/schemas/EthernetSettings'
+        airzone:
+          $ref: '#/components/schemas/AirzoneSettings'
         rs485_1:
           $ref: '#/components/schemas/RS485Settings'
         rs485_2:
