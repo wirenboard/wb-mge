@@ -5,11 +5,44 @@
 #include "auth.h"
 #include "board_pins.h"
 #include "json_utils.h"
-#include "bridge/port_manager.h"
 #include "esp_log.h"
 #include "indication.h"
+#include "mb_role.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "rs485_control.h"
+#include "settings_update.h"
 #include "update_rs485_mio_gpio_states.h"
+#include "wb_test.h"
+
+// The Modbus stack of the built role. This test takes the two TX lines and the two DE
+// lines away from whoever holds them, and in BOTH the slave and the master role that is an
+// esp-modbus instance per port holding an installed UART driver — so the test has to stop
+// the stack and bring it back exactly the same way, under the same ownership lock, in
+// either one.
+//
+// In the "none" role nobody owns those pins: no UART driver is ever installed, so the
+// lock is trivially free, there is nothing to stop and nothing to start. The no-op
+// definitions below are what say that, and they keep the body of the test identical across
+// all three roles.
+#if WB_MB_ROLE_SLAVE
+    #include "mb_slave.h"
+    #define MB_STACK_LOCK_TAKE(ms)      mb_slave_lock_take(ms)
+    #define MB_STACK_LOCK_GIVE()        mb_slave_lock_give()
+    #define MB_STACK_STOP()             mb_slave_stop()
+    #define MB_STACK_START()            mb_slave_start()
+#elif WB_MB_ROLE_MASTER
+    #include "mb_master.h"
+    #define MB_STACK_LOCK_TAKE(ms)      mb_master_lock_take(ms)
+    #define MB_STACK_LOCK_GIVE()        mb_master_lock_give()
+    #define MB_STACK_STOP()             mb_master_stop()
+    #define MB_STACK_START()            mb_master_start()
+#else
+    #define MB_STACK_LOCK_TAKE(ms)      ((void)(ms), true)
+    #define MB_STACK_LOCK_GIVE()        ((void)0)
+    #define MB_STACK_STOP()             ((void)0)
+    #define MB_STACK_START()            ((void)0)
+#endif
 
 
 // The clock-out test drives four pins directly: the TX line of both serial ports (the
@@ -18,8 +51,6 @@
 // in receive, so that bus is not driven). The pins come from board_pins.h
 // (SERIAL_{OUTPUT,IO}_PIN_{1,2}) — the GPIO numbers differ per board, and hardcoding the
 // WB-MGE ones drove the wrong pins on WB-MGU (there GPIO4 is an input, the port-2 RX line).
-#define BRIDGE_PORT_INDEX       0   // port 1; freed so LEDC can reuse its TX pin
-#define BRIDGE_PORT_INDEX_2     1   // port 2; freed so LEDC can reuse its TX pin
 
 #define CLK_OUT_PIN             SERIAL_OUTPUT_PIN_1
 #define CLK_OUT_FREQ_HZ         100000
@@ -43,20 +74,16 @@
 // transceiver U10 and wired out to the external RS-485-2 terminals, so driving it would
 // put the factory meander on a bus we do not own, in front of whatever is wired to the
 // terminals and alongside a live MIO controller (its reset is an expander pin, not a UART
-// pin, so disabling port 2 does not silence it). LED2 only needs the DI line, which we do
+// pin, so nothing on the UART side silences it). LED2 only needs the DI line, which we do
 // drive.
 //
 // Because that decision stands, the RS-485-2 driver must be OFF for the whole test — and
-// holding it off is OUR job, not the hardware's. Disabling the port only reaches
-// uart_driver_delete(); neither serial_deinit() nor port_deinit_mode() releases the dir
-// pin, so it stays a push-pull OUTPUT wired through the GPIO matrix to UART2 RTS, at the
-// level the UART left there — HIGH, the TX-enabled idle level. A weak external pulldown
-// (R4 on WB-MGE) cannot pull down a driven pad, so leaving the pin alone would leave the
-// port-2 driver ENABLED and put the meander from the DI line straight onto the bus. The
-// test therefore takes the pin and drives it LOW itself, and keeps driving it LOW on the
-// way out as well (see release_clock_out_hw): the pin is handed straight over to the UART
-// when the port is re-inited, instead of being released to an internal pull-up for the
-// whole re-init window (tens of ms). The one moment the pad is not driven by us is the
+// holding it off is OUR job, not the hardware's. A weak external pulldown (R4 on WB-MGE)
+// cannot pull down a driven pad, and on WB-MGU that pin (GPIO13) has no pulldown at all, so
+// leaving the pin alone could leave the port-2 driver ENABLED and put the meander from the
+// DI line straight onto the bus. The test therefore takes the pin and drives it LOW itself,
+// and keeps driving it LOW on the way out as well (see release_clock_out_hw) rather than
+// releasing it to an internal pull-up. The one moment the pad is not driven by us is the
 // capture itself: de_pin_latch_low_output() starts with gpio_reset_pin(), so between that
 // call and the gpio_set_direction() a few register writes later the pad sits on its
 // internal pull-up — microseconds, and only while we are taking the pin.
@@ -65,8 +92,39 @@
 
 #define CLK_OUT_JSON_FIELD      "clock_out"
 
+// How long to let an in-flight settings apply drain before giving up on it. The Modbus
+// branch of settings_update_task takes a few hundred ms; the network branches add the
+// one-second response delay plus their own work. Five seconds covers both with room to
+// spare and still answers the factory tester well inside its HTTP timeout.
+#define SETTINGS_UPDATE_DRAIN_TIMEOUT_MS    5000
+#define SETTINGS_UPDATE_DRAIN_POLL_MS       20
 
+// How long to wait for the Modbus ownership lock once the drain above has reported the
+// coast clear. The same budget, for the same reason: only a settings apply that got in
+// between can be holding it, and its Modbus section is the few hundred ms above. A bounded
+// wait rather than a wait-forever because this runs on the httpd task, which must not be
+// parked indefinitely by anything.
+#define MB_STACK_LOCK_TIMEOUT_MS            5000
+
+
+// The guard described in wb_test.h. It spans the whole run — raised before the Modbus
+// stack is stopped, lowered after it has been brought back — so it is not merely "the
+// waveform is up"; it is "this test owns the RS-485 hardware, keep off". It is also the
+// state GET /wb_test reports, because the two are the same fact.
+//
+// settings_update_task reads it from another FreeRTOS task, so the accesses go through
+// the atomic builtins rather than being plain loads and stores.
 static bool clock_out_en = false;
+
+bool wb_test_clock_out_active(void)
+{
+    return __atomic_load_n(&clock_out_en, __ATOMIC_SEQ_CST);
+}
+
+static void clock_out_set_active(bool active)
+{
+    __atomic_store_n(&clock_out_en, active, __ATOMIC_SEQ_CST);
+}
 
 static ledc_timer_config_t timer_config = {
     .speed_mode = LEDC_HIGH_SPEED_MODE,
@@ -107,19 +165,16 @@ static const char* TAG = "wb_test";
 // Put a DE/RE pin into a driven-LOW output state (transceiver in receive mode).
 // The level is latched BEFORE the pin becomes an output: gpio_reset_pin() does not
 // clear the output latch (GPIO_OUT_REG), so on the second and later runs of the test
-// the latch still holds whatever the previous owner left there — the UART leaves it
-// HIGH after driving half-duplex direction control. Enabling the output driver first
-// would then briefly assert DE and put a glitch on the RS-485-1 line. Same order as
-// serial_set_tx_disabled() in serial.c.
+// the latch still holds whatever the previous owner left there. Enabling the output
+// driver first would then briefly assert DE and put a glitch on the RS-485-1 line.
 //
-// The gpio_reset_pin() is how the pin is taken away from its current owner (the UART's
-// GPIO matrix routing, or a previous run of this test), and it costs a micro-window: the
-// pad is left in GPIO_MODE_DISABLE with the internal pull-up on until the direction is set
-// a few register writes later. So a DE line that we were already holding LOW dips
-// driven-LOW -> weakly-HIGH -> driven-LOW when the test is re-entered. That is a handful of
-// microseconds, versus the tens of ms the pad would spend pulled up if we reset it on the
-// way out instead (which is why release_clock_out_hw() does not) — and it is the same idiom
-// serial.c uses, so it stays as is.
+// The gpio_reset_pin() is how the pin is taken away from its current owner (a previous run
+// of this test), and it costs a micro-window: the pad is left in GPIO_MODE_DISABLE with the
+// internal pull-up on until the direction is set a few register writes later. So a DE line
+// that we were already holding LOW dips driven-LOW -> weakly-HIGH -> driven-LOW when the
+// test is re-entered. That is a handful of microseconds, versus the indefinite time the pad
+// would spend pulled up if we reset it on the way out instead (which is why
+// release_clock_out_hw() does not).
 static void de_pin_latch_low_output(gpio_num_t pin)
 {
     gpio_reset_pin(pin);
@@ -149,41 +204,33 @@ static void release_clock_out_hw(void)
     tim_conf.deconfigure = true;
     ledc_timer_config(&tim_conf);
 
-    // Release the two TX lines and the port-1 DE line so port_manager_apply_settings() can
-    // hand them back to the UART. Note that gpio_reset_pin() does not leave a pin floating:
-    // it puts the pad in GPIO_MODE_DISABLE with the internal pull-up ON, so a released pin
-    // is weakly pulled towards 1 until the UART re-attaches. For the TX lines that is the
-    // idle level the UART holds between frames anyway. For the port-1 DE line it is a weak
+    // Release the two TX lines and the port-1 DE line. Note that gpio_reset_pin() does not
+    // leave a pin floating: it puts the pad in GPIO_MODE_DISABLE with the internal pull-up
+    // ON, so a released pin is weakly pulled towards 1. For the port-1 DE line that is a weak
     // pull towards "driver enabled" — acceptable there and only there: that driver was
-    // deliberately ON for the whole test (the RS-485-1 pair is the one we are allowed to
-    // drive), so a weakly-enabled driver idling the line for the length of the re-init
-    // window changes nothing about which buses the test touches.
+    // deliberately ON for the whole test, since the RS-485-1 pair is the one we are allowed
+    // to drive.
     gpio_reset_pin(CLK_OUT_PIN);
     gpio_reset_pin(CLK_OUT_PIN_2);
     gpio_reset_pin(CLK_OUT_EN_PIN);
 
     // CLK_OUT_DE_PARK_PIN (port-2 DE) is deliberately left DRIVEN LOW — no gpio_reset_pin()
     // here. Resetting it would put the pad in GPIO_MODE_DISABLE with the internal pull-up
-    // ON, i.e. weakly pulled towards 1 — the "driver enabled" level — for the whole window
-    // between here and the uart_set_pin() inside port_manager_apply_settings(), which is an
-    // NVS read plus a port init, tens of ms. The entire point of the park is that the
-    // RS-485-2 pair stays silent (it is shared with the MIO transceiver and wired out to the
-    // terminals); releasing the pin to a pull-up would re-open exactly the window we just
-    // spent the test closing. On WB-MGE the external pulldown R4 would fight that pull-up,
-    // but that backstop is board-specific and must not be relied on: on WB-MGU
+    // ON, i.e. weakly pulled towards 1 — the "driver enabled" level. The entire point of the
+    // park is that the RS-485-2 pair stays silent (it is shared with the MIO transceiver and
+    // wired out to the terminals); releasing the pin to a pull-up would re-open exactly the
+    // window we just spent the test closing. On WB-MGE the external pulldown R4 would fight
+    // that pull-up, but that backstop is board-specific and must not be relied on: on WB-MGU
     // SERIAL_IO_PIN_2 is GPIO13, the DE line of the WBE2 bus, with no pulldown at all.
     //
     // Holding the pin costs nothing: DE=0 is receive mode, i.e. the transceiver is not
-    // driving the bus — the safe state. uart_set_pin() takes the pin back the moment the
-    // port is re-inited; if the port stays DISABLED in NVS, the pin simply stays LOW, which
-    // is exactly what we want. Re-entering the test still works: the park in
+    // driving the bus — the safe state. Re-entering the test still works: the park in
     // de_pin_latch_low_output() starts with gpio_reset_pin(), so it re-acquires the pin no
-    // matter who owns it by then — the UART, or us still holding it LOW. That re-acquire is
-    // not perfectly seamless: the reset releases the pad to the internal pull-up for the few
-    // register writes until the direction is set again, so on a second entry the line dips
-    // driven-LOW -> weakly-HIGH -> driven-LOW (microseconds). We accept that: it is the price
-    // of the standard capture idiom, and it is orders of magnitude shorter than the tens of ms
-    // a gpio_reset_pin() here, on the exit path, would leave the pad pulled up for.
+    // matter what state it is in. That re-acquire is not perfectly seamless: the reset
+    // releases the pad to the internal pull-up for the few register writes until the
+    // direction is set again, so on a second entry the line dips driven-LOW -> weakly-HIGH ->
+    // driven-LOW (microseconds). We accept that: it is the price of the standard capture
+    // idiom.
 }
 
 
@@ -196,23 +243,16 @@ static void release_clock_out_hw(void)
 //
 // Port 2 gets the waveform on its TX (DI) line only. Its DE line is driven LOW here and
 // is never raised — that is what keeps the RS-485-2 pair silent (see CLK_OUT_DE_PARK_PIN
-// above); the disabled port would otherwise have left it driven HIGH.
+// above).
 static esp_err_t start_clock_out(void)
 {
     // Keep the RS-485-1 transceiver in receive mode until the waveform is running.
     de_pin_latch_low_output(CLK_OUT_EN_PIN);
-    // Park the RS-485-2 transceiver in receive mode for the whole test. Its port has just been
-    // disabled, and on no IDF does that leave the dir pin in a state we can rely on. Through
-    // v5.4.1 uart_driver_delete() does not release the UART's pins, so the pin stays an output
-    // held at the UART's TX-enabled idle level (HIGH), which would gate the meander from the DI
-    // line onto a bus we do not own. From v5.4.2 on it does release them (uart_release_pin() ->
-    // gpio_output_disable()), which clears only the output driver: the resting level is then
-    // whatever else acts on the pad — the board (pulldown R4 on WB-MGE, nothing at all on
-    // WB-MGU, where SERIAL_IO_PIN_2 is GPIO13), or the internal pull-up left behind by any
-    // earlier gpio_reset_pin() on that pin (serial_set_tx_disabled(true), or a previous run of
-    // this test), which gpio_output_disable() does not undo. Take the pin and hold it LOW
-    // ourselves. It is never set to 1 anywhere in this file — that is the invariant review #30
-    // turned on.
+    // Park the RS-485-2 transceiver in receive mode for the whole test: take the pin and hold
+    // it LOW ourselves rather than trust whatever level the pad happens to rest at (the board
+    // pulldown R4 on WB-MGE, nothing at all on WB-MGU, where SERIAL_IO_PIN_2 is GPIO13, or an
+    // internal pull-up left behind by an earlier gpio_reset_pin() on that pin). It is never
+    // set to 1 anywhere in this file — that is the invariant review #30 turned on.
     de_pin_latch_low_output(CLK_OUT_DE_PARK_PIN);
 
     ledc_timer_config_t tim_conf = timer_config;
@@ -257,15 +297,135 @@ static void stop_clock_out(void)
 }
 
 
-// Roll back a failed clock_out entry: the LEDC was never started, so the ports can be
-// unfrozen and brought straight back up from NVS (which also undoes any port this
-// attempt did manage to disable transiently). Leaves the device exactly as it was before
-// the request — V-out and the I/O bus were never touched on the way in.
-static void abort_clock_out_entry(void)
+// Let an in-flight settings apply drain before this test takes the Modbus stack.
+//
+// What makes the test and a settings apply mutually exclusive is MB_STACK_LOCK_TAKE()
+// below, not this wait: esp-modbus does not survive two tasks tearing the same instances
+// down at once (mbc_slave_stop() answers "mb stack start event set error" and the second
+// caller blocks inside the delete), and only a real lock can stop that. This wait is what
+// turns "an apply is busy right now" into a clean 503 instead of an HTTP handler parked on
+// a mutex for as long as the apply lasts.
+//
+// One case is refused on the spot rather than waited out. An apply that carries the web
+// server calls http_server_release() -> httpd_stop(), which blocks until the httpd thread
+// leaves its handler — and the httpd thread is the one running THIS handler. Waiting there
+// cannot succeed: settings_update_in_progress() only goes false after httpd_stop() has
+// returned, so the wait would burn its whole timeout, answer 503 anyway, and hold the web
+// server's restart back by exactly that long. The check is repeated on every poll because
+// such an apply can also be spawned while we wait — the config button's factory reset runs
+// settings_update() on config_button_task.
+//
+// Returning false means the caller refuses the request rather than starting the test on top
+// of an apply.
+static bool wait_for_settings_update(void)
 {
-    port_manager_set_ports_frozen(false);
-    port_manager_apply_settings(BRIDGE_PORT_INDEX);
-    port_manager_apply_settings(BRIDGE_PORT_INDEX_2);
+    for (int waited_ms = 0; ; waited_ms += SETTINGS_UPDATE_DRAIN_POLL_MS) {
+        if (!settings_update_in_progress()) {
+            return true;
+        }
+        if (settings_update_restarts_web_server()) {
+            ESP_LOGE(TAG, "clock_out: refused, the settings update in flight is restarting "
+                          "the web server and cannot finish while this handler waits");
+            return false;
+        }
+        if (waited_ms >= SETTINGS_UPDATE_DRAIN_TIMEOUT_MS) {
+            break;
+        }
+        if (waited_ms == 0) {
+            ESP_LOGW(TAG, "clock_out: waiting for the settings update in flight to finish");
+        }
+        vTaskDelay(pdMS_TO_TICKS(SETTINGS_UPDATE_DRAIN_POLL_MS));
+    }
+
+    ESP_LOGE(TAG, "clock_out: the settings update did not finish within %d ms",
+             SETTINGS_UPDATE_DRAIN_TIMEOUT_MS);
+    return false;
+}
+
+
+// Take the Modbus ownership lock for one clock_out transition. Both transitions run
+// the same preamble: drain whatever apply is in flight, then take the lock that keeps the
+// next one out. Returns false when the caller must answer 503 instead.
+static bool take_mb_stack_for_transition(void)
+{
+    if (!wait_for_settings_update()) {
+        return false;
+    }
+    if (!MB_STACK_LOCK_TAKE(MB_STACK_LOCK_TIMEOUT_MS)) {
+        ESP_LOGE(TAG, "clock_out: the Modbus ownership lock was not free within %d ms",
+                 MB_STACK_LOCK_TIMEOUT_MS);
+        return false;
+    }
+    return true;
+}
+
+
+// Enter the test. The caller holds the Modbus slave ownership lock, which is what makes
+// "the guard is down" still true by the time the stop below runs.
+static esp_err_t clock_out_enter(void)
+{
+    // The guard goes up FIRST, before a single pin changes hands. From here on a settings
+    // apply running on settings_update_task knows to keep off the RS-485 hardware; raising
+    // it any later would leave the stop below — and the window between it and the first
+    // LEDC call — unguarded.
+    clock_out_set_active(true);
+    // Stop the Modbus stack first: whichever role was built, it owns both UARTs, and with
+    // them the TX and DE pins this test is about to take for the LEDC waveform. Deleting the
+    // serial instances releases the UART drivers and those pins.
+    //
+    // Nothing is persisted by this, so losing power mid-test cannot change the port
+    // configuration: MB_STACK_START() on the way out re-reads every serial parameter (and,
+    // in the slave role, the unit id and the TCP port) straight from NVS.
+    MB_STACK_STOP();
+    // The I/O bus is deliberately left alone. The MIO controller hangs off the RS-485-2
+    // pair, but the test never drives that pair (the port-2 transceiver is held in receive
+    // mode, see CLK_OUT_DE_PARK_PIN), so there is nothing for MIO to contend with and no
+    // reason to reset it.
+    esp_err_t clk_err = start_clock_out();
+    if (clk_err != ESP_OK) {
+        // The LEDC never came up, so start_clock_out() left both DE lines LOW and released
+        // the pins it took. Reporting success here would leave the factory tester with a
+        // device that claims to emit a clock but does not. Roll the entry back: bring the
+        // slave up again from NVS, leaving the device exactly as it was before the request.
+        ESP_LOGE(TAG, "clock_out aborted: the LEDC could not be set up");
+        MB_STACK_START();
+        clock_out_set_active(false);
+        return ESP_ERR_INVALID_STATE;
+    }
+    // Factory test: light all LEDs simultaneously with the test signal.
+    indication_set_test_all_leds(true);
+    // Also lights the V-out LED (energises RS-485 bus V-out).
+    esp_err_t vout_err = rs485_bus_vout_on_off(true);
+    if (vout_err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to enable V-out for clock_out test: %s", esp_err_to_name(vout_err));
+    }
+    return ESP_OK;
+}
+
+
+// Leave the test. The caller holds the Modbus ownership lock, so the start below cannot
+// race a settings apply doing its own stop/start.
+static void clock_out_exit(void)
+{
+    stop_clock_out();
+    // stop_clock_out() has released the TX lines and the port-1 DE line, so the UARTs may
+    // be brought up again. The port-2 DE line is still driven LOW by us — MB_STACK_START()
+    // is what hands it back, via uart_set_pin().
+    //
+    // The test never touched NVS, so the configured parameters are still there: this
+    // re-reads them and also picks up any settings written while the test was running,
+    // including the 485_tx_dis_N flags.
+    MB_STACK_START();
+    // Factory test: return LEDs to normal indication and restore V-out state.
+    // The I/O bus needs no restoring: the test never touched it.
+    indication_set_test_all_leds(false);
+    update_rs485_control();         // restore V-out to the configured KEY_485_VOUT state
+    // The guard comes down LAST, once every pin and the V-out line are back under their
+    // normal owners. It also re-opens the door for the settings a POST /settings deferred
+    // while the test ran: MB_STACK_START() above has already re-read the serial parameters,
+    // and update_rs485_control() the V-out and terminator state, so nothing was lost — only
+    // postponed.
+    clock_out_set_active(false);
 }
 
 
@@ -287,96 +447,40 @@ static esp_err_t process_request_json(cJSON *request_json)
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (cmd_item->valueint) {
-        if (!clock_out_en) {
-            // Freeze the ports first: from here on the runtime mode (DISABLED)
-            // deliberately differs from the mode in NVS, and nothing but this test may
-            // re-init the ports while it owns their TX and DE pins (the LEDC drives the
-            // TX lines; the DE lines are driven straight as GPIOs).
-            port_manager_set_ports_frozen(true);
-            // Disable both ports so the LEDC can take over their TX pins, but do NOT
-            // persist the DISABLED mode: NVS must keep the user's configured mode so
-            // that losing power during the test cannot wipe the port configuration.
-            // The exit path below restores the ports straight from NVS.
-            esp_err_t err = port_manager_set_mode_transient(BRIDGE_PORT_INDEX, PM_MODE_DISABLED);
-            if (err != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to disable port for clock_out: %s", esp_err_to_name(err));
-            }
-            esp_err_t err2 = port_manager_set_mode_transient(BRIDGE_PORT_INDEX_2, PM_MODE_DISABLED);
-            if (err2 != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to disable port 2 for clock_out: %s", esp_err_to_name(err2));
-            }
-            if (err != ESP_OK || err2 != ESP_OK) {
-                // A port that could not be disabled was rolled back to its previous
-                // working mode by port_manager, i.e. its UART still owns the TX/DE
-                // pins. Starting the LEDC on top of that would have two drivers on the
-                // same pins, so abort the test entirely: unfreeze, restore both ports
-                // from NVS (undoing the one that did get disabled) and fail the request.
-                ESP_LOGE(TAG, "clock_out aborted: the RS-485 ports could not be disabled");
-                abort_clock_out_entry();
-                return ESP_ERR_INVALID_STATE;
-            }
-            // The I/O bus is deliberately left alone. The MIO controller hangs off the
-            // RS-485-2 pair, but the test never drives that pair (the port-2 transceiver
-            // is held in receive mode, see CLK_OUT_DE_PARK_PIN), so there is nothing for
-            // MIO to contend with and no reason to reset it.
-            //
-            // Both ports are down and the pins are free: start the waveform.
-            esp_err_t clk_err = start_clock_out();
-            if (clk_err != ESP_OK) {
-                // The LEDC never came up, so start_clock_out() left both DE lines LOW and
-                // released the pins it took (the port-2 DE line stays driven LOW until the
-                // UART takes it back). Reporting success here would leave the factory tester
-                // with a device that claims to emit a clock but does not. Abort the entry:
-                // unfreeze and restore both ports from NVS.
-                ESP_LOGE(TAG, "clock_out aborted: the LEDC could not be set up");
-                abort_clock_out_entry();
-                return ESP_ERR_INVALID_STATE;
-            }
-            // The test is now on.
-            clock_out_en = true;
-            // Factory test: light all LEDs simultaneously with the test signal.
-            indication_set_test_all_leds(true);
-            // Also lights the V-out LED (energises RS-485 bus V-out).
-            esp_err_t vout_err = rs485_bus_vout_on_off(true);
-            if (vout_err != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to enable V-out for clock_out test: %s", esp_err_to_name(vout_err));
-            }
-        }
-    } else {
-        if (clock_out_en) {
-            clock_out_en = false;
-            stop_clock_out();
-            // stop_clock_out() has released the TX lines and the port-1 DE line, so the
-            // ports may be brought up again: release the freeze before apply_settings,
-            // which is a no-op while the ports are frozen. The port-2 DE line is still
-            // driven LOW by us — apply_settings() is what hands it back, via uart_set_pin().
-            port_manager_set_ports_frozen(false);
-            // The test never touched NVS, so the configured mode is still there:
-            // re-read it and re-initialise both ports from the persisted settings.
-            // This also picks up any settings written while the test was running.
-            esp_err_t err = port_manager_apply_settings(BRIDGE_PORT_INDEX);
-            if (err != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to restore port mode after clock_out: %s", esp_err_to_name(err));
-            }
-            esp_err_t err2 = port_manager_apply_settings(BRIDGE_PORT_INDEX_2);
-            if (err2 != ESP_OK) {
-                ESP_LOGE(TAG, "Failed to restore port 2 mode after clock_out: %s", esp_err_to_name(err2));
-            }
-            // Factory test: return LEDs to normal indication and restore V-out state.
-            // The I/O bus needs no restoring: the test never touched it.
-            indication_set_test_all_leds(false);
-            update_rs485_control();         // restore V-out to the configured KEY_485_VOUT state
-        }
+    // The requested state is already the current one: nothing is stopped, started or taken
+    // from anyone. Such a request must not be made to wait for a settings apply, nor be
+    // refused with a 503 — a factory tester opens every session with one
+    // ({"clock_out": false} against an idle device), and a repeated
+    // {"clock_out": true} is the same no-op. Only the two branches that really move the
+    // hardware do the drain-and-lock preamble.
+    //
+    // The guard is read here without the lock, and that is sound: the httpd task is the
+    // only writer, and it is the task running this handler. A settings apply never changes
+    // it — it only reads it, under the lock.
+    bool want_active = (cmd_item->valueint != 0);
+    if (want_active == wb_test_clock_out_active()) {
+        return ESP_OK;
     }
 
-    return ESP_OK;
+    if (!take_mb_stack_for_transition()) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    esp_err_t res = ESP_OK;
+    if (want_active) {
+        res = clock_out_enter();
+    } else {
+        clock_out_exit();
+    }
+    MB_STACK_LOCK_GIVE();
+
+    return res;
 }
 
 
 static void fill_response_json(cJSON *response_json)
 {
-    cJSON_AddBoolToObject(response_json, CLK_OUT_JSON_FIELD, clock_out_en);
+    cJSON_AddBoolToObject(response_json, CLK_OUT_JSON_FIELD, wb_test_clock_out_active());
 }
 
 
@@ -424,12 +528,19 @@ esp_err_t wb_test_post_handler(httpd_req_t *req)
             return json_utils_send_error(req, "Field 'clock_out' not found in request");
         } else if (res == ESP_ERR_INVALID_ARG) {
             return json_utils_send_error(req, "Incorrect command field value");
+        } else if (res == ESP_ERR_TIMEOUT) {
+            // A settings apply is still holding the Modbus slave — either it is still in
+            // flight, or it is one that restarts the web server and therefore cannot finish
+            // while this handler waits for it. Starting the test on top of it would have two
+            // tasks tearing the same esp-modbus instances down at once, so the request is
+            // refused — valid, but not servable right now.
+            return json_utils_send_error_status(req, "503 Service Unavailable",
+                "Cannot run the clock_out test: a settings update is still being applied");
         } else if (res == ESP_ERR_INVALID_STATE) {
-            // The RS-485 ports could not be freed, or the LEDC refused to produce the
-            // waveform, so the test never started and the entry was rolled back — 503:
+            // The LEDC refused to produce the waveform, so the test never started — 503:
             // the request was valid, the device could not serve it.
             return json_utils_send_error_status(req, "503 Service Unavailable",
-                "Cannot start clock_out test: the RS-485 ports or the clock generator could not be set up");
+                "Cannot start clock_out test: the clock generator could not be set up");
         } else {
             return json_utils_send_error(req, "Failed to process request");
         }

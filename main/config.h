@@ -5,6 +5,9 @@
 
 #define BASE_HOSTNAME               "WB-MGE" // generated in setting_items.c: get_dynamic_hostname
 
+// Number of RS-485 ports on the board.
+#define RS485_PORTS_COUNT           2
+
 
 // Default values
 
@@ -21,6 +24,9 @@
 #define DEFAULT_485_TX_DISABLED     "false"
 #define DEFAULT_485_VOUT            "true"
 #define DEFAULT_IO_BUS_ENABLED      "true"
+
+#define DEFAULT_MB_SLAVE_ID         "1"
+#define DEFAULT_MB_TCP_PORT         "502"
 
 #define DEFAULT_ETH_IP_STATIC       "192.168.0.7"
 #define DEFAULT_ETH_MASK_STATIC     "255.255.255.0"
@@ -40,17 +46,6 @@
 #define DEFAULT_STA_IP_STATIC       "192.168.1.7"
 #define DEFAULT_STA_MASK_STATIC     "255.255.255.0"
 #define DEFAULT_STA_GW_STATIC       "192.168.1.1"
-
-#define DEFAULT_BRIDGE_MODE         BRIDGE_MODE_SERVER_STR
-#define DEFAULT_BRIDGE_PORT         "502"
-#define DEFAULT_BRIDGE_IP           "192.168.5.2"
-#define DEFAULT_BRIDGE_PORT2        "503"
-#define DEFAULT_BRIDGE_MB           "false"
-// Per-port cache overlay enable flag (cache_en_N)
-#define DEFAULT_CACHE_EN                    "false"
-#define DEFAULT_CACHE_MODBUS_PORT           "504"
-#define DEFAULT_CACHE_MODBUS_SERVER_ENABLED "true"
-#define DEFAULT_CACHE_VALUE_TIMEOUT_S       "60"
 
 #define DEFAULT_UPDATE_CHANNEL              UPDATE_CHANNEL_STABLE_STR
 

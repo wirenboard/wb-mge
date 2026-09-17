@@ -46,6 +46,27 @@ CONFIG_ESP_TASK_WDT_PANIC=y
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=10
 
 #
+# Modbus (espressif/esp-modbus)
+#
+# Keep the Modbus stack out of mDNS. The option defaults to y, and because this
+# project also depends on espressif/mdns the component then compiles with
+# MB_MDNS_IS_INCLUDED — which is not a passive advertisement but a co-owner of the
+# device's single mDNS service:
+#   - mbs_port_tcp_create() REFUSES a NULL ip_netif_ptr, so creating the TCP slave
+#     would depend on finding a netif;
+#   - mbc_slave_delete() reaches port_stop_mdns_service(), which calls mdns_free()
+#     once the last Modbus instance goes away — tearing down the mDNS that
+#     network.c owns and set the device hostname on. main/settings_update.c and
+#     main/wb_test.c both delete and recreate the TCP slave at runtime, so after any
+#     Modbus settings change or factory clock-out run the device stopped answering
+#     on its own <hostname>.local and started answering as mb_slave_tcp_<n> instead.
+# Nothing in the slave path needs the netif once this is off: outside the mDNS
+# calls, esp-modbus reads network_iface_ptr only in port_connect() (an IPv6 scope
+# id on the outbound-connect path), which is master-only — a slave accepts, never
+# connects. The listener still binds every address.
+CONFIG_FMB_MDNS_INTEGRATION_ENABLE=n
+
+#
 # Compiler options
 #
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y

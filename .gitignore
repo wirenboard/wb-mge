@@ -13,7 +13,8 @@ wb-mge.code-workspace
 # Build
 build/**
 # Generated sdkconfig files: sdkconfig.<signature> (one per MODEL_LIST entry in
-# the Makefile), sdkconfig.qemu_build, a bare sdkconfig from a manual idf.py run,
+# the Makefile), sdkconfig.qemu_build, the .<role> variants of both that a
+# non-default MB_ROLE build writes, a bare sdkconfig from a manual idf.py run,
 # and the .old backup idf.py leaves next to each. Matched by pattern so that
 # signatures are named only in MODEL_LIST, and anchored with / so the pattern
 # cannot reach nested paths such as unittests/mocks/sdkconfig.h. The negations

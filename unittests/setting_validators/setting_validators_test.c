@@ -164,6 +164,27 @@ void test_validate_port(void)
     TEST_ASSERT_FALSE_MESSAGE(validate_port("80a"), "Port with letters should be invalid");
 }
 
+// Test validate_slave_id function
+// A Modbus slave may only ever answer as 1..247: 0 is the broadcast address and 248-255
+// are reserved by the specification, so both ends of that window are boundary cases.
+void test_validate_slave_id(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_slave_id function");
+    LOG_MESSAGE();
+
+    // Valid unit ids — the two boundaries of the allowed range
+    TEST_ASSERT_TRUE_MESSAGE(validate_slave_id("1"), "Slave id 1 should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_slave_id("247"), "Slave id 247 should be valid");
+
+    // Invalid unit ids
+    TEST_ASSERT_FALSE_MESSAGE(validate_slave_id("0"), "Slave id 0 is the broadcast address, not a slave");
+    TEST_ASSERT_FALSE_MESSAGE(validate_slave_id("248"), "Slave id 248 is reserved and should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_slave_id(""), "Empty slave id should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_slave_id("abc"), "Non-numeric slave id should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_slave_id(NULL), "NULL slave id should be invalid");
+}
+
 // Test validate_baudrate function
 void test_validate_baudrate(void)
 {
@@ -318,46 +339,6 @@ void test_validate_wifi_auth(void)
     TEST_ASSERT_FALSE_MESSAGE(validate_wifi_auth("OPEN"), "Uppercase WiFi auth should be invalid");
 }
 
-// Test validate_bridge_mode function
-void test_validate_bridge_mode(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_bridge_mode function");
-    LOG_MESSAGE();
-
-    // Valid bridge modes
-    TEST_ASSERT_TRUE_MESSAGE(validate_bridge_mode("server"), "Bridge mode 'server' should be valid");
-    TEST_ASSERT_TRUE_MESSAGE(validate_bridge_mode("client"), "Bridge mode 'client' should be valid");
-
-    // Invalid bridge modes
-    TEST_ASSERT_FALSE_MESSAGE(validate_bridge_mode(NULL), "NULL bridge mode should be invalid");
-    TEST_ASSERT_FALSE_MESSAGE(validate_bridge_mode(""), "Empty bridge mode should be invalid");
-    TEST_ASSERT_FALSE_MESSAGE(validate_bridge_mode("tcp_server"), "Bridge mode 'tcp_server' should be invalid");
-    TEST_ASSERT_FALSE_MESSAGE(validate_bridge_mode("tcp_client"), "Bridge mode 'tcp_client' should be invalid");
-    TEST_ASSERT_FALSE_MESSAGE(validate_bridge_mode("SERVER"), "Uppercase bridge mode should be invalid");
-}
-
-// Test validate_port_mode function
-void test_validate_port_mode(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_port_mode function");
-    LOG_MESSAGE();
-
-    // Valid port modes
-    TEST_ASSERT_TRUE_MESSAGE(validate_port_mode("disabled"), "Port mode 'disabled' should be valid");
-    TEST_ASSERT_TRUE_MESSAGE(validate_port_mode("tcp_bridge"), "Port mode 'tcp_bridge' should be valid");
-    TEST_ASSERT_TRUE_MESSAGE(validate_port_mode("passive"), "Port mode 'passive' should be valid");
-    TEST_ASSERT_TRUE_MESSAGE(validate_port_mode("repeater"), "Port mode 'repeater' should be valid");
-
-    // Invalid port modes
-    TEST_ASSERT_FALSE_MESSAGE(validate_port_mode(NULL), "NULL port mode should be invalid");
-    TEST_ASSERT_FALSE_MESSAGE(validate_port_mode(""), "Empty port mode should be invalid");
-    TEST_ASSERT_FALSE_MESSAGE(validate_port_mode("bogus"), "Port mode 'bogus' should be invalid");
-    TEST_ASSERT_FALSE_MESSAGE(validate_port_mode("server"), "Bridge role 'server' should not be a valid port mode");
-    TEST_ASSERT_FALSE_MESSAGE(validate_port_mode("TCP_BRIDGE"), "Uppercase port mode should be invalid");
-}
-
 // Test validate_update_channel function
 void test_validate_update_channel(void)
 {
@@ -432,33 +413,6 @@ void test_validate_login(void)
     TEST_ASSERT_FALSE_MESSAGE(validate_login("user@domain"), "Login with special characters should be invalid");
     TEST_ASSERT_FALSE_MESSAGE(validate_login("user.name"), "Login with dot should be invalid");
     TEST_ASSERT_FALSE_MESSAGE(validate_login("user|name"), "Login with pipe should be invalid");
-}
-
-// Test validate_timeout function
-void test_validate_timeout(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_timeout function");
-    LOG_MESSAGE();
-
-    // NULL and empty string are invalid
-    TEST_ASSERT_FALSE_MESSAGE(validate_timeout(NULL), "NULL timeout should be invalid");
-    TEST_ASSERT_FALSE_MESSAGE(validate_timeout(""), "Empty timeout should be invalid");
-
-    // 0 = disable timeout — valid
-    TEST_ASSERT_TRUE_MESSAGE(validate_timeout("0"), "Timeout '0' (disable) should be valid");
-
-    // Valid range 1..65535
-    TEST_ASSERT_TRUE_MESSAGE(validate_timeout("1"), "Timeout '1' should be valid");
-    TEST_ASSERT_TRUE_MESSAGE(validate_timeout("100"), "Timeout '100' should be valid");
-    TEST_ASSERT_TRUE_MESSAGE(validate_timeout("65535"), "Timeout '65535' should be valid");
-
-    // Out-of-range
-    TEST_ASSERT_FALSE_MESSAGE(validate_timeout("65536"), "Timeout '65536' should be invalid");
-    TEST_ASSERT_FALSE_MESSAGE(validate_timeout("-1"), "Negative timeout should be invalid");
-
-    // Non-numeric
-    TEST_ASSERT_FALSE_MESSAGE(validate_timeout("abc"), "Non-numeric timeout should be invalid");
 }
 
 // Test validate_password function
@@ -616,6 +570,7 @@ int main(void)
     RUN_TEST(test_validate_ssid_printable_range_boundaries);
     RUN_TEST(test_validate_sta_ssid);
     RUN_TEST(test_validate_port);
+    RUN_TEST(test_validate_slave_id);
     RUN_TEST(test_validate_baudrate);
     RUN_TEST(test_validate_stopbits);
     RUN_TEST(test_validate_parity);
@@ -623,14 +578,11 @@ int main(void)
     RUN_TEST(test_validate_ip);
     RUN_TEST(test_validate_wifi_mode);
     RUN_TEST(test_validate_wifi_auth);
-    RUN_TEST(test_validate_bridge_mode);
-    RUN_TEST(test_validate_port_mode);
     RUN_TEST(test_validate_update_channel);
     RUN_TEST(test_validate_bool);
     RUN_TEST(test_validate_login);
     RUN_TEST(test_validate_password);
     RUN_TEST(test_validate_wifi_password);
-    RUN_TEST(test_validate_timeout);
 
     RUN_TEST(test_setting_defaults_pass_their_validators);
 

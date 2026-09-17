@@ -115,15 +115,17 @@ bool validate_port(const char *value)
     }
 }
 
-bool validate_timeout(const char *value)
+// Modbus unit id. 0 is the broadcast address and 248-255 are reserved by the Modbus
+// specification, so a slave may only ever answer as 1..247.
+bool validate_slave_id(const char *value)
 {
-    if (!value || *value == '\0') {
+    if (!value) {
         return false;
     }
+
     char *endptr;
-    long v = strtol(value, &endptr, 10);
-    /* 0 = disable timeout; 1..65535 = timeout in seconds */
-    if ((*endptr == '\0') && (v >= 0) && (v <= 65535)) {
+    long slave_id = strtol(value, &endptr, 10);
+    if ((*endptr == '\0') && (slave_id >= 1) && (slave_id <= 247)) {
         return true;
     } else {
         return false;
@@ -279,40 +281,6 @@ bool validate_wifi_auth(const char *value)
         return true;
     }
     if (strncmp(value, WIFI_AUTH_WPA3_PSK_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        return true;
-    }
-    return false;
-}
-
-bool validate_bridge_mode(const char *value)
-{
-    if (!value) {
-        return false;
-    }
-    if (strncmp(value, BRIDGE_MODE_SERVER_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        return true;
-    }
-    if (strncmp(value, BRIDGE_MODE_CLIENT_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        return true;
-    }
-    return false;
-}
-
-bool validate_port_mode(const char *value)
-{
-    if (!value) {
-        return false;
-    }
-    if (strncmp(value, PORT_MODE_DISABLED_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        return true;
-    }
-    if (strncmp(value, PORT_MODE_TCP_BRIDGE_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        return true;
-    }
-    if (strncmp(value, PORT_MODE_PASSIVE_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
-        return true;
-    }
-    if (strncmp(value, PORT_MODE_REPEATER_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
         return true;
     }
     return false;

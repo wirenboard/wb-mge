@@ -1,116 +1,92 @@
 #include "esp_log.h"
 #include "esp_bit_defs.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "http_server.h"
-#include "port_manager.h"
+#include "mb_role.h"
 #include "network.h"
 #include "setting_items.h"
 #include "update_rs485_mio_gpio_states.h"
-#include "cache_modbus_server.h"
+#include "wb_test.h"
+
+// The Modbus stack of the built role. Both the slave and the master are restarted the same
+// way — stop, then start, under the same non-recursive ownership lock — so the apply below
+// is written once and only the names differ. In the "none" role there is no stack to
+// restart and MODBUS_STACK_FLAG is never raised.
+#if WB_MB_ROLE_SLAVE
+    #include "mb_slave.h"
+    #define MB_STACK_LOCK_WAIT_FOREVER  MB_SLAVE_LOCK_WAIT_FOREVER
+    #define MB_STACK_LOCK_TAKE(ms)      mb_slave_lock_take(ms)
+    #define MB_STACK_LOCK_GIVE()        mb_slave_lock_give()
+    #define MB_STACK_STOP()             mb_slave_stop()
+    #define MB_STACK_START()            mb_slave_start()
+    #define MB_STACK_CHECK_CHANGED()    mb_slave_check_settings_changed()
+#elif WB_MB_ROLE_MASTER
+    #include "mb_master.h"
+    #define MB_STACK_LOCK_WAIT_FOREVER  MB_MASTER_LOCK_WAIT_FOREVER
+    #define MB_STACK_LOCK_TAKE(ms)      mb_master_lock_take(ms)
+    #define MB_STACK_LOCK_GIVE()        mb_master_lock_give()
+    #define MB_STACK_STOP()             mb_master_stop()
+    #define MB_STACK_START()            mb_master_start()
+    #define MB_STACK_CHECK_CHANGED()    mb_master_check_settings_changed()
+#else
+    #define MB_STACK_CHECK_CHANGED()    false
+#endif
 
 
 #define SETTINGS_UPDATE_TASK_STACK_SIZE     (6 * 1024)
 #define SETTINGS_UPDATE_TASK_PRIORITY       5
 
-#define BRIDGE_FLAGS_BASE                   BIT0
 #define MDNS_FLAG                           BIT8
 #define HTTP_SERVER_FLAG                    BIT9
 #define ETHERNET_FLAG                       BIT10
 #define WIFI_FLAG                           BIT11
-#define CACHE_MODBUS_FLAG                   BIT12
+#define MODBUS_STACK_FLAG                   BIT12
 
 #define HTTP_NETWORK_UPDATE_DELAY_MS        1000            // Delay before updating HTTP / Ethernet / WiFi settings
 
 
 static const char *TAG = "settings_update";
 
+// The in-flight apply: its task handle (NULL = none) and the flags it was started with.
+//
+// Both are written here and read from other tasks — settings_update_in_progress() and
+// settings_update_restarts_web_server() are called from the httpd task — so the reads and
+// the writes go through the atomic builtins rather than being plain loads and stores. The
+// one exception is the handle's initial write, which FreeRTOS performs through the
+// pxCreatedTask pointer handed to xTaskCreate(); it happens inside xTaskCreate(), before
+// the new task is added to the ready list, so the handle is visible from the moment the
+// task can first run.
+//
+// The flags are published BEFORE xTaskCreate() for the same reason: by the time a reader
+// can see a non-NULL handle, the flags that go with it are already there.
 static TaskHandle_t update_task_handle = NULL;
+static uint32_t     update_task_flags = 0;
 
-
-// ── Cache Modbus TCP server ──────────────────────────────────────────────────
-// cache_modbus_server exposes init/deinit/get_port, so its check/release/acquire trio is built
-// here on top of that public API — the same shape port_manager and http_server provide for
-// themselves. The lifecycle used to live inline in the POST /settings handler
-// (settings_manager.c), which ran it BEFORE settings_update() had touched the RS-485 ports or the
-// web server: no port could ever be handed over between them.
-
-// The port NVS asks the server to listen on; 0 means "must be stopped". That is also what
-// cache_modbus_server_get_port() reports for a stopped server, so one comparison of the two covers
-// every transition there is: start, stop and port change.
-static int cache_modbus_wanted_port(void)
-{
-    if (!setting_items_read_bool(KEY_CACHE_MODBUS_SERVER_ENABLED)) {
-        return 0;
-    }
-    int port = setting_items_read_int(KEY_CACHE_MODBUS_PORT);
-    if (port <= 0) {
-        port = CACHE_MODBUS_SERVER_PORT;    // unset / invalid: the compiled-in default
-    }
-    return port;
-}
-
-static bool cache_modbus_server_check_settings_changed(void)
-{
-    return cache_modbus_wanted_port() != cache_modbus_server_get_port();
-}
-
-// Release half: give up the listening socket when the server must stop or move to another port.
-// Returns the port that was released, or 0 when the server keeps (or never had) its socket. The
-// released port is handed to cache_modbus_server_acquire() so a failed start can roll back to it.
-static int cache_modbus_server_release(void)
-{
-    int running_port = cache_modbus_server_get_port();
-
-    if (running_port <= 0 || running_port == cache_modbus_wanted_port()) {
-        return 0;       // not running, or already listening where it should — nothing to give up
-    }
-
-    esp_err_t ret = cache_modbus_server_deinit();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "cache_modbus_server_deinit failed: %s", esp_err_to_name(ret));
-        return 0;       // still listening on running_port; acquire() detects that and stays away
-    }
-    return running_port;
-}
-
-// Acquire half: start the server on the port NVS asks for. released_port is what
-// cache_modbus_server_release() stopped (0 = nothing was stopped).
-static void cache_modbus_server_acquire(int released_port)
-{
-    int wanted_port = cache_modbus_wanted_port();
-    int running_port = cache_modbus_server_get_port();
-
-    if (wanted_port == 0 || wanted_port == running_port) {
-        return;         // must stay stopped, or already listening on the wanted port
-    }
-
-    if (running_port > 0) {
-        // The release phase failed to stop the old listener. Starting a second one would orphan it
-        // (deinit only frees the latest descriptor), so leave the server as it is.
-        ESP_LOGE(TAG, "cache Modbus server still listening on port %d, not starting it on %d",
-                 running_port, wanted_port);
-        return;
-    }
-
-    esp_err_t ret = cache_modbus_server_init(wanted_port);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "cache_modbus_server_init(%d) failed: %s", wanted_port, esp_err_to_name(ret));
-        // Roll back to the port the server was serving so it does not stay down entirely.
-        if (released_port > 0) {
-            esp_err_t rb = cache_modbus_server_init(released_port);
-            if (rb != ESP_OK) {
-                ESP_LOGE(TAG, "Rollback to port %d also failed: %s", released_port, esp_err_to_name(rb));
-            }
-        }
-    }
-}
+// Serialises the spawn decision in settings_update(): the "is one already in flight?" wait
+// and the xTaskCreate() that follows it are one indivisible step.
+//
+// settings_update() runs on more than one task — the two httpd handlers
+// (settings_manager.c, cmd_handler.c) and config_button_task, through the factory reset in
+// main.c — so without this two callers could both pass the wait and both spawn a task. The
+// second one's handle would overwrite the first's, the first would clear it on the way out,
+// and settings_update_in_progress() would report "idle" with an apply still live: exactly
+// the answer the factory clock_out test uses to decide it may take the RS-485 hardware.
+//
+// This is NOT the lock that guards the Modbus stop/start pair; that one is
+// mb_slave_lock_take(), and it must stay separate. This one is held across a wait for the
+// in-flight task to finish, and that task needs the mb_slave lock to do its work — one
+// mutex for both jobs would deadlock the moment a second caller arrived during an apply
+// that restarts the Modbus slave.
+static SemaphoreHandle_t spawn_mutex;
+static StaticSemaphore_t spawn_mutex_buffer;
 
 
 // ── HTTP server ──────────────────────────────────────────────────────────────
 // http_server provides its own check (http_server_check_settings_changed) and init/deinit, but
 // not the release/acquire pair the two-phase apply needs, so it is built here on top of that
-// public API — the same shape as the cache Modbus server's above.
+// public API.
 
 // Release half: give up the web UI's listening socket, so a subsystem that is moving onto web_port
 // can bind it in the acquire phase. Returns the port that was released, or 0 when the server was
@@ -141,22 +117,20 @@ static uint16_t http_server_release(void)
 // http_server_check_settings_changed() reports "no change" while the server is stopped, so
 // HTTP_SERVER_FLAG is never raised again and no later settings write can bring the server back —
 // and the API that would fix the setting IS the web server. That was the path to a bricked device:
-// POST {web_port: <a port a bridge gateway is already serving>} → no validation of web_port at the
+// POST {web_port: <a port another local listener already holds>} → no validation of web_port at the
 // time → NVS written → deinit freed 80 → init on the busy port failed → the web UI was gone for
 // good. Hence the ladder below: configured port → the port we just gave up → the default port.
 //
 // If none of them binds, that is the end of it: log and return. NO REBOOT — do not add one back.
 // The ladder tells its rungs apart only by "ret != ESP_OK", while http_server_init_port() collapses
 // every reason for a refusal into a single ESP_FAIL: out of heap, LWIP out of sockets (httpd alone
-// takes up to MAX_OPEN_SOCKETS of CONFIG_LWIP_MAX_SOCKETS, and the two bridge TCP servers and the
-// cache server hold theirs on top), a refused wifi_scan_init()/auth_init(). Those causes sink every
-// rung alike, so "no port bound" says nothing about the ports — a busy gateway would reboot itself
-// mid-Modbus-traffic on a plain "Save" click, when waiting would have been enough. A reboot also
-// cannot repair a shortage that outlives it: the boot path calls http_server_init() again and meets
-// the same refusal.
+// takes up to MAX_OPEN_SOCKETS of CONFIG_LWIP_MAX_SOCKETS), a refused wifi_scan_init()/auth_init().
+// Those causes sink every rung alike, so "no port bound" says nothing about the ports. A reboot
+// also cannot repair a shortage that outlives it: the boot path calls http_server_init() again and
+// meets the same refusal.
 //
-// What is left when the ladder runs out is the behaviour this code had before the ladder existed:
-// the gateway keeps routing Modbus — its actual job — with a dead web UI until it is power-cycled.
+// What is left when the ladder runs out is a device that keeps running with a dead web UI until it
+// is power-cycled.
 static void http_server_acquire(uint16_t released_port)
 {
     esp_err_t ret = http_server_init();
@@ -192,7 +166,7 @@ static void http_server_acquire(uint16_t released_port)
         ESP_LOGE(TAG, "Fallback to the default port %u also failed", HTTP_SERVER_DEFAULT_PORT);
     }
 
-    // Out of fallbacks. The web interface stays down until the device is power-cycled; the gateway
+    // Out of fallbacks. The web interface stays down until the device is power-cycled; the device
     // itself keeps running. See the comment above this function for why nothing more is attempted
     // here — in particular, why this must not become a reboot.
     ESP_LOGE(TAG, "HTTP server could not be started on any port, the web interface stays down "
@@ -213,65 +187,54 @@ static void settings_update_task(void *arg)
         vTaskDelay(pdMS_TO_TICKS(HTTP_NETWORK_UPDATE_DELAY_MS));
     }
 
-    // Two-phase apply for every subsystem that owns a TCP listening socket — the web server
-    // (web_port), the cache Modbus TCP server and the RS-485 gateways: FIRST all of them give up
-    // the sockets that have to change (release), THEN all of them bind the new ones (acquire).
+    // The web server owns a TCP listening socket, so moving it to another port is a release
+    // followed by an acquire: the old socket has to be closed before the new one is bound.
     //
-    // Applying subsystem by subsystem could not express a port hand-over. Two reproducible ways to
-    // kill a port with a single POST /settings:
-    //   - {web_port: 8080, rs485_1.bridge.port: 80} while web=80 and bridge1=8080. Validation
-    //     compares the NEW values and passes. The port was then re-initialized while httpd was
-    //     still listening on 80 -> EADDRINUSE, and port_manager_apply_settings() has no rollback,
-    //     so RS-485-1 stayed dead until the next settings write or a reboot.
-    //   - {cache_modbus_port: 8080, rs485_1.bridge.port: 502} while cache=502 (on) and
-    //     bridge1=8080. Same thing in both directions at once: the cache server could not bind
-    //     8080 (the bridge still had it), rolled back to 502 — which the bridge was by then trying
-    //     to take. One dead port, one server on the wrong port, and NVS matching neither.
-    //
-    // The price, paid knowingly: the outage window is wider. Applying subsystem by subsystem
-    // brought port 1 back up before port 2 was even touched, and each subsystem was down only for
-    // its own restart. Now every subsystem whose settings changed is down for the WHOLE
-    // release->acquire window, so both RS-485 gateways, the cache server and the web UI can be off
-    // the air at the same time; traffic arriving in that window is lost (it was lost across the old
-    // per-subsystem restart too — the window is just longer now, on the order of the port re-init
-    // time, not a new class of loss).
-    //
-    // That is the unavoidable cost of a correct hand-over: a socket can only move between two
-    // subsystems if the giver closed it before the taker binds it, and nothing here can know which
-    // subsystems are trading ports without the release phase having happened first. A settings
-    // write is a rare, user-initiated event; a few hundred milliseconds of extra downtime on it is
-    // cheaper than a port that stays dead until the next one. Do not "optimise" this back into a
-    // per-subsystem apply.
+    // The Modbus slave owns one too (mb_tcp_port), which is why the two are applied as one
+    // two-phase pass — every release first, then every acquire — rather than each closing
+    // and reopening on its own. A single request can swap web_port and mb_tcp_port, and an
+    // acquire that ran before the other side's release would meet EADDRINUSE on a port that
+    // was about to become free. The web server is acquired LAST, as it always has been.
     uint16_t http_released_port = 0;
     if (flags & HTTP_SERVER_FLAG) {
         ESP_LOGD(TAG, "Releasing the HTTP server socket");
         http_released_port = http_server_release();
     }
 
-    int cache_released_port = 0;
-    if (flags & CACHE_MODBUS_FLAG) {
-        ESP_LOGD(TAG, "Releasing the cache Modbus TCP server socket");
-        cache_released_port = cache_modbus_server_release();
-    }
-
-    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
-        if (flags & (BRIDGE_FLAGS_BASE << index)) {
-            ESP_LOGD(TAG, "Releasing port %u via port_manager", index + 1);
-            port_manager_release(index);
+    // Stop and restart, rather than reconfigure in place: the serial parameters live in the
+    // UART driver esp-modbus installs at create time, and the unit id and TCP port are
+    // create-time options of the controller instances, so there is nothing to change on a
+    // running instance. mb_slave_start() re-reads all of them from NVS.
+    //
+    // Not while the factory clock-out test is running, though: it stopped the slave itself
+    // precisely to take both TX lines for its LEDC waveform and both DE lines as plain
+    // GPIOs, so mb_slave_start() here would re-install the UART drivers and call
+    // uart_set_pin() on pads the test is driving — two owners on the same pins, and the
+    // RS-485-2 bus the test must keep silent would go live. Deferring costs nothing: the
+    // test's exit path runs mb_slave_start(), which re-reads every one of these settings
+    // from NVS.
+    //
+    // Reading that guard and acting on it is ONE step, under the mb_slave lock: the test
+    // raises the guard under the same lock, so it cannot slip in between the check and the
+    // stop and end up tearing the same esp-modbus instances down from two tasks at once.
+    // Waiting forever for the lock is safe — its only other holder is a clock_out
+    // transition on the httpd task, which is bounded and never waits on this task.
+#if (!WB_MB_ROLE_NONE)
+    if (flags & MODBUS_STACK_FLAG) {
+        if (!MB_STACK_LOCK_TAKE(MB_STACK_LOCK_WAIT_FOREVER)) {
+            ESP_LOGE(TAG, "Modbus restart skipped: the ownership lock is unavailable");
+        } else {
+            if (wb_test_clock_out_active()) {
+                ESP_LOGW(TAG, "Modbus restart deferred: the clock_out test owns the RS-485 pins");
+            } else {
+                ESP_LOGD(TAG, "Restarting the Modbus stack with the new settings");
+                MB_STACK_STOP();
+                MB_STACK_START();
+            }
+            MB_STACK_LOCK_GIVE();
         }
     }
-
-    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
-        if (flags & (BRIDGE_FLAGS_BASE << index)) {
-            ESP_LOGD(TAG, "Applying new settings to port %u via port_manager", index + 1);
-            port_manager_apply_settings(index);
-        }
-    }
-
-    if (flags & CACHE_MODBUS_FLAG) {
-        ESP_LOGD(TAG, "Applying new settings to the cache Modbus TCP server");
-        cache_modbus_server_acquire(cache_released_port);
-    }
+#endif
 
     if (flags & HTTP_SERVER_FLAG) {
         ESP_LOGD(TAG, "Applying new settings to HTTP server");
@@ -294,128 +257,84 @@ static void settings_update_task(void *arg)
     }
 
     ESP_LOGI(TAG, "Settings update task finished");
-    update_task_handle = NULL;
+    // The flags first, the handle last: the handle is what says "an apply is in flight", so
+    // it must be the last thing to go. A reader that catches the intermediate state sees an
+    // apply in flight with no flags — which is only ever read as "this apply is not about to
+    // restart the web server", and by then it is not.
+    __atomic_store_n(&update_task_flags, 0u, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&update_task_handle, (TaskHandle_t)NULL, __ATOMIC_SEQ_CST);
     vTaskDelete(NULL);
 }
 
 
-esp_err_t settings_update_with_status(esp_err_t *cache_apply_err)
+void settings_update_init(void)
 {
-    if (cache_apply_err != NULL) {
-        *cache_apply_err = ESP_OK;
+    // Idempotent, and deliberately not re-creating an existing mutex: a second create would
+    // hand back a new handle and strand whatever task is holding the old one.
+    if (spawn_mutex != NULL) {
+        return;
     }
+    // Static allocation cannot fail, so there is no error path for app_main to handle.
+    spawn_mutex = xSemaphoreCreateMutexStatic(&spawn_mutex_buffer);
+}
 
-    // The factory clock_out test owns part of the RS-485 hardware while it runs: it forces
-    // V-out on, drives the TX pins of BOTH ports with the LEDC, and holds the DE pin of
-    // both ports as a plain GPIO — port 1's HIGH (that driver transmits), port 2's LOW
-    // (that driver stays in receive, so the shared RS-485-2 pair is not driven).
-    // Re-applying those two settings here would undo that:
-    //   - update_rs485_control() would push the configured vout value over the test's;
-    //   - update_serial_tx_disabled() is NOT the pure software flag it looks like:
-    //     serial_set_tx_disabled() does gpio_reset_pin()/gpio_set_level()/
-    //     gpio_set_direction() on the port's dir_pin (or, for tx_disabled=false,
-    //     uart_set_pin() back to the UART, re-applying the port's TX and RX pins along
-    //     with the dir pin) — and those pins are exactly the ones the test is holding:
-    //     the DE pins SERIAL_IO_PIN_1, kept HIGH for port 1, and SERIAL_IO_PIN_2, parked
-    //     LOW for port 2, plus the TX pins of both ports, driven by the LEDC. It would
-    //     drop the port-1 driver mid-waveform, hand the parked port-2 pin back to the
-    //     UART, or pull both TX lines out from under the LEDC. Today it happens to be
-    //     harmless only because the frozen ports sit in PM_MODE_DISABLED, so
-    //     port_manager_set_tx_disabled() finds no serial_desc and returns early — an
-    //     accident of the disable order, not a property of the call. Gate it rather than
-    //     depend on that.
-    // Skipped while the ports are frozen, exactly as the port re-init below is skipped.
-    // Nothing is lost: wb_test's exit path calls update_rs485_control() itself, and
-    // port_manager_apply_settings() re-applies tx_disabled from NVS when it brings each
-    // port back up — so settings written during the test take effect when the test ends.
-    //
-    // update_io_bus_control() is deliberately NOT gated. The MIO controller shares the
-    // RS-485-2 pair, but the test never drives that pair: it toggles only the logic-side
-    // TX (DI) line of port 2 to blink LED2, and it holds that transceiver's DE line
-    // (CLK_OUT_DE_PARK_PIN = SERIAL_IO_PIN_2) driven LOW for the whole test. That LOW is the
-    // FIRMWARE's doing, not the hardware's: wb_test takes the pin and drives it, whatever
-    // disabling the port left on it. What disabling leaves there is IDF-version dependent —
-    // serial_deinit() never gpio_reset_pin()s the dir pin, but from v5.4.2 on the
-    // uart_driver_delete() it calls releases the UART's pins itself (uart_release_pin() ->
-    // gpio_output_disable(rts_io_num)), which clears the output driver and leaves the level to
-    // whatever else acts on the pad — the board, or an internal pull-up left by an earlier
-    // gpio_reset_pin(). On v5.4.1 and older nothing is released, so the pin keeps whatever the
-    // firmware last put there: the UART's idle level, or a driven LOW if tx_disabled was set.
-    // The argument below rests on neither: the test owns the pin for its whole run. With DE
-    // low the port-2 driver stays in receive, the RS-485-2 pair is silent, and MIO owns the
-    // bus alone, so taking MIO in or out of reset collides with nothing. Gating it would only
-    // mean an io_bus_enabled written during the test never reached the hardware, since wb_test's
-    // exit path does not re-apply it.
-    //
-    // The flag is read here without any lock (see the locking contract in port_manager.c):
-    // unlike the port re-init below, these calls do not touch pm_ctx, so there is no
-    // pm_lock that would exclude them against wb_test. That leaves a narrow window — read
-    // false, get preempted, the test starts, resume and re-apply V-out / tx_disabled on top
-    // of it. settings_update() has three callers: the httpd task — POST /settings
-    // (settings_manager.c) and POST /cmd "set_default_settings" (cmd_handler.c) — and the
-    // button task (main.c, factory reset on long press). So it is a real window, just a very
-    // small one. Closing it needs a lock shared with wb_test's entry/exit sequences (held
-    // across "check frozen + apply" here and across "freeze + disable the ports + start
-    // LEDC" there); it would take no other lock inside, so it cannot deadlock with pm_lock.
-    if (!port_manager_ports_frozen()) {
+
+bool settings_update_in_progress(void)
+{
+    return (__atomic_load_n(&update_task_handle, __ATOMIC_SEQ_CST) != NULL);
+}
+
+
+bool settings_update_restarts_web_server(void)
+{
+    // The handle first: the flags of a finished apply are cleared before the handle, so a
+    // non-NULL handle is what makes the flags below meaningful.
+    if (__atomic_load_n(&update_task_handle, __ATOMIC_SEQ_CST) == NULL) {
+        return false;
+    }
+    return ((__atomic_load_n(&update_task_flags, __ATOMIC_SEQ_CST) & HTTP_SERVER_FLAG) != 0);
+}
+
+
+esp_err_t settings_update(void)
+{
+    // The factory clock-out test force-enables RS-485 bus V-out for the whole of its run,
+    // on top of whatever KEY_485_VOUT says, so re-applying the stored state here would
+    // switch V-out off under the measurement. The test restores it itself on the way out
+    // by calling update_rs485_control(), so this is deferred, not dropped.
+    if (!wb_test_clock_out_active()) {
         update_rs485_control();
-        update_serial_tx_disabled();
+    } else {
+        ESP_LOGW(TAG, "RS485 control update deferred: the clock_out test owns V-out");
     }
-
-    // Independent of the freeze: the I/O bus is not part of what the test owns.
+    // Not guarded, and neither needs to be. update_serial_tx_disabled() ends in
+    // mb_slave_set_tx_disabled(), which refuses to touch a DE pin while the serial half is
+    // down — and it is down for the whole test, which is what released those pins to it in
+    // the first place; mb_slave_start() re-applies the NVS value on the way out. The I/O
+    // bus shares no pin with the test at all (the test never drives the RS-485-2 pair the
+    // MIO controller hangs off), so its setting must reach the hardware immediately.
+    update_serial_tx_disabled();
     update_io_bus_control();
 
-    if (update_task_handle != NULL) {
+    // From here to the xTaskCreate() below is one critical section: the wait for an
+    // in-flight apply and the decision to spawn a new one have to be indivisible, or two
+    // callers on two tasks both pass the wait and both create a task (see spawn_mutex).
+    if ((spawn_mutex == NULL) || (xSemaphoreTake(spawn_mutex, portMAX_DELAY) != pdTRUE)) {
+        // settings_update_init() was never called, or the take failed — neither is
+        // reachable with a statically created mutex and portMAX_DELAY, but running the
+        // spawn decision unserialised is not the way to find out.
+        ESP_LOGE(TAG, "Settings update spawn lock unavailable, skipping the async update");
+        return ESP_FAIL;
+    }
+
+    if (settings_update_in_progress()) {
         ESP_LOGW(TAG, "Previous settings have not yet been applied, waiting for setting update task finished");
-        while (update_task_handle != NULL) {
+        while (settings_update_in_progress()) {
             vTaskDelay(10);
         }
     }
 
-    // The runtime cache overlay, reconciled against the cache_en_N keys the settings write just
-    // put in NVS. settings_manager maps rs485_N.cache_en straight onto those keys and stops
-    // there, so before this call the overlay only ever moved through POST /ports/N/cache: a
-    // device could report cache_en=true on port 2 in /settings, cache_enabled=true on port 1 in
-    // /info, and packets_processed stuck at 0 forever — and nothing at runtime healed it.
-    //
-    // HERE, and not in settings_update_task, for two reasons.
-    //   - The result has to reach the client. settings_update_task is created below and runs
-    //     after this function has returned, by which time settings_process_request_json() has
-    //     already built and sent the POST /settings response; a failure raised there could only
-    //     ever be a log line. Run synchronously, it becomes a "warnings" entry the UI shows.
-    //   - It owns no listening socket, so it has no business in the release/acquire two-phase
-    //     apply the task performs. Running it BEFORE that task also means each port comes back
-    //     up already knowing the final overlay: port_init_mode() arms SNIFF_REASON_CACHE from
-    //     it, so a port whose serial parameters changed in the same request is not armed twice.
-    //
-    // Not gated on port_manager_ports_frozen() either, unlike the two calls above: this touches
-    // no TX/DE pin (its only live action is sniffer_enable/disable on a port whose serial is
-    // open, and a frozen port has none), so during the factory test it merely records the
-    // intent, which wb_test's exit path then applies along with everything else.
-    esp_err_t cache_ret = port_manager_apply_cache_settings();
-    if (cache_ret != ESP_OK) {
-        // Logged whether or not anyone is listening — the out-parameter is optional and the
-        // factory-reset paths pass NULL.
-        ESP_LOGE(TAG, "Failed to apply the cache overlay to the running ports: %s",
-                 esp_err_to_name(cache_ret));
-        if (cache_apply_err != NULL) {
-            *cache_apply_err = cache_ret;
-        }
-    }
-
     uint32_t flags = 0;
-
-    for (unsigned index = 0; index < BRIDGES_COUNT; index++) {
-        if (port_manager_check_settings_changed(index)) {
-            ESP_LOGD(TAG, "Port %u settings were changed", index + 1);
-            flags |= BRIDGE_FLAGS_BASE << index;
-        }
-    }
-
-    if (cache_modbus_server_check_settings_changed()) {
-        ESP_LOGD(TAG, "Cache Modbus TCP server settings were changed");
-        flags |= CACHE_MODBUS_FLAG;
-    }
 
     if (network_check_mdns_settings_changed()) {
         ESP_LOGD(TAG, "mDNS settings were changed");
@@ -437,27 +356,35 @@ esp_err_t settings_update_with_status(esp_err_t *cache_apply_err)
         flags |= WIFI_FLAG;
     }
 
+    // In the "none" role this collapses to `if (false)`, so the flag is never raised and
+    // the apply above compiles out with nothing left to call.
+    if (MB_STACK_CHECK_CHANGED()) {
+        ESP_LOGD(TAG, "Modbus settings were changed");
+        flags |= MODBUS_STACK_FLAG;
+    }
+
     if (flags) {
         ESP_LOGI(TAG, "Some settings were changed, starting settings update task");
+        // Published before the task exists, so no reader can see the handle without them.
+        __atomic_store_n(&update_task_flags, flags, __ATOMIC_SEQ_CST);
         BaseType_t ret = xTaskCreate(settings_update_task, "settings_update_task", SETTINGS_UPDATE_TASK_STACK_SIZE,
                                     (void*)(uintptr_t)flags, SETTINGS_UPDATE_TASK_PRIORITY, &update_task_handle);
         if (ret != pdPASS) {
             ESP_LOGE(TAG, "Unable to create settings update task");
+            __atomic_store_n(&update_task_flags, 0u, __ATOMIC_SEQ_CST);
+            xSemaphoreGive(spawn_mutex);
             return ESP_FAIL;
         }
     }
 
+    xSemaphoreGive(spawn_mutex);
     return ESP_OK;
-}
-
-esp_err_t settings_update(void)
-{
-    return settings_update_with_status(NULL);
 }
 
 #ifdef __unittest_env__
     void settings_update_reset(void)
     {
         update_task_handle = NULL;
+        update_task_flags = 0;
     }
 #endif

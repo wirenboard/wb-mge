@@ -42,15 +42,6 @@
 #define KEY_STA_MASK_STATIC         "sta_mask_static"
 #define KEY_STA_GW_STATIC           "sta_gw_static"
 
-#define KEY_BRIDGE_MODE1            "bridge_mode_1"
-#define KEY_BRIDGE_PORT1            "bridge_port_1"
-#define KEY_BRIDGE_IP1              "bridge_ip_1"
-#define KEY_BRIDGE_MB1              "bridge_modbus_1"
-#define KEY_BRIDGE_MODE2            "bridge_mode_2"
-#define KEY_BRIDGE_PORT2            "bridge_port_2"
-#define KEY_BRIDGE_IP2              "bridge_ip_2"
-#define KEY_BRIDGE_MB2              "bridge_modbus_2"
-
 #define KEY_485_VOUT                "vout"
 #define KEY_485_TERM_1              "485_term_1"
 #define KEY_485_TERM_2              "485_term_2"
@@ -61,6 +52,11 @@
 
 // Enable MIO on RS485-2
 #define KEY_IO_BUS_ENABLED          "io_bus"
+
+// Modbus slave: the unit id all three transports answer (both RS-485 ports and TCP),
+// and the TCP port the Modbus TCP listener binds.
+#define KEY_MB_SLAVE_ID             "mb_slave_id"
+#define KEY_MB_TCP_PORT             "mb_tcp_port"
 
 // WiFi modes
 #define WIFI_MODE_AP_STR            "ap"
@@ -89,33 +85,8 @@
 #define UART_PARITY_EVEN_STR        "even"
 #define UART_PARITY_ODD_STR         "odd"
 
-// Bridge modes
-#define BRIDGE_MODE_SERVER_STR      "server"
-#define BRIDGE_MODE_CLIENT_STR      "client"
-
-// Port manager mode keys (per-port NVS keys)
-#define KEY_PORT_MODE1              "port_mode_1"
-#define KEY_PORT_MODE2              "port_mode_2"
-
-// Per-port cache overlay enable keys (persisted, orthogonal to transport mode)
-#define KEY_CACHE_EN_1              "cache_en_1"
-#define KEY_CACHE_EN_2              "cache_en_2"
-
-// Cache Modbus TCP server port NVS key (max 15 chars for ESP32 NVS)
-#define KEY_CACHE_MODBUS_PORT               "cache_mb_port"
-// Cache Modbus TCP server enable/disable NVS key (max 15 chars for ESP32 NVS)
-#define KEY_CACHE_MODBUS_SERVER_ENABLED     "cache_mb_srv_en"
-// Cache value timeout in seconds NVS key (max 15 chars for ESP32 NVS)
-#define KEY_CACHE_VALUE_TIMEOUT_S           "cache_val_tout"
-
 // Firmware update channel NVS key (max 15 chars for ESP32 NVS)
 #define KEY_UPDATE_CHANNEL                  "upd_channel"
-
-// Port manager mode string values (transport-only)
-#define PORT_MODE_DISABLED_STR      "disabled"
-#define PORT_MODE_TCP_BRIDGE_STR    "tcp_bridge"
-#define PORT_MODE_PASSIVE_STR       "passive"
-#define PORT_MODE_REPEATER_STR      "repeater"
 
 // Firmware update channel string values. These names are used verbatim as lookup
 // keys in the wb-releases manifest, so they must not be renamed.
@@ -152,11 +123,6 @@ int setting_items_read_int(const char *key);
 esp_err_t setting_items_save_bool(const char *key, bool value);
 esp_err_t setting_items_save_int(const char *key, int value);
 esp_err_t setting_items_set_defaults(bool only_uninitialized);
-
-// One-time legacy migration: derive port_mode_N from a pre-existing bridge_mode_N
-// (old single-axis firmware) when port_mode_N is absent. Idempotent and best-effort
-// per port. Must run after the storage interface is set and BEFORE set_defaults().
-esp_err_t setting_items_migrate_port_mode(void);
 
 // Iterator functions for all settings
 size_t setting_items_get_count(void);

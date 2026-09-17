@@ -6,9 +6,6 @@
 #include "cmd_handler.h"
 #include "ota_handler.h"
 #include "wb_test.h"
-#include "bridge/sniffer.h"
-#include "bridge/cache_multimaster.h"
-#include "bridge/port_manager.h"
 #include "coverage_dump.h"
 
 #include <esp_http_server.h>
@@ -20,7 +17,7 @@
 #include "setting_items.h"
 #include "sys_info.h"
 
-#define MAX_URI_HANDLERS                    40          // Headroom for all endpoints (incl. per-port mode/send/cache handlers)
+#define MAX_URI_HANDLERS                    24          // 23 endpoints are registered below (the last one only in COVERAGE_BUILD)
 #define STACK_SIZE                          (1024 * 6)
 #define MAX_OPEN_SOCKETS                    12          // Increased to allow simultaneous connections from at least 2-3 devices
 
@@ -361,9 +358,6 @@ esp_err_t http_server_init_port(uint16_t port)
         httpd_register_uri_handler(http_server, &wb_test_get);
         httpd_register_uri_handler(http_server, &wb_test_post);
         httpd_register_uri_handler(http_server, &hostname_get);
-        sniffer_register_handlers(http_server);
-        cache_multimaster_register_handlers(http_server);
-        port_manager_register_handlers(http_server);
 #ifdef COVERAGE_BUILD
         coverage_dump_register_handlers(http_server);
 #endif

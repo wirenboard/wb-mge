@@ -1,0 +1,6 @@
+# Modbus role: none. Appended to SDKCONFIG_DEFAULTS by the Makefile for MB_ROLE=none; see
+# main/Kconfig.projbuild for what the roles mean.
+#
+# Neither main/mb_slave/ nor main/mb_master/ is compiled, so nothing references
+# espressif/esp-modbus and the linker leaves the whole component out of the image.
+CONFIG_WB_MODBUS_ROLE_NONE=y

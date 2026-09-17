@@ -2,10 +2,6 @@
 #include "json_utils.h"
 #include "auth.h"
 #include "setting_items.h"
-#include "bridge.h"
-#include "bridge/port_manager.h"
-#include "bridge/repeater.h"
-#include "bridge/cache_modbus_server.h"
 #include "wifi_apsta.h"
 #include "config.h"
 #include "sys_info.h"
@@ -107,23 +103,6 @@ static cJSON *create_rs485_port_json(int port_num)
         ESP_LOGE(TAG, "Failed to create RS485_%d JSON object", port_num);
         return NULL;
     }
-
-    if (port_num == 1) {
-        cJSON_AddBoolToObject(rs485_port, "is_busy", sys_info.rs485_is_busy[0]);
-        cJSON_AddNumberToObject(rs485_port, "error_percentage", sys_info.rs485_error_percentage[0]);
-        cJSON_AddNumberToObject(rs485_port, "server_connections_count", tcp_server_active_connections(TCP_SERVER_1));
-    } else if (port_num == 2) {
-        cJSON_AddBoolToObject(rs485_port, "is_busy", sys_info.rs485_is_busy[1]);
-        cJSON_AddNumberToObject(rs485_port, "error_percentage", sys_info.rs485_error_percentage[1]);
-        cJSON_AddNumberToObject(rs485_port, "server_connections_count", tcp_server_active_connections(TCP_SERVER_2));
-    }
-
-    // Add the active port_manager mode so the UI can display the real operating mode.
-    unsigned port_index = (unsigned)(port_num - 1);  // convert 1-based port_num to 0-based index
-    cJSON_AddStringToObject(rs485_port, "port_mode",
-                            port_manager_mode_to_str(port_manager_get_mode(port_index)));
-    // Cache overlay is orthogonal to the transport mode; expose it separately.
-    cJSON_AddBoolToObject(rs485_port, "cache_enabled", port_manager_get_cache(port_index));
 
     return rs485_port;
 }
@@ -337,56 +316,6 @@ esp_err_t info_get_handler(httpd_req_t *req)
 
         cJSON_Delete(rs485_json);
     }
-
-    // Serial<->serial repeater statistics (top-level "repeater" object).
-    repeater_stats_t rep = {0};
-    repeater_get_stats(&rep);
-    cJSON *repeater_json = cJSON_CreateObject();
-    if (repeater_json) {
-        cJSON_AddBoolToObject(repeater_json, "active", rep.active);
-        cJSON_AddNumberToObject(repeater_json, "uptime_ms", (double)rep.uptime_ms);
-        cJSON_AddNumberToObject(repeater_json, "bytes_1to2", (double)rep.bytes_1to2);
-        cJSON_AddNumberToObject(repeater_json, "bytes_2to1", (double)rep.bytes_2to1);
-        cJSON_AddNumberToObject(repeater_json, "dropped_1", (double)rep.dropped_1);
-        cJSON_AddNumberToObject(repeater_json, "dropped_2", (double)rep.dropped_2);
-        cJSON_AddItemToObject(response_json, "repeater", repeater_json);
-    }
-
-    // Report the configured port from NVS, not the runtime state.
-    // This way the frontend shows the correct port even when the server is stopped.
-    cJSON_AddNumberToObject(response_json, "cache_modbus_port",
-                            setting_items_read_int(KEY_CACHE_MODBUS_PORT));
-    // Report the configured enabled flag from NVS (not runtime state).
-    // This matches the semantics of cache_modbus_port above and keeps
-    // GET /info consistent with GET /settings for this field.
-    cJSON_AddBoolToObject(response_json, "cache_modbus_server_enabled",
-                          setting_items_read_bool(KEY_CACHE_MODBUS_SERVER_ENABLED));
-    // Runtime counterpart of the two configured fields above: the port the server is
-    // actually bound to. Without it a failed start is invisible over REST — it is only
-    // logged over UART, so /info would keep advertising enabled=true on a port nobody
-    // is listening on. A boolean "running" would be too coarse: a failed port change
-    // restarts the server on the port it was already serving rather than leaving it
-    // down, so the running port may legitimately differ from the configured one. The
-    // three states a reader must be able to tell apart:
-    //   0                      — nothing is listening. A failed start is one cause, not the
-    //                            only one: the server is also down while disabled, before
-    //                            port_manager_init() runs (httpd answers throughout main.c's
-    //                            wait-for-network loop) and across the restart window of a
-    //                            settings apply;
-    //   == cache_modbus_port   — healthy;
-    //   != cache_modbus_port   — a failed move left the server on its previous port, and the
-    //                            settings layer still reports the change as pending, so the
-    //                            next POST /settings retries it; or cache_modbus_port is
-    //                            stored <= 0, which cache_modbus_port reports raw while both
-    //                            start paths substitute the compiled-in default that
-    //                            cache_modbus_active_port then shows — nothing is pending
-    //                            then, so that mismatch stays until the stored value is
-    //                            corrected.
-    cJSON_AddNumberToObject(response_json, "cache_modbus_active_port",
-                            cache_modbus_server_get_port());
-    // Report the configured value timeout from NVS.
-    cJSON_AddNumberToObject(response_json, "cache_value_timeout_s",
-                            setting_items_read_int(KEY_CACHE_VALUE_TIMEOUT_S));
 
     json_utils_send_response(req, NULL, response_json);
     return ESP_OK;

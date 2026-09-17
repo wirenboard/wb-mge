@@ -6,7 +6,7 @@ bool mock_validate_hostname_called = false;
 bool mock_validate_ssid_called = false;
 bool mock_validate_sta_ssid_called = false;
 bool mock_validate_port_called = false;
-bool mock_validate_timeout_called = false;
+bool mock_validate_slave_id_called = false;
 bool mock_validate_baudrate_called = false;
 bool mock_validate_stopbits_called = false;
 bool mock_validate_parity_called = false;
@@ -14,8 +14,6 @@ bool mock_validate_databits_called = false;
 bool mock_validate_ip_called = false;
 bool mock_validate_wifi_mode_called = false;
 bool mock_validate_wifi_auth_called = false;
-bool mock_validate_bridge_mode_called = false;
-bool mock_validate_port_mode_called = false;
 bool mock_validate_update_channel_called = false;
 bool mock_validate_bool_called = false;
 bool mock_validate_login_called = false;
@@ -28,7 +26,7 @@ void mock_reset_validator_flags(void)
     mock_validate_ssid_called = false;
     mock_validate_sta_ssid_called = false;
     mock_validate_port_called = false;
-    mock_validate_timeout_called = false;
+    mock_validate_slave_id_called = false;
     mock_validate_baudrate_called = false;
     mock_validate_stopbits_called = false;
     mock_validate_parity_called = false;
@@ -36,8 +34,6 @@ void mock_reset_validator_flags(void)
     mock_validate_ip_called = false;
     mock_validate_wifi_mode_called = false;
     mock_validate_wifi_auth_called = false;
-    mock_validate_bridge_mode_called = false;
-    mock_validate_port_mode_called = false;
     mock_validate_update_channel_called = false;
     mock_validate_bool_called = false;
     mock_validate_login_called = false;
@@ -78,9 +74,9 @@ bool validate_port(const char *value)
     return true;
 }
 
-bool validate_timeout(const char *value)
+bool validate_slave_id(const char *value)
 {
-    mock_validate_timeout_called = true;
+    mock_validate_slave_id_called = true;
     return true;
 }
 
@@ -123,26 +119,6 @@ bool validate_wifi_mode(const char *value)
 bool validate_wifi_auth(const char *value)
 {
     mock_validate_wifi_auth_called = true;
-    return true;
-}
-
-bool validate_bridge_mode(const char *value)
-{
-    mock_validate_bridge_mode_called = true;
-
-    // Unlike the other mocks this one must mirror the real accept-list from
-    // setting_validators.c: the legacy port_mode migration in setting_items.c uses the
-    // RESULT of this validator to decide whether a legacy bridge_mode record is stale.
-    if (value == NULL) {
-        return false;
-    }
-    return (strncmp(value, BRIDGE_MODE_SERVER_STR, SETTING_ITEM_MAX_STR_LEN) == 0) ||
-           (strncmp(value, BRIDGE_MODE_CLIENT_STR, SETTING_ITEM_MAX_STR_LEN) == 0);
-}
-
-bool validate_port_mode(const char *value)
-{
-    mock_validate_port_mode_called = true;
     return true;
 }
 

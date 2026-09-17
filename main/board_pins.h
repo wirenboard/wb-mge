@@ -13,8 +13,8 @@
 #elif defined(MODEL_mge_v3)
     #include "boards/mge_v3.h"
 #elif defined(__unittest_env__)
-    /* Host unit tests compile bridge.c without a MODEL_* signature; use the
-       WB-MGE pin set so pin-dependent tests keep their expected values. */
+    /* Host unit tests build without a MODEL_* signature; use the WB-MGE pin set
+       so pin-dependent tests keep their expected values. */
     #include "boards/mge_v3.h"
 #else
     #error "Unknown device signature: no RS485 board pin map"

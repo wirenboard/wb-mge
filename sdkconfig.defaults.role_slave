@@ -1,0 +1,7 @@
+# Modbus role: slave (the default). Appended to SDKCONFIG_DEFAULTS by the Makefile for
+# MB_ROLE=slave; see main/Kconfig.projbuild for what the roles mean.
+#
+# This file only restates the Kconfig default, so a build that never passed it would come
+# out the same. It exists so that the defaults chain names the role explicitly in every
+# role, rather than "master and none are spelled out, slave is whatever is left".
+CONFIG_WB_MODBUS_ROLE_SLAVE=y
