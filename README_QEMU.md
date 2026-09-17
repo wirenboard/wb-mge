@@ -14,7 +14,7 @@ make qemu-web
 **Web Interface:** http://localhost:21000
 **Login / Password:** admin / admin
 
-> **Ports follow a slot.** Every host port below (web UI, Modbus gateway, UART chardevs,
+> **Ports follow a slot.** Every host port below (web UI, Modbus TCP slave, UART chardevs,
 > IO bus) is derived from `WB_MGE_PORT_SLOT` by `api_tests/qemu_ports.py`, so several
 > checkouts can run QEMU on one machine without colliding. Slot 0 (the default) is the
 > `21000` block quoted throughout this file. `make qemu-ports` prints the block your
@@ -22,7 +22,7 @@ make qemu-web
 >
 > ```bash
 > make qemu-ports
-> # slot 0 (from default): web=21000->80 altweb=21001->8081 gateway=21002->502 ...
+> # slot 0 (from default): web=21000->80 altweb=21001->8081 mbtcp=21002->502 ...
 > WB_MGE_PORT_SLOT=3 make qemu-ports
 > # slot 3 (from WB_MGE_PORT_SLOT): web=21048->80 ...
 > ```
@@ -124,7 +124,7 @@ In the QEMU build the real hardware-logic modules (indication / leds_control /
 rs485_control / mio_control / config_button) run against a virtual (RAM-backed)
 GPIO expander and virtual native GPIO. Pin-state changes are mirrored to the host
 over a UDP side-channel on **guest port 5570** — reachable on the host at this slot's
-IO-bus port (`21005` for slot 0; `make qemu-ports`) — and the host can inject the config-button
+IO-bus port (`21003` for slot 0; `make qemu-ports`) — and the host can inject the config-button
 input. (Hardware builds are unaffected.)
 
 ### Message format
@@ -235,7 +235,7 @@ What it does:
    `GET /gcov` endpoint (registered only in coverage builds).
 2. Runs the e2e API suite. The reboot tests (`14_test_reboot.py`,
    `22_test_ota.py`, `30_test_wifi_perm_disable.py`, `33_test_auth_settings.py`,
-   `40_test_web_port.py`, `42_test_sniffer_cache_overlays_e2e.py`) are
+   `40_test_web_port.py`) and any test marked `@pytest.mark.reboot` are
    **excluded**, because a reboot zeroes the in-RAM gcov counters.
 3. After the session (before QEMU shuts down), pytest pulls `GET /gcov` and saves
    the streamed `.gcda` data to `build/coverage.stream`.
@@ -334,7 +334,7 @@ cd api_tests && .venv/bin/python -m pytest --ip localhost:21000
 ```
 Give both shells the same `WB_MGE_PORT_SLOT`. Pointing `--ip` at a slot other than the one
 `make qemu-web` used is the one way to break this flow: the web port would answer while the
-UART chardev / gateway / cache ports would not, and because a loopback `--ip` counts as
+UART chardev / Modbus TCP ports would not, and because a loopback `--ip` counts as
 "this QEMU is ours", the tests that need those ports FAIL rather than skip.
 
 ### QEMU Won't Start

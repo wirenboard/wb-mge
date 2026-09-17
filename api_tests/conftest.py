@@ -14,17 +14,8 @@ import pytest
 import requests
 
 from api_client import WBMGEAPI
-from rtu_slave_helpers import ModbusRtuSlaveThread
 import qemu_ports
 import tree_lock
-
-# sniffer_helpers is a plain module, not a test file (pytest.ini's python_files matches only
-# "[0-9]*_test_*.py"), so pytest does not rewrite its asserts by default — and its asserts are
-# where the sniffer findings actually come from: _poll_sniffer_status() raises on behalf of
-# each of its call sites in 13_test_ports.py. Registering it here restores rewritten output.
-# This must run before anything imports the module; conftest is loaded ahead of every test
-# module, and nothing above imports it.
-pytest.register_assert_rewrite("sniffer_helpers")
 
 PROJECT_ROOT = Path(__file__).parent.parent
 QEMU_READY_TIMEOUT = 900
@@ -39,7 +30,7 @@ QEMU_READY_INTERVAL = 2
 # below, i.e. truncated unconditionally —
 # without that lock a sibling run would blank this log under a live QEMU that keeps writing
 # at its old offset, which silently breaks 33_test_auth_settings.py's reboot-marker scan and
-# 16_test_uart_teardown_crash.py's crash-marker scan. Neither would report a lock problem;
+# 47_test_io_indication.py's factory-reset marker scan. Neither would report a lock problem;
 # one would just start passing for the wrong reason.)
 # Keeping the fixed name also matches 33_test_auth_settings.py's _qemu_serial_log_path(),
 # which stats this file to detect a reboot — a slot suffix here silently broke that
@@ -69,7 +60,6 @@ REBOOT_TEST_FILES = {
     "30_test_wifi_perm_disable.py",
     "33_test_auth_settings.py",
     "40_test_web_port.py",
-    "42_test_sniffer_cache_overlays_e2e.py",
 }
 
 
@@ -552,137 +542,6 @@ def _dump_qemu_log(label):
     print(log_file.read_text())
 
 
-def _poll_tcp_connect(host: str, port: int, timeout: float = 5.0) -> bool:
-    """Poll a TCP endpoint until it accepts connections or timeout expires.
-
-    Returns True if connection succeeded within timeout, False otherwise.
-    More reliable than time.sleep() in CI: adapts to actual server readiness.
-    """
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(0.5)
-        try:
-            sock.connect((host, port))
-            sock.close()
-            return True
-        except (ConnectionRefusedError, OSError, socket.timeout):
-            sock.close()
-            time.sleep(0.1)
-    return False
-
-
-def _connect_ready_bridge(host: str, port: int, hold: float = 0.5,
-                          timeout: float = 15.0):
-    """Return an ADMITTED, still-open socket to a single-client transparent bridge.
-
-    Why a plain connect() is not enough: against a QEMU user-net (slirp) hostfwd
-    port, slirp accept()s on the HOST before it even forwards the SYN to the guest,
-    so connect() succeeds instantly regardless of firmware state — the old
-    _poll_tcp_connect readiness never reached the guest at all. This helper reaches
-    the guest: for a transparent bridge (server mode, max_connections == 1) it
-    confirms the connection was ADMITTED — the handshake COMPLETED and no EOF (FIN)
-    or RST arrived within `hold` (either means the cap rejected it or a pending
-    deinit closed it) — and RETURNS THAT open socket for the caller to use. Because
-    the connection the test uses IS the one whose admission was confirmed, there is
-    no probe-close-then-reconnect handoff and the single-slot race cannot occur by
-    construction. Raises TimeoutError if no connection is admitted within `timeout` —
-    a real failure the caller surfaces as a test FAILURE, never a skip.
-
-    Admission detection is NEGATIVE (absence of FIN/RST within `hold`). The firmware
-    listens with a backlog > 1, so lwIP completes the TCP handshake before the app
-    accept()s; a just-opened connection can sit briefly in the accept queue —
-    admitted at TCP level but not yet served — indistinguishable from a served one.
-    That residue is acceptable: the caller's own first send/recv exercises the real
-    path. The check uses MSG_PEEK, so it distinguishes FIN from data WITHOUT
-    consuming anything — the returned socket is byte-for-byte clean for the caller
-    (important where a test connects to the bridge before the serial side speaks).
-
-    connect() and the hold-check are in SEPARATE try blocks on purpose. socket.timeout
-    IS TimeoutError (an alias) and TimeoutError subclasses OSError, and connect() times
-    out by raising TimeoutError — so a shared handler would misread a connect timeout
-    (handshake never completed) as "held with no FIN => admitted" and return a dead
-    socket. Only a timeout of the recv() AFTER a completed connect means "admitted".
-    """
-    # `timeout` bounds when we STOP STARTING attempts (a wall-clock deadline), not the
-    # absolute return time: an attempt begun with just `hold` left runs the full,
-    # deliberately-unclamped hold (see below), so the call can overshoot `timeout` by at
-    # most `hold`. That is the only source of overshoot — connect and the backoff sleep
-    # are both clamped to the remaining budget. We loop until the deadline at a
-    # LIMITED FREQUENCY (backoff 0.2 -> 1.0 s between attempts) rather than a fixed
-    # attempt count — a fixed count would silently shrink the real readiness window
-    # (e.g. 8 attempts settle at ~6 s, so a port that opens at 7-14 s would be failed
-    # though the caller asked for 15). Frequency-limiting still tames the churn: on a
-    # rejected connection the FIN/RST returns instantly, so a naive spin would run
-    # ~timeout/epsilon connect/close cycles on the single-slot bridge and ripple into
-    # neighbouring ports; the backoff holds it to ~17 cycles over 15 s instead.
-    if timeout <= hold:
-        # `<=`, not `<`: `remaining` is computed AFTER `start`, so at timeout == hold the
-        # first iteration already has remaining < hold and the floor below breaks before a
-        # single attempt — the helper would raise "within 0.0 s", a confusing lie. Reject the
-        # whole degenerate band up front. Unreachable today (smallest caller timeout is 2.0),
-        # but fail loudly for the next caller instead of silently doing nothing.
-        raise ValueError(
-            f"timeout ({timeout:.3f} s) must be > hold ({hold:.3f} s): a shorter budget "
-            f"cannot run even one trustworthy admission attempt"
-        )
-    start = time.monotonic()
-    deadline = start + timeout
-    backoff = 0.2
-    while True:
-        remaining = deadline - time.monotonic()
-        # Floor: an attempt needs the FULL `hold` to reliably observe a FIN/RST. With
-        # less than `hold` left, a degraded sub-`hold` peek could miss the reject and
-        # falsely report "admitted" — the exact failure mode this helper exists to kill.
-        # So stop rather than run a probe we can't trust.
-        if remaining < hold:
-            break
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        rejected = False
-        try:
-            sock.settimeout(min(3.0, remaining))
-            sock.connect((host, port))
-        except OSError:                          # refused / RST / connect timeout => retry
-            rejected = True
-        else:
-            try:
-                # Full `hold`, deliberately NOT clamped to the remaining budget: a
-                # shortened peek could miss a late FIN/RST and falsely report "admitted".
-                # connect() above may have eaten into the budget since the `remaining >=
-                # hold` floor was checked, so this is what can push the call up to `hold`
-                # past `timeout` (documented at the top). A false reject on overshoot is
-                # acceptable; a false admit is the bug we refuse to reintroduce.
-                sock.settimeout(hold)
-                # MSG_PEEK: b'' => FIN (rejected/closed); data => up and already pushing
-                # (left in the buffer for the caller); neither within `hold` => admitted.
-                if sock.recv(1, socket.MSG_PEEK) == b'':
-                    rejected = True
-            except (socket.timeout, TimeoutError):
-                pass                             # held `hold` with no FIN/RST => admitted
-            except OSError:                      # RST during hold => retry
-                rejected = True
-        if not rejected:
-            sock.settimeout(None)
-            return sock                          # admitted, open, byte-clean for the caller
-        sock.close()
-        # Back off before retrying (never after a success — that path returns above),
-        # clamped so we never sleep past the deadline. This can still sleep once after what
-        # turns out to be the final attempt: whenever the sleep leaves < hold on the clock
-        # (whether it started below hold, or started at remaining >= hold and this nap drops
-        # it under — e.g. remaining 1.4 -> nap 1.0 -> 0.4), the next iteration's `remaining <
-        # hold` floor fires and we stop. That wasted tail is bounded by `backoff` (<= 1 s),
-        # not `hold`, but it never crosses the deadline (nap is clamped to the remaining budget).
-        nap = min(backoff, deadline - time.monotonic())
-        if nap <= 0:
-            break
-        time.sleep(nap)
-        backoff = min(backoff * 2, 1.0)
-    raise TimeoutError(
-        f"bridge on {host}:{port} did not admit a connection within "
-        f"{time.monotonic() - start:.1f} s (budget {timeout:.1f} s)"
-    )
-
-
 # Host QEMU binds the UART chardevs on (see the -serial arguments in qemu_process).
 # Aliased from qemu_ports rather than spelled out again: that module is what builds the
 # -serial arguments, and a second literal here is a second source of truth that can drift
@@ -774,12 +633,10 @@ _UART_CHARDEV_LEAK_HINT = (
     f"output for the MOST RECENT '{UART_CHARDEV_LEAK_MARKER}' warning that names the "
     "SAME port as this failure — the guard warns per port and prints the port numbers "
     "— because _uart_leak_guard emits it with the last few tests that ran, and the leak "
-    "is in one of them. Deliberately not the earliest such warning: a healthy "
-    f"run already contains one benign UART1 (port {qemu_ports.UART1_TCP_PORT}) warning "
-    "from 20_test_cache_tcp_framing.py, "
-    "whose module-scoped cache_tcp_server legitimately holds that chardev across all "
-    "six of its tests, and that module starts 74 items into a 229-item run — so for "
-    "anything that fails later, the earliest warning is reliably the wrong one. "
+    "is in one of them. Deliberately the most recent such warning, not the earliest: any "
+    "module-scoped fixture that legitimately holds a chardev for the length of its file "
+    "makes the guard warn benignly, so an earlier warning can easily belong to a healthy "
+    "holder that has since torn down. "
     "It cannot narrow it further; see that fixture's docstring for why."
 )
 
@@ -826,8 +683,8 @@ def uart_chardev_unreachable(uart_tcp_port: int, is_qemu: bool,
     `detail` is the exception (or any object) that proves the endpoint is dead; it is
     appended verbatim so the reader sees the real errno rather than a paraphrase.
     """
-    # With --tb=short the traceback would otherwise point at the pytest.fail below for
-    # all 31 call sites; hiding this frame makes it point at the test that needed the
+    # With --tb=short the traceback would otherwise point at the pytest.fail below rather
+    # than at the caller; hiding this frame makes it point at the test that needed the
     # chardev, which is the only part of it the reader cannot already guess.
     __tracebackhide__ = True
     where = f"{host}:{uart_tcp_port}"
@@ -852,22 +709,21 @@ def require_uart_chardev(uart_tcp_port: int, is_qemu: bool,
     of them may re-add a pytest.skip of its own.
 
     OWNERSHIP: the returned socket is the caller's, and it is deliberately NOT closed
-    here, so that a caller which wants to KEEP the connection can (18_test_uart_chardev
-    must hold the chardev open across a port-mode switch so QEMU buffers the TX bytes it
-    is about to check; handing it a socket that was already closed and asking it to
-    reconnect would race that switch).
+    here, so that a caller which wants to KEEP the connection can. 18_test_uart_chardev,
+    the one caller left after the DIY strip, does exactly that: it writes an RTU request
+    into the chardev and reads the slave's reply back off the SAME socket, and a helper
+    that closed it would lose the reply.
 
-    Most callers do not want the connection, only the reachability answer, and the
-    `require_uart_chardev(...).close()` one-liner followed by a reconnect through some
-    other helper (_UartEchoThread, PacketInjector, ModbusRtuSlaveThread) is the normal,
-    supported shape — roughly every call site outside 18 is written that way. It is safe
+    A caller that wants only the reachability answer may still use the
+    `require_uart_chardev(...).close()` one-liner and reconnect through a helper of its
+    own; that was the normal shape in the gateway-era files. It is safe
     because nothing competes for the slot inside a single test: close() releases it and
     the helper's connect() takes it back. Do not read this note as a warning against that
     pattern; the point is only that the choice belongs to the caller, not to this helper.
 
-    Callers that cannot use this (they open the chardev through another helper, e.g.
-    packet_injector.open_uart_socket) call uart_chardev_unreachable() from their own
-    except handler instead — same policy, no second connect.
+    Callers that cannot use this (they open the chardev through a helper that does its own
+    connect) call uart_chardev_unreachable() from their own except handler instead — same
+    policy, no second connect.
     """
     # See uart_chardev_unreachable: keep this frame out of the --tb=short traceback so
     # the failure names the call site rather than this helper.
@@ -882,316 +738,6 @@ def require_uart_chardev(uart_tcp_port: int, is_qemu: bool,
         # swallowed by any `except Exception` around the call site.
         uart_chardev_unreachable(uart_tcp_port, is_qemu, host=host, detail=exc)
     return probe
-
-
-def build_gateway_fixture(port_num: int, uart_tcp_port: int,
-                          bridge_port: int, modbus: bool, fake_value: int = 0x1234):
-    """Factory: returns a pytest fixture that configures a gateway on the given port.
-
-    Args:
-        port_num: RS-485 port number (1 or 2).
-        uart_tcp_port: QEMU UART chardev TCP port (qemu_ports.UART1_TCP_PORT for UART1).
-        bridge_port: GUEST-side TCP port the gateway listens on inside the firmware,
-            i.e. the '-:<N>' side of a hostfwd rule (qemu_ports.*_GUEST_PORT). The HOST
-            port that reaches it is the caller's business — see the note below.
-        modbus: True for Modbus TCP gateway mode, False for transparent bridge.
-        fake_value: Register value returned by the RTU slave for any register read.
-
-    Returns:
-        A pytest fixture function that yields a ModbusRtuSlaveThread (or None
-        when modbus=False) and handles full setup/teardown.
-
-    There is deliberately NO host-port parameter. One used to be declared and documented
-    (`tcp_host_port`) while the body never read it: the readiness probe that once used it
-    was removed as a slirp no-op (see Step 5), and every test connects to the host port
-    through its own module constant. A parameter that eleven call sites pass and nothing
-    consumes is not documentation, it is a claim the reader has to disprove — so it is
-    gone rather than given a token use.
-    """
-    @pytest.fixture
-    def gateway_fixture(api, is_qemu, request):
-        # Step 1: verify UART chardev is reachable (fails when the QEMU is ours, skips
-        # against a remote device — see require_uart_chardev). The probe is only a
-        # reachability question here, so it is closed immediately, as before.
-        require_uart_chardev(uart_tcp_port, is_qemu).close()
-
-        # Step 2: save original settings
-        resp = api.get_settings()
-        assert resp.status_code == 200, f"GET /settings failed: {resp.status_code}"
-        original_settings = resp.json()
-
-        rs485_key = f"rs485_{port_num}"
-        slave = None
-        try:
-            # Step 3: disable port first to release the UART driver
-            resp = api.set_port_mode(port_num, "disabled")
-            assert resp.status_code == 200, \
-                f"Failed to disable port {port_num}: {resp.status_code}"
-            time.sleep(0.3)
-
-            # Step 3.5: free the target TCP port if the cache Modbus server holds it.
-            # A bridge gateway and the cache server cannot share a port (the firmware
-            # rejects such a config). In a long no-reboot run an earlier test may have
-            # left the cache server on this very port (guest 50504 is the shared forwarded
-            # test port reused by both), so disable it before binding the bridge.
-            # Without a reboot to reset it, set_port_mode(tcp_bridge) would otherwise
-            # hit listen() EADDRINUSE / a rejected settings write.
-            if (original_settings.get("cache_modbus_server_enabled")
-                    and original_settings.get("cache_modbus_port") == bridge_port):
-                resp = api.update_settings({"cache_modbus_server_enabled": False})
-                assert resp.status_code == 200 and resp.json().get("success") is True, \
-                    f"Failed to free port {bridge_port} from the cache server: {resp.text}"
-                time.sleep(0.5)
-
-            # Step 4: apply full RS-485 config with bridge sub-object
-            port_settings = dict(original_settings.get(rs485_key, {}))
-            port_settings["bridge"] = {
-                "mode": "server",
-                "port": bridge_port,
-                "ip": "0.0.0.0",
-                "modbus": modbus,
-            }
-            resp = api.update_settings({rs485_key: port_settings})
-            assert resp.status_code == 200, \
-                f"POST /settings failed: {resp.status_code}"
-            result = resp.json()
-            assert result.get("success") is True, \
-                f"Settings update not successful: {result}"
-            time.sleep(0.3)
-
-            # Step 5: switch to tcp_bridge mode and wait for the port to open
-            resp = api.set_port_mode(port_num, "tcp_bridge")
-            assert resp.status_code == 200, \
-                f"POST /ports/{port_num}/mode tcp_bridge failed: {resp.status_code}"
-            # No bridge-readiness PROBE here, on purpose. The old _poll_tcp_connect was
-            # a slirp no-op (accepts host-side before the guest sees the SYN), and
-            # a held readiness probe churns the single client slot and, under
-            # CI jitter, ripples into the shared single-client UART chardev — turning
-            # unrelated tests into spurious "chardev unreachable" SKIPs. Readiness is
-            # now established where it belongs: at the test's own connection, via
-            # _connect_ready_bridge(), which retries until the guest admits it and
-            # RAISES (a real failure, never a skip) if it cannot.
-
-            # Step 6: start RTU slave (only for modbus=True)
-            if modbus:
-                slave = ModbusRtuSlaveThread(
-                    host="127.0.0.1",
-                    port=uart_tcp_port,
-                    fake_value=fake_value,
-                    connect_timeout=5.0,
-                )
-                slave.start()
-                connected = slave.wait_connected(timeout=5.0)
-                assert connected, (
-                    f"RTU slave could not connect to UART chardev on port "
-                    f"{uart_tcp_port} within 5 s"
-                )
-
-            # Step 7: yield slave (or None) to the test
-            yield slave
-
-        finally:
-            # Step 8: restore settings, then Step 9: stop the RTU slave thread.
-            # Every call here can ReadTimeout under QEMU load. The two set_port_mode() calls
-            # keep the client's own scalar timeout=30 AND its ESP_FAIL retry loop
-            # (api_client.py:144, :161-171) — between them the dominant cost of this block,
-            # worked out in the arithmetic further down; the settings restore below
-            # deliberately takes neither — it goes through api.session with the bounded tuple
-            # _SETTINGS_BLOB_HTTP_TIMEOUT, for the reason spelled out there. Two invariants:
-            # (a) one failing call must not skip the others (best-effort, each in its own try)
-            # and must not MASK the test's real error (report, never raise); (b) slave.stop()
-            # must ALWAYS run — it is a daemon
-            # ModbusRtuSlaveThread holding a live TCP connection to the single-client QEMU
-            # chardev (UART1/UART2), so a leaked one wedges that chardev and cascades skips
-            # across every module using this factory. So slave.stop() lives in a finally
-            # wrapped around the restore block.
-            try:
-                try:
-                    api.set_port_mode(port_num, "disabled")
-                    time.sleep(0.3)
-                except Exception as exc:
-                    print(f"✗ teardown set_port_mode(disabled) failed: {exc!r}")
-
-                # ONE attempt, deliberately, with the read budget sized for a single try (see
-                # _SETTINGS_BLOB_HTTP_TIMEOUT for both halves of that trade: a 30 s read leg,
-                # and nothing to multiply it by). Detecting the refusal still matters, because
-                # nothing downstream repairs it: this teardown is the ONLY thing that puts
-                # `bridge` and `port_mode` back, and the MODULE-scoped _restore_rs485_settings
-                # cannot rescue them — _RS485_RESTORE_KEYS carries the serial line parameters
-                # only (tx_disabled, baudrate, stopbits, parity, databits, term, fail_safe). A
-                # refused restore therefore leaves this port in its tcp_bridge config for the
-                # whole rest of the run, to surface in some later module as a failure with no
-                # visible cause.
-                #
-                # The other half of why repeating buys nothing is that a rejection here is
-                # normally DETERMINISTIC. A field that fails validate_rs485_settings()
-                # (main/settings_manager.c:565) answers identically every time. So does a
-                # collision, and this is the collision shape that can actually fire: the
-                # restore posts the WHOLE /settings blob, so it always carries web_port and —
-                # whenever the cache server is on — cache_modbus_port together with
-                # cache_modbus_server_enabled. validate_port_collisions()
-                # (main/settings_manager.c:428-509) marks each of those listeners "touched" on
-                # exactly those fields (:445-448 for web_port, :450-457 for the cache server).
-                # A collision merely INHERITED from the saved configuration is tolerated with
-                # a warning only while NEITHER side is touched (:485-500); touch one side and
-                # the entire request is rejected (:501-504). That is why the module-scoped
-                # _restore_rs485_settings stays clear of top-level keys — see the "Scope is
-                # deliberately narrow" paragraph of its docstring, which names web_port as a
-                # field that "always participates in collision validation"; this teardown
-                # cannot, because restoring the blob is its whole job.
-                #
-                # This port's own bridge listener is NOT that mechanism, despite the blob
-                # carrying bridge.port, bridge.mode and rs485_N.port_mode. The rs485 loop
-                # registers a listener at all only when the EFFECTIVE port_mode is tcp_bridge
-                # AND bridge.mode is server (:463-468, the two `continue`s); the restore posts
-                # the ORIGINAL port_mode, which at every call site is the pre-test value, so
-                # the port normally contributes no listener and cannot collide.
-                #
-                # The COST is bounded EXPLICITLY, and that is not decoration. This fixture is
-                # function-scoped, so this teardown runs on EVERY item that requests it, and
-                # pytest-timeout charges setup + call + teardown to ONE item budget — the same
-                # argument _RS485_HTTP_TIMEOUT makes further down this file. Going through
-                # api.update_settings() would inherit its SCALAR timeout=30 (api_client.py:98),
-                # and requests applies a scalar to the connect and the read phases SEPARATELY,
-                # with _DelayedSession sending Connection: close so every call opens a fresh
-                # connection: 0.1 s DELAY_S + 30 s connect + 30 s read = 60.1 s — two thirds
-                # of the 90 s budget of 41_test_bridge_overlay_e2e.py:121 and a third of the
-                # 180 s default in pytest.ini, spent before this item's own work is counted,
-                # and all of it in a connect phase that on loopback is either immediate or
-                # never. Hence the request is issued through api.session directly with a
-                # TUPLE, exactly as _restore_rs485_settings does and for exactly the same
-                # reason — its own tuple, because the payload is the whole blob rather than
-                # one port's whitelist:
-                #   this call : 0.1 s DELAY_S + 5 s connect + 30 s read = 35.1 s worst case
-                # (_SETTINGS_BLOB_HTTP_TIMEOUT is defined below this factory; the name is
-                # looked up when the fixture RUNS, long after import, so the order is not a
-                # problem.)
-                #
-                # 35.1 s is NOT the largest term in this teardown, and nothing here should be
-                # read as claiming it is. The two set_port_mode() calls bracketing this
-                # restore carry api_client's ESP_FAIL retry (api_client.py:144, :161-171:
-                # settle_retries=2, so up to 2 EXTRA POSTs, 30 s scalar each, 0.5 s apart),
-                # and a scalar bounds connect and read separately there too — so the worst
-                # case per call is 3 x (0.1 + 30 + 30) + 2 x 0.5 s = ~181 s, and there are two
-                # such calls, i.e. ~362 s against this POST's 35.1 s. Same treatment as
-                # limitation (b) in 36_test_tcp_server_deinit_hang.py's
-                # test_tcp_server_deinit_completes_with_open_client, including its escape
-                # clause: that ceiling is UNREACHABLE today, because port_set_mode_handler()
-                # answers a port_manager_set_mode() failure with 500, not 400
-                # (main/bridge/port_manager.c:1516-1529), and its only 400s ("Invalid JSON",
-                # "Missing or invalid 'mode' field", "Unknown mode value") never carry the
-                # string ESP_FAIL, so the loop returns on the first response and each call
-                # costs one 60.1 s POST at worst. Bounding THIS request is still worth doing —
-                # it is the term this fixture actually owns, and the only one it can size —
-                # but a budget derived from 35.1 s alone would be derived from the smaller
-                # half of the block.
-                #
-                # The whole block is wrapped and cannot raise — the call and the body check
-                # are inside the try, and the warnings.warn() that follows is guarded in turn
-                # (see the note on it). That is the invariant of this whole teardown block: it
-                # runs after the module's tests, so an exception escaping here would displace
-                # whatever real failure came before it.
-                restore_detail = None
-                try:
-                    restore_resp = api.session.post(
-                        f"{api.base_url}/settings",
-                        json=original_settings,
-                        timeout=_SETTINGS_BLOB_HTTP_TIMEOUT,
-                    )
-                    # Body parsing kept OUT of the enclosing except, as in
-                    # _restore_rs485_settings: a non-JSON body means the request itself
-                    # SUCCEEDED and answered with something unexpected, which is a
-                    # different diagnosis from "request failed" and must not be reported
-                    # as one.
-                    try:
-                        restore_body = restore_resp.json()
-                    except ValueError:
-                        restore_body = None
-                    # A REJECTED settings write answers HTTP 200 with {"success": false,
-                    # ...} (settings_manager.c:849-855 returns ESP_OK so the HTTP layer
-                    # can send the error JSON), so the status code alone proves nothing —
-                    # the body must be checked. isinstance() before .get(): a JSON list
-                    # or scalar has no .get. `is True`, not `is not False`: a body with
-                    # no "success" key at all is not a settings response the firmware
-                    # produced on its happy path.
-                    if not (restore_resp.status_code == 200
-                            and isinstance(restore_body, dict)
-                            and restore_body.get("success") is True):
-                        restore_detail = (f"HTTP {restore_resp.status_code}, "
-                                          f"body={restore_body!r}")
-                except Exception as exc:  # noqa: BLE001 - teardown must never raise
-                    restore_detail = f"request failed: {exc!r}"
-                if restore_detail is not None:
-                    # Name the PORT, the TEST and the CONSEQUENCE, because the damage
-                    # surfaces later, in a different module — a bare "failed to restore
-                    # settings" cannot be acted on by whoever reads the log. The factory is
-                    # instantiated 12 times across 10 test files (19, 21, 24, 25, 27, 28, 32,
-                    # 41, 43 once each and 42 three times), and every one of those call sites
-                    # passes port_num=1: the parameter is real and the body honours it, but
-                    # nothing exercises port 2 today, so in practice rs485_key is always
-                    # rs485_1. Both are still interpolated rather than hardcoded, so the line
-                    # stays correct the day a port-2 call site appears.
-                    #
-                    # warnings.warn, not print, matching the _restore_rs485_settings teardown
-                    # below: it reports the same class of failure, and pytest collects it into
-                    # the end-of-run warnings summary instead of letting it scroll past inline
-                    # among hundreds of lines of test output.
-                    #
-                    # It does NOT reach CI's JUnit XML, and no argument here should rest on
-                    # the idea that it does. qemu.mk:280 writes that file and the Jenkinsfile
-                    # publishes it, but pytest implements pytest_warning_recorded only in its
-                    # terminal reporter (_pytest/terminal.py) — _pytest/junitxml.py implements
-                    # no warning hook at all, so warnings are simply absent from the XML.
-                    # (junit_logging, which decides what captured output IS copied there,
-                    # defaults to "no" and is not set in api_tests/pytest.ini either.) Nor is
-                    # stdout the losing side of the comparison: addopts carries -s, so a print
-                    # here would not be captured and would reach the log too. The reason to
-                    # prefer warn is the summary and symmetry with the fixture below, not
-                    # visibility in CI's XML. The other prints in this block are left as they
-                    # are — they are pre-existing and out of scope here.
-                    #
-                    # Guarded, the way _uart_leak_guard guards its own warn(): this call is
-                    # the ONE statement in this block that can raise. Under a
-                    # `filterwarnings = error` this suite may adopt later it would raise the
-                    # warning itself — nothing configures one today (no filterwarnings in
-                    # api_tests/pytest.ini, no -W or PYTHONWARNINGS in qemu.mk or the
-                    # Jenkinsfile), so this is a backstop, not a live bug. Letting it escape
-                    # would cost far more than the warning is worth: it would displace
-                    # whatever real failure the test reported, AND skip the
-                    # set_port_mode(original_mode) below, deepening the very leak it is
-                    # warning about. print in the handler, for the same reason, and -s means
-                    # it reaches the log.
-                    try:
-                        warnings.warn(
-                            f"gateway_fixture: failed to restore {rs485_key} settings on "
-                            f"port {port_num} after {request.node.name} "
-                            f"({restore_detail}); the port keeps its tcp_bridge config and "
-                            f"will leak into later test files.",
-                            stacklevel=1,
-                        )
-                    except Exception as exc:  # noqa: BLE001 - teardown must never raise
-                        print(f"✗ gateway_fixture: could not report the failed {rs485_key} "
-                              f"restore on port {port_num} as a warning ({exc!r}). The "
-                              f"restore failed with: {restore_detail}; the port keeps its "
-                              f"tcp_bridge config and will leak into later test files.")
-
-                try:
-                    original_mode = original_settings.get(rs485_key, {}).get("port_mode", "disabled")
-                    api.set_port_mode(port_num, original_mode)
-                    time.sleep(0.3)
-                except Exception as exc:
-                    print(f"✗ teardown set_port_mode(restore) failed: {exc!r}")
-            finally:
-                if slave is not None:
-                    slave.stop()
-                    slave.join(timeout=3.0)
-                    if slave.is_alive():
-                        print(
-                            f"✗ RTU slave thread on port {uart_tcp_port} did not stop within 3 s "
-                            "(port leak!)"
-                        )
-
-    return gateway_fixture
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -1363,22 +909,11 @@ def api(request, qemu_process):
 # Fields of an rs485_N object that a test module may clobber and that are safe to write
 # back verbatim.
 #
-# Deliberately excludes port_mode and the bridge sub-object: validate_port_collisions()
-# (main/settings_manager.c) marks a bridge listener as "touched" when the request carries
-# bridge.port, rs485_N.port_mode or bridge.mode, and a touched collision is a hard
-# rejection of the WHOLE request — so writing those back would turn a collision inherited
-# from an earlier test file into a refused restore. Writing port_mode additionally
-# re-initialises the running ports (main/settings_update.c), which is a side effect a
-# restore must not have.
-#
-# Also deliberately excludes cache_en, even though it IS an rs485_N base field
-# (rs485_base_mappings, main/settings_manager.c:91). port_manager_apply_cache_settings()
-# (main/bridge/port_manager.c:1175) runs on every settings write regardless of what the
-# request contained, but it is a no-op while the stored cache_en_N keys still agree with
-# the port that actually holds the runtime overlay. Writing cache_en back is what can make
-# them disagree, and a disagreement makes it call cache_move_locked() — which moves the
-# overlay to the other port or tears the pool down, dropping every register value the cache
-# had accumulated. A restore of serial line parameters has no business doing that.
+# The list is deliberately confined to the SERIAL LINE parameters. Anything outside it is
+# out of scope for this restore by construction: the fixture exists to undo a module's
+# line-parameter writes, not to reconstruct a whole rs485_N object, and a wider whitelist
+# would re-introduce the risk of a restore having side effects of its own (a settings write
+# that re-initialises the running ports, main/settings_update.c).
 _RS485_RESTORE_KEYS = ("tx_disabled", "baudrate", "stopbits", "parity",
                        "databits", "term", "fail_safe")
 
@@ -1387,12 +922,11 @@ _RS485_RESTORE_KEYS = ("tx_disabled", "baudrate", "stopbits", "parity",
 # suite — see the caveat in _rs485_session_baseline), so without this the leak this fixture
 # exists to stop becomes PERMANENT rather than merely forward-propagating: one run that
 # ends with rs485_1.tx_disabled=True — a restore that failed, or a run interrupted inside
-# any of the six files that set it (12, 16, 17, 20, 23, 34) — makes the next run capture
+# any of the files that set it (16, 23, 46) — makes the next run capture
 # True as its baseline and dutifully write True back after every single module.
-# 13_test_ports.py::test_clock_out_keeps_rs485_2_de_low and
-# 44_test_io_state_bus.py:69::test_rs485_direction_pins_idle_high then fail on every
-# subsequent run, and re-running does not heal it. The removed per-file restore in
-# 12_test_sniffer_ws.py had restore.setdefault("tx_disabled", False) for exactly this
+# 44_test_io_state_bus.py::test_rs485_direction_pins_idle_high then fails on every
+# subsequent run, and re-running does not heal it. The per-file restores those modules used
+# to carry each had restore.setdefault("tx_disabled", False) for exactly this
 # reason; this is that self-healing property, moved to where it covers the whole suite.
 #
 # ONLY for fields with an unambiguous known-good value. tx_disabled=False is both the
@@ -1405,11 +939,7 @@ _RS485_SAFE_DEFAULTS = {"tx_disabled": False}
 # Explicit HTTP timeout for this fixture pair's own requests, deliberately tighter than
 # WBMGEAPI's 30 s default (api_client.py:94/:98). It covers ONLY this pair: the
 # once-per-session GET and the per-port whitelist POSTs, each at most the seven fields of
-# _RS485_RESTORE_KEYS. The settings restore in build_gateway_fixture's teardown is bounded
-# for the same reason but posts the WHOLE blob, so it has its own constant with its own
-# arithmetic — _SETTINGS_BLOB_HTTP_TIMEOUT, just below. That consumer adds nothing to the
-# ceilings computed here either way, because it belongs to a function-scoped fixture that no
-# module's rs485 budget covers.
+# _RS485_RESTORE_KEYS.
 #
 # pytest-timeout charges setup + call + teardown of an item to ONE budget, and a
 # module-scoped fixture is torn down inside the LAST item of its module — so the restore
@@ -1430,48 +960,15 @@ _RS485_SAFE_DEFAULTS = {"tx_disabled": False}
 # serialises ~50 NVS-backed fields under emulated-flash load (see the note in pytest.ini);
 # 15 s covers that without letting one stalled response eat a whole item budget.
 #
-# Resulting ceilings. The TEARDOWN figure is the one the 17 items listed at the end of
+# Resulting ceilings. The TEARDOWN figure is the one the items listed at the end of
 # _restore_rs485_settings quote in their @pytest.mark.timeout comments:
 #   per call : 0.1 s (_DelayedSession.DELAY_S) + 5 s connect + 15 s read = 20.1 s
 #   teardown : 2 ports x 20.1 s + _RS485_RESTORE_SETTLE_S = 41.2 s  ("45 s allowance")
-# The PER-CALL figure is not bound to that enumeration — it is quoted more widely. Four of
-# those files cite it a second time, on its own, in the marker of their FIRST item, for the
-# once-per-session rs485 snapshot that is charged there when the file is run alone:
-# 29_:221, 31_:221, 38_:200, 49_:105. (28_ used to be a fifth; its marker comment
-# was cut back to the function-scoped-teardown argument and no longer quotes this figure.
-# 39_ was listed here too and never belonged: its only mention of these numbers is the
-# TEARDOWN figure, in the @pytest.mark.timeout comment of its LAST item, not the per-call
-# one.)
-# Nor does every listed file quote both:
-# 40_:120-123 quotes the 41.2 s teardown ceiling and never the per-call one. Changing either
-# number means re-checking both sets.
+# The PER-CALL figure may also be quoted on its own, in the marker of a file's FIRST item,
+# for the once-per-session rs485 snapshot that is charged there when the file is run alone.
+# Not every citing file quotes both: 40_test_web_port.py quotes the 41.2 s teardown ceiling
+# and never the per-call one. Changing either number means re-checking both sets.
 _RS485_HTTP_TIMEOUT = (5, 15)
-
-# HTTP timeout for the ONE whole-blob POST /settings in build_gateway_fixture's teardown.
-# Same (connect, read) shape and the same connect budget as _RS485_HTTP_TIMEOUT — connect is
-# a loopback handshake either way — but TWICE the read component, because the PAYLOAD is a
-# different animal. _RS485_HTTP_TIMEOUT covers one port's whitelist, at most the seven fields
-# of _RS485_RESTORE_KEYS; this covers the entire settings blob: ~50 fields, every one an NVS
-# write, followed by a port re-initialisation. api_client.py:91-94 documents even a plain GET
-# of /settings as "occasionally >10 s" and picks 30 s there specifically to keep spurious
-# ReadTimeouts out of the suite; a whole-blob POST is the heavier operation of the two, so it
-# gets no less than that GET does. Reusing _RS485_HTTP_TIMEOUT here was a budget borrowed
-# from the wrong consumer: 15 s under-bounds a request the firmware is very likely to have
-# applied, so the timeout reports a failure that did not happen.
-#
-# There is deliberately NO retry to multiply this by. settings_update() serialises on the
-# previous update task (main/settings_update.c:368-373 spins `while (update_task_handle !=
-# NULL) vTaskDelay(10)`), so a second attempt does not get a fresh, quiet device: it blocks
-# inside the handler behind the first attempt's still-running update task and burns its own
-# read budget waiting there. On the one shape a retry could plausibly cure — a slow first
-# write — it would turn a single false alarm into two, on a write that was very likely
-# applied.
-#
-# ONE attempt, one read leg, nothing to multiply by:
-#   this call : 0.1 s (_DelayedSession.DELAY_S) + 5 s connect + 30 s read = 35.1 s worst case
-# The teardown quotes the same arithmetic at its call site; nothing outside this file quotes
-# it.
-_SETTINGS_BLOB_HTTP_TIMEOUT = (5, 30)
 
 # Settle window after the last restore POST — see the barrier note at the end of
 # _restore_rs485_settings for why a bounded sleep and not another request.
@@ -1484,9 +981,9 @@ def _rs485_session_baseline(api):
 
     Deliberately session-scoped, not per-module. Two reasons:
 
-    1. Cost. A per-module snapshot meant one GET /settings per module entry — 52 of them
-       in a full run (50 test files, plus one extra entry for each file whose items are
-       split across groups by pytest_collection_modifyitems: today 00_test_heap_session.py
+    1. Cost. A per-module snapshot meant one GET /settings per module entry — one per test
+       file, plus one extra entry for each file whose items are
+       split across groups by pytest_collection_modifyitems (today 00_test_heap_session.py
        and 47_test_io_indication.py) — each charged to that module's FIRST test item,
        including modules whose first test runs a 20-30 s pytest-timeout budget. Capturing
        once removes the GET from every module's setup phase; only the teardown POSTs
@@ -1576,15 +1073,14 @@ def _restore_rs485_settings(_rs485_session_baseline, api, request):
     such write leaks forward into every later file, and the later file's failure looks
     like a firmware bug rather than contamination from a file it never mentions.
 
-    That is not hypothetical. 12_test_sniffer_ws.py sets rs485_1.tx_disabled=True
-    (required for the QEMU sniffer). With no teardown it leaked into
-    13_test_ports.py::test_clock_out_keeps_rs485_2_de_low: bringing port 1 up calls
-    serial_set_tx_disabled(true), which drives the DE GPIO LOW instead of letting it
+    That is not hypothetical. A module that sets rs485_1.tx_disabled=True and does not
+    undo it leaks into every later "DE idles HIGH" assertion: bringing port 1 up calls
+    mb_slave_set_tx_disabled(true), which drives the DE GPIO LOW instead of letting it
     idle HIGH. That was misdiagnosed as a firmware regression for weeks. The currently
-    exposed victim of the same class is
-    44_test_io_state_bus.py:69::test_rs485_direction_pins_idle_high, which asserts
-    exactly the same "DE idles HIGH" property and is equally defenceless against any
-    earlier file leaving tx_disabled set.
+    exposed victims of that class are
+    44_test_io_state_bus.py::test_rs485_direction_pins_idle_high and its neighbours in
+    48_test_io_direction_enforcement.py, which assert exactly that property and are
+    defenceless against any earlier file leaving tx_disabled set.
 
     Fixing each `_baseline` one at a time only moves the next leak; this fixture kills
     the class. pytest sets a conftest-level fixture up before a test module's own
@@ -1656,7 +1152,7 @@ def _restore_rs485_settings(_rs485_session_baseline, api, request):
 
     if restored_any:
         # Barrier. When a restore genuinely CHANGES a line parameter — i.e. exactly in the
-        # modules this fixture exists for — port_manager_check_settings_changed() returns
+        # modules this fixture exists for — mb_slave_check_settings_changed() returns
         # true and settings_update() (main/settings_update.c:442) spawns
         # settings_update_task, which releases and re-inits the port AFTER the POST
         # response has already been sent. Without a pause here the next module's first test
@@ -1666,34 +1162,28 @@ def _restore_rs485_settings(_rs485_session_baseline, api, request):
         # POST /settings (settings_update.c:368 spins while update_task_handle != NULL), so
         # the rs485_2 write already waits out the task the rs485_1 write spawned, and every
         # module with its own POST-based `_baseline` waits out ours. The modules that do not
-        # are the ones that open a raw TCP/UART socket first — 13, 18, 43, 44-48 — and
-        # 44:69::test_rs485_direction_pins_idle_high, one of the two tests this fixture was
+        # are the ones that open a raw TCP/UART socket first — 13, 18, 44-48 — and
+        # 44::test_rs485_direction_pins_idle_high, one of the tests this fixture was
         # written to protect, is among them.
         #
         # A bounded sleep, deliberately, and NOT a GET /info: /info would prove nothing.
         # It is answered by the httpd task, which the rs485 flags never release, and its
-        # port fields come from port_manager_get_mode() (port_manager.c:833) and
-        # port_manager_get_cache() (:980), both plain unlocked reads of pm_ctx — so it
+        # port fields are plain unlocked reads of the port-manager context — so it
         # returns immediately and happily reports a port that is mid-re-init. Nor would
-        # polling help: neither field changes across a re-init, so there is nothing to
+        # polling help: those fields do not change across a re-init, so there is nothing to
         # poll for. The only request that is a real barrier is another POST
         # /settings, and a third bounded call would push the teardown ceiling from 41.2 s
-        # to 61.3 s, past the 41.2 s ceiling quoted by these 17 items:
-        # 00/20/21/24/25/27/28/29/31/35/38/39/40/41/42/47/49. Fifteen of them round that
-        # ceiling up to a "45 s allowance" (the roster in 40_test_web_port.py:120-122);
-        # 00_ and 47_ spell the 41.2 s out instead, which is why the two rosters differ in
-        # length while describing the same set of affected budgets. (00_ and 47_ are the
-        # two that are charged this teardown for being FIRST and LAST in the run rather
+        # to 61.3 s, past the 41.2 s ceiling quoted by 00_, 40_ and 47_. 40_ rounds that
+        # ceiling up to a "45 s allowance" (40_test_web_port.py, via its _FIXTURE_BUDGET_S
+        # constant); 00_ and 47_ spell the 41.2 s out instead. (00_ and 47_ are
+        # charged this teardown for being FIRST and LAST in the run rather
         # than for owning an rs485 fixture: pytest_collection_modifyitems orders the session
         # `baseline + body + final + reboot`, and a module-scoped teardown fires inside the
-        # last item of each module entry. 00_ has quoted the ceiling since it was written
-        # and was simply missing from this list; 47_ was added when it grew a budget of its
-        # own. 40_ reaches it indirectly, via its _FIXTURE_BUDGET_S constant.)
+        # last item of each module entry.)
         # It is not a suite-wide invariant and
         # must not be stated as one — 03_ decomposes its budget without any such allowance
-        # (42 calls x 10 s + delays), and 36_/37_ use a single undecomposed, deliberately
-        # generous number instead. 1 s is the same settle window the suite already uses for a port
-        # rebind (e.g. 20/31's cache fixtures) and comfortably covers the "few hundred
+        # (42 calls x 10 s + delays). 1 s is the same settle window the suite already uses
+        # for a port rebind and comfortably covers the "few hundred
         # milliseconds" the release->acquire window is documented to take
         # (settings_update.c:231-244).
         time.sleep(_RS485_RESTORE_SETTLE_S)
@@ -1713,8 +1203,8 @@ def _uart_leak_state():
 
     `warned` is a SET OF PORTS, not one boolean. UART1 and UART2 are two independent
     single-client resources, and one shared flag broke in two ways: a leak on UART2 that
-    began while UART1 was legitimately held (20_test_cache_tcp_framing's module-scoped
-    cache_tcp_server holds UART1 across all six of its tests) was never reported, and —
+    began while UART1 was legitimately held by a live module-scoped fixture was never
+    reported, and —
     worse — once one port stayed wedged, the "both ports accept again" re-arm condition
     could never hold again, so the flag stayed set and the guard went mute for the rest
     of the session: exactly the failure the per-episode re-arm was introduced to
@@ -1746,14 +1236,11 @@ def _uart_leak_guard(request, _uart_leak_state):
     properties of the probe itself, and neither is fixed by making the probe angrier:
 
     1. It cannot tell a leak from a legitimate long-lived owner. The guard is
-       function-scoped; the sockets it probes are not. 20_test_cache_tcp_framing's
-       module-scoped `cache_tcp_server` fixture holds a PacketInjector on UART1 across all
-       six tests of that module, so from the second test onward the probe finds UART1
-       unreachable in a perfectly healthy run. (29_test_gateway_dual_port's module-scoped
-       `dual_gateway_slave` holds both chardevs the same way, and escapes notice only
-       because that module contains exactly one test.) A failing guard would therefore
-       fail correct runs; a warning one was harmless only because nobody noticed it
-       firing.
+       function-scoped; the sockets it probes are not. Any module- or session-scoped
+       fixture that holds a chardev open across its file's tests makes the probe find that
+       port unreachable from the second test onward in a perfectly healthy run. A failing
+       guard would therefore fail correct runs; a warning one was harmless only because
+       nobody noticed it firing.
 
     2. It cannot attribute. QEMU's LISTENING socket stays open while its one client slot
        is occupied, so the kernel completes the first connect() after a leak out of the
@@ -1773,9 +1260,8 @@ def _uart_leak_guard(request, _uart_leak_state):
     _uart_leak_state for what a single shared flag got wrong): a port is re-armed the
     moment it accepts again, a warning names only the ports NEWLY seen unreachable, and
     a port that is still wedged from an earlier warning stays quiet. A once-per-session
-    flag (the first version of this) would be spent by module 20's legitimate holder on
-    nearly every run — that module starts about a third of the way into the run (74 of
-    229 collected items precede it) — leaving the guard mute for the rest of the suite.
+    flag (the first version of this) would be spent by the first legitimate long-lived
+    holder in the run, leaving the guard mute for the rest of the suite.
     Edge-triggering still suppresses the wall of identical warnings a wedged port would
     otherwise produce, without trading away every later report. It keeps probing while
     suppressed, since that is how it notices the port coming back: on a genuinely wedged
@@ -1868,10 +1354,8 @@ def _uart_leak_guard(request, _uart_leak_state):
             f"happened in that test or shortly before it — most recent first, the tests "
             f"that ran before it are: {window}. This is a hint, not a verdict: the probe "
             f"cannot distinguish a leak "
-            f"from a chardev legitimately held by a live module-scoped fixture (e.g. "
-            f"cache_tcp_server in 20_test_cache_tcp_framing.py holds UART1 "
-            f"({qemu_ports.UART1_TCP_PORT}) for its whole "
-            f"module), and QEMU's listen backlog absorbs the first connect after a leak, "
+            f"from a chardev legitimately held for a whole module by a live module-scoped "
+            f"fixture, and QEMU's listen backlog absorbs the first connect after a leak, "
             f"so this warning lags the leak by roughly one test. Ignore it when one of "
             f"the tests above is meant to be holding the chardev; otherwise look in them "
             f"for a helper thread whose stop() an exception skipped. Port(s) {newly} "

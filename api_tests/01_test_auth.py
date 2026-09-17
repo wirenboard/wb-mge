@@ -45,13 +45,6 @@ def test_unauthorized_access(api):
         f"GET /hostname should be accessible without auth, got {hostname_response.status_code}"
     print("✓ Hostname endpoint accessible without authorization")
 
-    cache_protected = ["/cache/csv", "/cache/json", "/cache/status"]
-    for endpoint in cache_protected:
-        response = unauth_session.get(f"{api.base_url}{endpoint}", timeout=10)
-        assert response.status_code == 401, \
-            f"Cache endpoint {endpoint} should require auth, got {response.status_code}"
-    print("✓ Cache endpoints require authorization")
-
 
 def test_auth(api):
     """Authorization test"""

@@ -31,44 +31,6 @@ def test_info(api):
     assert isinstance(data["psram_size_kb"], int) and data["psram_size_kb"] >= 0, \
         "Field psram_size_kb must be a non-negative integer"
 
-    assert "cache_modbus_port" in data, "Field cache_modbus_port is missing"
-    assert isinstance(data["cache_modbus_port"], int) and 1 <= data["cache_modbus_port"] <= 65535, \
-        f"Field cache_modbus_port has incorrect value: {data['cache_modbus_port']}"
-    assert "cache_modbus_server_enabled" in data, "Field cache_modbus_server_enabled is missing"
-    assert isinstance(data["cache_modbus_server_enabled"], bool), \
-        "Field cache_modbus_server_enabled has incorrect type"
-    assert "cache_modbus_active_port" in data, "Field cache_modbus_active_port is missing"
-    assert isinstance(data["cache_modbus_active_port"], int) and \
-        0 <= data["cache_modbus_active_port"] <= 65535, \
-        f"Field cache_modbus_active_port has incorrect value: {data['cache_modbus_active_port']}"
-    if data["cache_modbus_server_enabled"]:
-        # A healthy device serves the cache Modbus server on the port it was configured
-        # for. 0 means nothing is listening: a failed start, or the server not being up
-        # yet — it is started only after the network comes up, and it is briefly down
-        # while a settings update re-inits the ports. Another port means it stayed on the
-        # previous one after a failed port change (a stored port <= 0 gives the same
-        # mismatch, but the range assertion above has already ruled that out).
-        assert data["cache_modbus_active_port"] == data["cache_modbus_port"], \
-            f"Cache Modbus server is enabled on port {data['cache_modbus_port']} but " \
-            f"listens on {data['cache_modbus_active_port']}"
-    else:
-        # Same guarantees as the branch above: 0 is the steady state, and a non-zero port
-        # is either a server that failed to stop or a disable still in flight — the NVS
-        # write is visible in /info immediately, while the stop is asynchronous
-        # (settings_update() only spawns the task; the release runs in the task, possibly
-        # behind a 1 s delay), so enabled=false next to a live port is legitimate inside
-        # that window. Asserting strict equality is still safe here because the suite runs
-        # sequentially (pytest.ini sets neither -n nor random order, files run in numeric
-        # order) and nothing before this file writes cache Modbus settings, so no disable
-        # can be in flight — moving this check into a shared helper would break that.
-        assert data["cache_modbus_active_port"] == 0, \
-            "Cache Modbus server is disabled but still listens on " \
-            f"{data['cache_modbus_active_port']}"
-
-    assert "cache_value_timeout_s" in data, "Field cache_value_timeout_s is missing"
-    assert isinstance(data["cache_value_timeout_s"], int) and data["cache_value_timeout_s"] >= 0, \
-        "Field cache_value_timeout_s must be a non-negative integer"
-
     assert "ethernet" in data, "Section ethernet is missing"
     eth = data["ethernet"]
 
@@ -102,19 +64,12 @@ def test_info(api):
     assert wifi["mode"] in ["ap", "sta", "apsta", "none"], \
         f"Field mode has unexpected value: {wifi['mode']}"
 
+    # The per-port status objects must still be present, even though the gateway-era
+    # runtime counters they used to carry are gone. Their existence is the contract the
+    # frontend reads; what goes inside them is asserted by the tests that own each field.
     for port in ["rs485_1", "rs485_2"]:
         assert port in data, f"Section {port} is missing"
-        rs485 = data[port]
-
-        assert "is_busy" in rs485, "Field is_busy is missing"
-        assert "error_percentage" in rs485, "Field error_percentage is missing"
-        assert "server_connections_count" in rs485, "Field server_connections_count is missing"
-        assert "port_mode" in rs485, f"Field port_mode is missing in {port}"
-
-        assert isinstance(rs485["is_busy"], bool), "Field is_busy has incorrect type"
-        assert isinstance(rs485["error_percentage"], int), "Field error_percentage has incorrect type"
-        assert isinstance(rs485["server_connections_count"], int), "Field server_connections_count has incorrect type"
-        assert isinstance(rs485["port_mode"], str), f"Field port_mode in {port} has incorrect type"
+        assert isinstance(data[port], dict), f"Section {port} must be an object"
 
     print("✓ Information structure is correct")
 

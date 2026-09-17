@@ -1,133 +1,24 @@
-"""Port modes, sniffer status, and WB test endpoint tests"""
+"""RS-485 port parameters and the factory wb_test endpoint"""
 
-import json
 import time
 
 import pytest
-import requests
-from urllib.parse import urlparse
 
-from api_client import SNIFFER_STATUS_TIMEOUT_S
-from sniffer_helpers import (
-    _assert_sniffer_precondition,
-    _poll_sniffer_status,
-    _ws_connect,
-)
 from io_bus_helpers import IoBus
-
-
-# Per-test budgets for the four tests that call _poll_sniffer_status(). pytest.ini's global
-# timeout is 180 s and its comment covers /settings and the WS handshake, not sniffer-status
-# polling; these carry their own marker instead, which is the convention here (21_, 25_, 27_
-# do the same). Write t_max for the most expensive single status read of the run. The helper
-# measures TWO figures over its reads — the slowest, which drives its budget, and the
-# fastest, which sizes its settle window — and both are <= t_max by construction. Per poll
-# SITE:
-#
-#     poll   <= SNIFFER_STATUS_TIMEOUT_S                  (the poll's own budget; the helper
-#             + 2 x t_rtt_budget                           drives it from the SLOWEST status
-#                                                          read it has taken so far, so this
-#                                                          term is <= 2 x t_max)
-#             + 2 x SNIFFER_STATUS_TIMEOUT_S              (the read already in flight when
-#                                                          that budget runs out plays out to
-#                                                          its own client timeout — the
-#                                                          property that makes a genuine hang
-#                                                          a named requests.ReadTimeout. TWO
-#                                                          of them, not one: requests applies
-#                                                          `timeout=` to the connect and to
-#                                                          each socket read separately, and
-#                                                          api_client sends `Connection:
-#                                                          close`, so every status read opens
-#                                                          a fresh connection and can spend
-#                                                          the whole timeout in either phase.
-#                                                          Kept even though the connect phase
-#                                                          cannot actually block here — see
-#                                                          the handshake note below — because
-#                                                          the doubling costs 10 s of marker
-#                                                          rather than 120 s)
-#     window <= sniffer_helpers._SETTLE_CEILING_S         (the window's exit test is on a
-#             + 2 x t_max                                  read's START time, so it costs the
-#                                                          read that discovers the window is
-#                                                          over plus the one it queued behind)
-#
-# = 32 s + 4 x t_max per site. On top of that each of these tests opens exactly ONE WebSocket
-# before its first site, and the markers below are sized for a 122 s handshake: _ws_connect()
-# makes TWO attempts 2 s apart, each with its own ws.settimeout(60), and 60 + 2 + 60 = 122.
-#
-# That 122 s is a SIZING ASSUMPTION about this environment, phrased like the t_max one below,
-# not a ceiling — websocket-client puts no single deadline on a handshake at all.
-# ws.settimeout(60) lands in sock_opt.timeout (websocket/_core.py), _open_socket() applies it
-# to the socket BEFORE sock.connect() (websocket/_http.py), and the same 60 s then governs
-# each recv while read_headers() reads the response — one BYTE per recv, through
-# _socket.recv_line(), each with a fresh 60 s. So the formal ceiling is not 122 s, and it is
-# not the 242 s that "60 s connect + 60 s headers, twice" suggests either: it is unbounded,
-# and there is no number to raise these markers to. Sizing for the practical figure is
-# therefore the only option, and what makes 122 s the practical figure is the environment:
-# QEMU runs with user-mode networking (`-nic user,model=open_eth,hostfwd=...`,
-# qemu_ports.qemu_nic_arg()), and slirp accepts the host-side connection itself before it
-# even forwards the SYN to the guest — an established fact in this suite, not an assumption
-# made here: conftest._connect_ready_bridge() exists precisely because connect() against a
-# hostfwd port succeeds instantly regardless of firmware state. So the connect phase cannot
-# block on a stalled guest and only the header read can. The retry's own 60 s stays in the
-# number because a first attempt genuinely can burn it — that is what the retry is for.
-#
-# t_max is the term that moves. At <= 1 s — ~10x the ~0.1 s a status read measures against
-# QEMU here — a site costs 36 s. The markers below are sized for t_max <= 8 s (64 s per
-# site): 8 s is the degenerate sample sniffer_helpers' CEILING paragraph names, and covering
-# it is the point, so that a node slow enough to produce one fails with this suite's own
-# diagnosis instead of "Failed: Timeout >Ns" — a firmware hang that never happened. Past 8 s
-# each further second of t_max costs 4 s per site.
-# Sizing for that regime costs little hang-detection: firmware that stops answering surfaces
-# as a named requests exception within ~20 s of the read that hangs, so these markers only
-# backstop what has no client timeout of its own — the 122 s handshake, ws.send(), and the
-# shape of the loops themselves.
-#
-# The numbers below are those two figures plus an allowance for the calls AROUND the sites,
-# which this round did not touch. That allowance is not one number for all three, because the
-# call sets are not the same:
-#
-#   1 site   240 = 122 + 1 x 64 +  54   one /info, at most one extra /sniffer/status read,
-#   2 sites  300 = 122 + 2 x 64 +  50   and TWO set_port_mode POSTs (the setup and the
-#                                       restore in `finally`) — all on ONE port
-#   3 sites  420 = 122 + 3 x 64 + 106   the same for a SECOND port as well: FOUR mode POSTs,
-#                                       two of them in `finally`
-#
-# Those calls cost seconds under QEMU here, not tens of them, so the slack is sized instead
-# for ONE mode POST PER PORT going pathological — 30 s, its client timeout — with the /info
-# and the status read inside what is left. That is the whole of the difference between ~50 s
-# on the one-port tests and ~106 s on the two-port one; the markers are then rounded up to
-# 240/300/420.
-#
-# They deliberately do NOT stack the pathological ceiling of every independent call.
-# set_port_mode alone is up to 3 x 60 s + 2 x 0.5 s = 181 s: it retries a transient ESP_FAIL
-# twice at 0.5 s, and every one of its three attempts goes through the same session with
-# `Connection: close` and timeout=30, so by the connect-and-read rule above each can spend
-# 30 s in either phase (api_client.py) — that 181 s is the FORMAL ceiling, the same kind of
-# number the handshake note above declines to size for. Stacking figures like that across
-# four such calls exceeds any usable marker and describes a run that has already failed for
-# another reason.
-_SNIFFER_POLL_1_SITE_TIMEOUT_S = 240
-_SNIFFER_POLL_2_SITE_TIMEOUT_S = 300
-_SNIFFER_POLL_3_SITE_TIMEOUT_S = 420
 
 
 @pytest.fixture(scope="module", autouse=True)
 def _baseline(api):
-    # Defense in depth: explicitly clear tx_disabled on both ports before setting
-    # the port modes, so this file's "DE idles HIGH" premise
-    # (test_clock_out_keeps_rs485_2_de_low) cannot be silently broken by a
-    # tx_disabled=True leaked from an earlier test file. Order matters: the
-    # settings write lands before set_port_mode, so port init reads the cleared
-    # NVS and the shim drives DE HIGH.
+    # Defense in depth: explicitly clear tx_disabled on both ports, so this file's
+    # "DE idles HIGH" premise (test_clock_out_keeps_rs485_2_de_low) cannot be silently
+    # broken by a tx_disabled=True leaked from an earlier test file. Writing it re-inits
+    # both ports, so their UARTs come up reading the cleared NVS and the shim drives DE
+    # HIGH.
     resp = api.update_settings({
         "rs485_1": {"tx_disabled": False},
         "rs485_2": {"tx_disabled": False},
     })
     assert resp.status_code == 200, f"_baseline: clear tx_disabled failed: {resp.status_code} {resp.text}"
-    resp = api.set_port_mode(1, "tcp_bridge")    # first assertion: sniffer.port_1 == False
-    assert resp.status_code == 200, f"_baseline: set_port_mode(1, tcp_bridge) failed: {resp.status_code} {resp.text}"
-    resp = api.set_port_mode(2, "tcp_bridge")    # first assertion: sniffer.port_2 == False
-    assert resp.status_code == 200, f"_baseline: set_port_mode(2, tcp_bridge) failed: {resp.status_code} {resp.text}"
     resp = api.set_wb_test(False)                # test expects a known baseline for clock_out
     assert resp.status_code == 200, f"_baseline: set_wb_test(False) failed: {resp.status_code} {resp.text}"
 
@@ -201,10 +92,9 @@ def test_wb_test_leds_coupling(api):
 
     The RS-485-1/RS-485-2 activity LEDs are tapped in hardware from the UART1/UART2
     TX lines and are NOT observable over the QEMU IO bus (the 100 kHz LEDC signal
-    bypasses the gpio shim); they are verified on real hardware. As the observable
-    proxy for the RS-485-2 path, this test asserts that bridge port 2 (RS-485-2) is
-    switched to "disabled" while clock_out is on (freeing its UART2 TX pin) and is
-    restored to its baseline mode afterwards.
+    bypasses the gpio shim); they are verified on real hardware. The RS-485-2 path is
+    covered instead by test_clock_out_keeps_rs485_2_de_low, which watches the DE line
+    over the same bus.
     """
     original = api.get_wb_test().json()["clock_out"]
 
@@ -213,10 +103,6 @@ def test_wb_test_leds_coupling(api):
         # clock_out=false restores V-out to its configured state (not
         # unconditionally off), so capture the baseline before the test.
         vout_baseline = bus.get("E06")
-
-        # Baseline RS-485-2 port mode; clock_out must disable this port (to free
-        # its UART2 TX pin for the LEDC output) and restore it afterwards.
-        port2_baseline = api.get_info().json().get("rs485_2", {}).get("port_mode")
 
         try:
             response = api.set_wb_test(True)
@@ -230,12 +116,6 @@ def test_wb_test_leds_coupling(api):
             assert bus.wait_for("E05", 0, timeout=5.0), "clock_out=true must turn Eth LED (E05) on"
             print("✓ clock_out=true lit V-out + indicator LEDs")
 
-            # clock_out frees the RS-485-2 UART2 TX pin (GPIO14) by disabling the port.
-            port2_during = api.get_info().json().get("rs485_2", {}).get("port_mode")
-            assert port2_during == "disabled", \
-                f"clock_out=true must disable RS-485-2 port, got {port2_during!r}"
-            print(f"✓ clock_out=true disabled RS-485-2 port (was {port2_baseline!r})")
-
             response = api.set_wb_test(False)
             assert response.status_code == 200, \
                 f"POST /wb_test clock_out=false expected 200, got {response.status_code}"
@@ -244,12 +124,6 @@ def test_wb_test_leds_coupling(api):
             assert bus.wait_for("E06", vout_baseline, timeout=5.0), \
                 f"clock_out=false must restore V-out (E06) to baseline {vout_baseline}"
             print(f"✓ clock_out=false restored V-out (E06) to baseline {vout_baseline}")
-
-            # RS-485-2 port mode must be restored to its pre-test baseline.
-            port2_after = api.get_info().json().get("rs485_2", {}).get("port_mode")
-            assert port2_after == port2_baseline, \
-                f"clock_out=false must restore RS-485-2 port to {port2_baseline!r}, got {port2_after!r}"
-            print(f"✓ clock_out=false restored RS-485-2 port to {port2_baseline!r}")
 
         finally:
             api.set_wb_test(original)
@@ -282,9 +156,9 @@ def test_clock_out_keeps_rs485_2_de_low(api):
         DE line towards "driver enabled" for the whole port re-init window (an NVS read plus
         a UART init), and WB-MGU has no external pulldown to fight it. So no ("D15", 0)
         record may appear after the park: the pin goes straight from our driven LOW to the
-        UART's OUTPUT. Port 2 is configured tcp_bridge here, so the exit path re-inits it and
+        UART's OUTPUT. Port 2's serial is open here, so the exit path re-inits it and
         uart_set_pin() puts the line back at its idle HIGH — that final G15 == 1 is the
-        UART's doing. Had the port stayed disabled, the pin would simply have stayed LOW,
+        UART's doing. Had the port stayed closed, the pin would simply have stayed LOW,
         which is equally correct: DE=0 is receive mode, i.e. the bus is not driven.
 
     Both windows below are anchored at the ("G15", 0) parking record itself, not at the
@@ -297,16 +171,12 @@ def test_clock_out_keeps_rs485_2_de_low(api):
     a flat, driven 0.
     """
     original_clock_out = api.get_wb_test().json()["clock_out"]
-    info = api.get_info().json()
-    original_1 = info.get("rs485_1", {}).get("port_mode", "tcp_bridge")
-    original_2 = info.get("rs485_2", {}).get("port_mode", "tcp_bridge")
 
     try:
-        # Both ports must be in an active transport, so their DE pins are RTS-attached
-        # and idle HIGH. That is what makes the assertion below meaningful: G15 starts
-        # at 1 and only the firmware can bring it down.
-        assert api.set_port_mode(1, "tcp_bridge").status_code == 200
-        assert api.set_port_mode(2, "tcp_bridge").status_code == 200
+        # Both serial ports are open (the module _baseline wrote their line parameters),
+        # so their DE pins are RTS-attached and idle HIGH. That is what makes the
+        # assertion below meaningful: G15 starts at 1 and only the firmware can bring
+        # it down.
         time.sleep(1.0)
 
         with IoBus() as bus:
@@ -357,8 +227,8 @@ def test_clock_out_keeps_rs485_2_de_low(api):
                 assert response.status_code == 200, \
                     f"POST /wb_test clock_out=false expected 200, got {response.status_code}"
 
-            # Exit hands the parked pin OVER, it never releases it: port 2 comes up from
-            # NVS (tcp_bridge) and uart_set_pin() re-attaches its RTS, which is the only
+            # Exit hands the parked pin OVER, it never releases it: port 2 comes back up
+            # from NVS and uart_set_pin() re-attaches its RTS, which is the only
             # thing that puts the DE line back at the UART's TX-enabled idle level.
             assert bus.wait_for("G15", 1, timeout=5.0), \
                 f"port 2 coming back up must hand the RS-485-2 DE line to the UART, got {bus.get('G15')}"
@@ -385,95 +255,6 @@ def test_clock_out_keeps_rs485_2_de_low(api):
 
     finally:
         api.set_wb_test(original_clock_out)
-        restore_errors = []
-        for port_num, mode in [(1, original_1), (2, original_2)]:
-            resp = api.set_port_mode(port_num, mode)
-            if resp.status_code != 200:
-                restore_errors.append(f"port {port_num} -> {mode}: {resp.status_code}")
-        if restore_errors:
-            raise AssertionError("Port mode restore failed: " + "; ".join(restore_errors))
-
-
-def test_clock_out_freezes_port_mode(api):
-    """clock_out freezes the ports: mode changes are rejected and NVS is untouched.
-
-    While the test runs it owns the TX and DE pins of both ports (the LEDC drives the two
-    TX lines; the two DE lines are driven as plain GPIOs), so a persisting mode change
-    (POST /ports/N/mode) must not go through: the firmware rejects it with 409 Conflict
-    instead of handing the pins back to the UART. The runtime mode is
-    DISABLED for the duration, but that is deliberately NOT persisted — GET /settings
-    reads straight from NVS and must still show the mode configured before the test,
-    both during it and after it. On exit both ports come back up from NVS.
-
-    The baseline mode is "passive" (not the default "tcp_bridge"), so a rejected write
-    that leaked into NVS anyway would be visible instead of matching the default.
-    """
-    info = api.get_info().json()
-    original_1 = info.get("rs485_1", {}).get("port_mode", "tcp_bridge")
-    original_2 = info.get("rs485_2", {}).get("port_mode", "tcp_bridge")
-    original_clock_out = api.get_wb_test().json()["clock_out"]
-
-    try:
-        resp = api.set_port_mode(1, "passive")
-        assert resp.status_code == 200, \
-            f"Baseline set_port_mode(1, passive) expected 200, got {resp.status_code}"
-        nvs_before = api.get_settings().json().get("rs485_1", {}).get("port_mode")
-        assert nvs_before == "passive", \
-            f"Baseline: NVS rs485_1.port_mode expected 'passive', got {nvs_before!r}"
-
-        response = api.set_wb_test(True)
-        assert response.status_code == 200, \
-            f"POST /wb_test clock_out=true expected 200, got {response.status_code}"
-
-        try:
-            # (a) Both ports are frozen: a mode change is a conflict, not an error.
-            for port in (1, 2):
-                resp = api.set_port_mode(port, "repeater")
-                assert resp.status_code == 409, (
-                    f"POST /ports/{port}/mode during clock_out expected 409, "
-                    f"got {resp.status_code}: {resp.text}"
-                )
-            print("✓ POST /ports/{1,2}/mode during clock_out rejected with 409")
-
-            # The runtime mode is DISABLED while the LEDC drives the TX pins...
-            info_during = api.get_info().json()
-            assert info_during.get("rs485_1", {}).get("port_mode") == "disabled", \
-                f"clock_out=true must disable port 1, got {info_during.get('rs485_1')}"
-
-            # ...but NVS still holds the configured mode: neither the transient DISABLED
-            # nor the rejected "repeater" may reach it.
-            nvs_during = api.get_settings().json().get("rs485_1", {}).get("port_mode")
-            assert nvs_during == "passive", (
-                f"NVS rs485_1.port_mode must stay 'passive' during clock_out, "
-                f"got {nvs_during!r}"
-            )
-            print("✓ NVS port_mode untouched while clock_out is active")
-
-        finally:
-            response = api.set_wb_test(False)
-            assert response.status_code == 200, \
-                f"POST /wb_test clock_out=false expected 200, got {response.status_code}"
-
-        time.sleep(0.5)
-
-        # (b) The mode in NVS is unchanged and the port is restored from it.
-        nvs_after = api.get_settings().json().get("rs485_1", {}).get("port_mode")
-        assert nvs_after == "passive", \
-            f"After clock_out, NVS rs485_1.port_mode must still be 'passive', got {nvs_after!r}"
-        mode_after = api.get_info().json().get("rs485_1", {}).get("port_mode")
-        assert mode_after == "passive", \
-            f"After clock_out, port 1 must be restored from NVS to 'passive', got {mode_after!r}"
-        print("✓ port_mode restored from NVS after clock_out (409 write never persisted)")
-
-    finally:
-        api.set_wb_test(original_clock_out)
-        restore_errors = []
-        for port_num, mode in [(1, original_1), (2, original_2)]:
-            resp = api.set_port_mode(port_num, mode)
-            if resp.status_code != 200:
-                restore_errors.append(f"port {port_num} -> {mode}: {resp.status_code}")
-        if restore_errors:
-            raise AssertionError("Port mode restore failed: " + "; ".join(restore_errors))
 
 
 @pytest.mark.qemu
@@ -553,508 +334,3 @@ def test_clock_out_leaves_io_bus_alone(api):
                 api.update_settings({"io_bus": original_io_bus})
                 print(f"✓ io_bus restored to {original_io_bus}")
 
-
-@pytest.mark.timeout(_SNIFFER_POLL_2_SITE_TIMEOUT_S)
-def test_sniffer_status(api):
-    """Test GET /sniffer/status and verify it reflects the live WS sniffer overlay.
-
-    The sniffer is now a display overlay driven by the WS start/stop commands, not
-    a port transport mode. The port just needs its serial open (passive transport)
-    so the overlay has something to sniff.
-    """
-    info_response = api.get_info()
-    assert info_response.status_code == 200
-    info_data = info_response.json()
-    original_port_1_mode = info_data.get("rs485_1", {}).get("port_mode", "tcp_bridge")
-    print(f"  Port 1 original mode: {original_port_1_mode}")
-
-    ws = None
-    stop_ping = None
-    try:
-        response = api.get_sniffer_status()
-        assert response.status_code == 200, \
-            f"GET /sniffer/status expected 200, got {response.status_code}"
-        status = response.json()
-        assert "port_1" in status, "Field 'port_1' is missing from /sniffer/status response"
-        assert "port_2" in status, "Field 'port_2' is missing from /sniffer/status response"
-        assert isinstance(status["port_1"], bool), "Field 'port_1' must be a boolean"
-        assert isinstance(status["port_2"], bool), "Field 'port_2' must be a boolean"
-        print(f"✓ GET /sniffer/status works, port_1={status['port_1']}, port_2={status['port_2']}")
-
-        # Open serial (passive transport) and activate the live sniffer overlay via WS.
-        response = api.set_port_mode(1, "passive")
-        assert response.status_code == 200, \
-            f"POST /ports/1/mode passive expected 200, got {response.status_code}"
-
-        # Same asynchrony as in test_sniffer_status_both_ports_independent below: the WS
-        # start/stop frame is published by the firmware's httpd thread whenever its select
-        # loop reaches that session, so the state is polled for, not slept for. See
-        # sniffer_helpers._poll_sniffer_status() for the mechanism and the budget. No
-        # invariants here — this test drives one port and asserts nothing about the other.
-        # The settle window still runs: it watches port_1 itself, so an overlay that starts
-        # and then falls off a few hundred milliseconds later fails here instead of passing.
-        ws, stop_ping, _ = _ws_connect(api, 1)
-        _poll_sniffer_status(api, "port_1", True, "after the WS sniffer overlay start")
-        print("✓ After WS sniffer start: port_1=true")
-
-        # Stop the live sniffer overlay; the status must clear.
-        ws.send(json.dumps({"cmd": "stop", "port": 1}))
-        _poll_sniffer_status(api, "port_1", False, "after the WS sniffer overlay stop")
-        print("✓ After WS sniffer stop: port_1=false")
-
-    finally:
-        if stop_ping is not None:
-            stop_ping.set()
-        if ws is not None:
-            try:
-                ws.send(json.dumps({"cmd": "stop", "port": 1}))
-            except Exception:
-                pass
-            try:
-                ws.close()
-            except Exception:
-                pass
-        try:
-            api.set_port_mode(1, original_port_1_mode)
-            print(f"✓ Port 1 mode restored to {original_port_1_mode}")
-        except Exception as exc:
-            raise AssertionError(f"Failed to restore port 1 mode: {exc}")
-
-
-def test_port_modes(api):
-    """Test POST /ports/{n}/mode — all modes, both ports"""
-    info_response = api.get_info()
-    assert info_response.status_code == 200
-    info_data = info_response.json()
-    original_port_1_mode = info_data.get("rs485_1", {}).get("port_mode", "tcp_bridge")
-    original_port_2_mode = info_data.get("rs485_2", {}).get("port_mode", "tcp_bridge")
-    print(f"  Original modes: port_1={original_port_1_mode}, port_2={original_port_2_mode}")
-
-    try:
-        for mode in ["disabled", "tcp_bridge", "passive", "repeater"]:
-            response = api.set_port_mode(1, mode)
-            assert response.status_code == 200, \
-                f"POST /ports/1/mode {mode} expected 200, got {response.status_code}"
-            result = response.json()
-            assert result.get("mode") == mode, \
-                f"POST /ports/1/mode {mode}: response mode mismatch, got {result}"
-
-            info_resp = api.get_info()
-            assert info_resp.status_code == 200
-            actual_mode = info_resp.json().get("rs485_1", {}).get("port_mode")
-            assert actual_mode == mode, \
-                f"After setting mode={mode}, GET /info shows rs485_1.port_mode={actual_mode}"
-            print(f"✓ Port 1 mode '{mode}' set and verified via /info")
-
-        # The cache is now an orthogonal overlay (POST /ports/N/cache), not a
-        # transport mode. Toggle it on port 1 (now passive) and verify /info.
-        response = api.set_port_cache(1, True)
-        assert response.status_code == 200, \
-            f"POST /ports/1/cache enabled=true expected 200, got {response.status_code}"
-        info_resp = api.get_info()
-        assert info_resp.status_code == 200
-        assert info_resp.json().get("rs485_1", {}).get("cache_enabled") is True, \
-            "After enabling the cache overlay, rs485_1.cache_enabled must be true"
-        print("✓ Port 1 cache overlay enabled and verified via /info")
-        response = api.set_port_cache(1, False)
-        assert response.status_code == 200, \
-            f"POST /ports/1/cache enabled=false expected 200, got {response.status_code}"
-        info_resp = api.get_info()
-        assert info_resp.status_code == 200
-        assert info_resp.json().get("rs485_1", {}).get("cache_enabled") is False, \
-            "After disabling the cache overlay, rs485_1.cache_enabled must be false"
-        print("✓ Port 1 cache overlay disabled and verified via /info")
-
-        for mode in ["passive", "disabled"]:
-            response = api.set_port_mode(2, mode)
-            assert response.status_code == 200, \
-                f"POST /ports/2/mode {mode} expected 200, got {response.status_code}"
-            result = response.json()
-            assert result.get("mode") == mode, \
-                f"POST /ports/2/mode {mode}: response mode mismatch, got {result}"
-            print(f"✓ Port 2 mode '{mode}' set")
-
-        response = api.set_port_mode(1, "invalid_mode")
-        assert response.status_code == 400, \
-            f"POST /ports/1/mode 'invalid_mode' expected 400, got {response.status_code}"
-        print("✓ Invalid mode value rejected with 400")
-
-        # The removed transport modes must now be rejected.
-        for removed in ["sniffer", "cache_bus"]:
-            response = api.set_port_mode(1, removed)
-            assert response.status_code == 400, \
-                f"POST /ports/1/mode '{removed}' (removed mode) expected 400, got {response.status_code}"
-        print("✓ Removed modes 'sniffer'/'cache_bus' rejected with 400")
-
-        response = api.session.post(
-            f"{api.base_url}/ports/3/mode",
-            json={"mode": "tcp_bridge"},
-            timeout=10
-        )
-        assert response.status_code in [400, 404], \
-            f"POST /ports/3/mode (non-existent port) expected 400 or 404, got {response.status_code}"
-        print("✓ Non-existent port 3 rejected")
-
-    finally:
-        restore_errors = []
-        for port_num, mode in [(1, original_port_1_mode), (2, original_port_2_mode)]:
-            try:
-                api.reconnect()
-                api.auth()
-                api.set_port_mode(port_num, mode)
-                print(f"✓ Port {port_num} mode restored to {mode}")
-            except Exception as exc:
-                msg = f"Failed to restore port {port_num} mode to {mode}: {exc}"
-                restore_errors.append(msg)
-        if restore_errors:
-            raise AssertionError("Port mode restore failed: " + "; ".join(restore_errors))
-
-
-def test_port_cache_invalid_body_returns_400(api):
-    """POST /ports/{n}/cache must reject malformed bodies with HTTP 400.
-
-    Drives the error branches of port_set_cache_handler that the happy-path
-    toggle in test_port_modes does not exercise: a non-bool 'enabled' value, a
-    body with no 'enabled' key, and a syntactically invalid JSON body. These are
-    pure error-path requests; none of them should change the port state.
-    """
-    # Non-bool 'enabled' (string instead of bool) -> 400.
-    response = api.session.post(
-        f"{api.base_url}/ports/1/cache", json={"enabled": "yes"}, timeout=10
-    )
-    assert response.status_code == 400, (
-        f"POST /ports/1/cache with string 'enabled' expected 400, "
-        f"got {response.status_code}: {response.text}"
-    )
-    print("✓ POST /ports/1/cache with string 'enabled' rejected with 400")
-
-    # Missing 'enabled' key entirely -> 400.
-    response = api.session.post(f"{api.base_url}/ports/1/cache", json={}, timeout=10)
-    assert response.status_code == 400, (
-        f"POST /ports/1/cache with no 'enabled' key expected 400, "
-        f"got {response.status_code}: {response.text}"
-    )
-    print("✓ POST /ports/1/cache with missing 'enabled' key rejected with 400")
-
-    # Invalid JSON body -> 400.
-    response = api.session.post(
-        f"{api.base_url}/ports/1/cache",
-        data="{not json",
-        headers={"Content-Type": "application/json"},
-        timeout=10,
-    )
-    assert response.status_code == 400, (
-        f"POST /ports/1/cache with invalid JSON body expected 400, "
-        f"got {response.status_code}: {response.text}"
-    )
-    print("✓ POST /ports/1/cache with invalid JSON body rejected with 400")
-
-
-# ---------------------------------------------------------------------------
-# Group 3: /sniffer/status endpoint
-# ---------------------------------------------------------------------------
-
-def test_sniffer_status_response_shape_and_content_type(api):
-    """GET /sniffer/status must return 200 with application/json and keys port_1/port_2."""
-    # No live WS sniffer overlay is active in this test, so the status must read False.
-    info = api.get_info()
-    assert info.status_code == 200
-    info_data = info.json()
-    port1_mode = info_data.get("rs485_1", {}).get("port_mode", "tcp_bridge")
-    port2_mode = info_data.get("rs485_2", {}).get("port_mode", "tcp_bridge")
-
-    restored_port1 = False
-    restored_port2 = False
-
-    try:
-        response = api.get_sniffer_status()
-        assert response.status_code == 200, (
-            f"Expected HTTP 200, got {response.status_code}"
-        )
-
-        content_type = response.headers.get("Content-Type", "")
-        assert "application/json" in content_type, (
-            f"Expected Content-Type to contain 'application/json', got {content_type!r}"
-        )
-
-        body = response.json()
-        assert "port_1" in body, f"Key 'port_1' missing from response: {body}"
-        assert "port_2" in body, f"Key 'port_2' missing from response: {body}"
-        # Keys must not use zero-based indexing
-        assert "port_0" not in body, f"Unexpected zero-based key 'port_0' in response: {body}"
-        assert "port_3" not in body, f"Unexpected key 'port_3' in response: {body}"
-
-        assert body["port_1"] is False, (
-            f"Expected port_1==False (both ports non-sniffer), got {body['port_1']}"
-        )
-        assert body["port_2"] is False, (
-            f"Expected port_2==False (both ports non-sniffer), got {body['port_2']}"
-        )
-        print("✓ /sniffer/status shape and content-type validated")
-
-    finally:
-        # Restore any modes we changed
-        if restored_port1:
-            r = api.set_port_mode(1, port1_mode)
-            assert r.status_code == 200, f"Failed to restore port 1 mode: {r.status_code}"
-        if restored_port2:
-            r = api.set_port_mode(2, port2_mode)
-            assert r.status_code == 200, f"Failed to restore port 2 mode: {r.status_code}"
-
-
-@pytest.mark.timeout(_SNIFFER_POLL_1_SITE_TIMEOUT_S)
-def test_sniffer_status_reflects_start_command(api):
-    """/sniffer/status must report port_1==True after WS start command for port 1."""
-    original_port_mode = None
-    ws = None
-    stop_ping = None
-
-    try:
-        info = api.get_info()
-        assert info.status_code == 200
-        original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
-
-        r = api.set_port_mode(1, "passive")
-        assert r.status_code == 200, f"Failed to set passive mode: {r.status_code}"
-
-        # port_2==False is a PRECONDITION this test inherits, not one it creates: nothing
-        # here or in the helper puts port 2 down, and the firmware leaves the DISPLAY bit set
-        # when a WebSocket closes (only an explicit stop or a mode change clears it — see
-        # main/bridge/sniffer.c). Assert it before driving anything, so an overlay left up by
-        # an earlier test is reported as what it is instead of as "starting port 1 raised
-        # port 2" below.
-        _assert_sniffer_precondition(
-            api, {"port_2": False},
-            "precondition of test_sniffer_status_reflects_start_command (port 2 must be "
-            "down before port 1 is started; if it is not, an earlier test left its overlay "
-            "up rather than the start of port 1 raising it)")
-
-        ws, stop_ping, _ = _ws_connect(api, 1)
-
-        # port_2 is an INVARIANT, not a second target: it was never started, so False is what
-        # must already hold before port_1 flips, when it flips, and afterwards. Passing it as
-        # an invariant gets it checked on every body the helper reads — the poll's included —
-        # so a firmware defect that raises port_2 early, at the flip, or late is caught rather
-        # than waited out.
-        _poll_sniffer_status(api, "port_1", True, "after the WS start of port 1",
-                             invariants={"port_2": False})
-        print("✓ /sniffer/status reflects start command for port 1")
-
-    finally:
-        if stop_ping is not None:
-            stop_ping.set()
-        if ws is not None:
-            try:
-                ws.send(json.dumps({"cmd": "stop", "port": 1}))
-            except Exception:
-                pass
-            try:
-                ws.close()
-            except Exception:
-                pass
-        if original_port_mode is not None:
-            r = api.set_port_mode(1, original_port_mode)
-            assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
-
-
-@pytest.mark.timeout(_SNIFFER_POLL_2_SITE_TIMEOUT_S)
-def test_sniffer_status_reflects_stop_command(api):
-    """/sniffer/status must report port_1==False after WS stop command."""
-    original_port_mode = None
-    ws = None
-    stop_ping = None
-
-    try:
-        info = api.get_info()
-        assert info.status_code == 200
-        original_port_mode = info.json().get("rs485_1", {}).get("port_mode", "tcp_bridge")
-
-        r = api.set_port_mode(1, "passive")
-        assert r.status_code == 200, f"Failed to set passive mode: {r.status_code}"
-
-        ws, stop_ping, _ = _ws_connect(api, 1)
-
-        # Precondition: the start this test's stop has to undo must have landed first.
-        _poll_sniffer_status(api, "port_1", True, "precondition, after the WS start of port 1")
-
-        # Stop the sniffer
-        ws.send(json.dumps({"cmd": "stop", "port": 1}))
-        _poll_sniffer_status(api, "port_1", False, "after the WS stop of port 1")
-        print("✓ /sniffer/status reflects stop command for port 1")
-
-    finally:
-        if stop_ping is not None:
-            stop_ping.set()
-        if ws is not None:
-            try:
-                ws.send(json.dumps({"cmd": "stop", "port": 1}))
-            except Exception:
-                pass
-            try:
-                ws.close()
-            except Exception:
-                pass
-        if original_port_mode is not None:
-            r = api.set_port_mode(1, original_port_mode)
-            assert r.status_code == 200, f"Failed to restore port mode: {r.status_code}"
-
-
-def test_sniffer_status_unauthenticated(api):
-    """GET /sniffer/status without auth must return HTTP 401."""
-    parsed = urlparse(api.base_url)
-    base_url = f"http://{parsed.hostname}:{parsed.port or 80}"
-
-    # Use a fresh session with no cookies. Same endpoint as WBMGEAPI.get_sniffer_status(), so
-    # the same client timeout — a bare requests.Session has no reason to be more or less
-    # patient with /sniffer/status than the client under test.
-    unauth_session = requests.Session()
-    response = unauth_session.get(f"{base_url}/sniffer/status",
-                                  timeout=SNIFFER_STATUS_TIMEOUT_S)
-
-    assert response.status_code == 401, (
-        f"Expected HTTP 401 for unauthenticated request, got {response.status_code}"
-    )
-    print("✓ /sniffer/status returns 401 for unauthenticated requests")
-
-
-@pytest.mark.timeout(_SNIFFER_POLL_3_SITE_TIMEOUT_S)
-def test_sniffer_status_both_ports_independent(api):
-    """Per-port sniffer state (port 1 vs port 2) must be independently controllable.
-
-    The sniffer WebSocket is a SINGLE client slot per device by design — a second
-    connection evicts the first ("one client, the newest wins"; see the comment in
-    main/bridge/sniffer.c, and the frontend Sniffer.vue which opens exactly one
-    socket and multiplexes both ports over it via {cmd,port} frames). Per-port
-    capture state, however, is genuinely independent (sniff_ctx[0]/[1]). This test
-    therefore drives BOTH ports over ONE socket and verifies that independence —
-    the earlier two-socket version was wrong: the second connect evicted the first,
-    so a later stop on the dead socket was silently dropped.
-    """
-    original_mode_1 = None
-    original_mode_2 = None
-    ws = None
-    stop_ping = None
-
-    try:
-        info = api.get_info()
-        assert info.status_code == 200
-        info_data = info.json()
-        original_mode_1 = info_data.get("rs485_1", {}).get("port_mode", "tcp_bridge")
-        original_mode_2 = info_data.get("rs485_2", {}).get("port_mode", "tcp_bridge")
-
-        # Set port 1 to sniffer and start it (the single socket sends {start,port:1}).
-        #
-        # No settle sleep after the mode POST, here or below. Not because the request leaves
-        # nothing at all in flight — api_client.set_port_mode()'s own docstring documents the
-        # opposite: lwIP releases the previous mode's listen socket asynchronously after the
-        # 200, which is exactly why that helper carries an ESP_FAIL retry. The claim needed
-        # here is narrower and does hold: the state this test READS is final before the
-        # response. POST /ports/N/mode applies the mode INSIDE its handler
-        # (port_set_mode_handler -> port_manager_set_mode -> port_deinit_mode/port_init_mode,
-        # main/bridge/port_manager.c) and only then sends the 200; port_deinit_mode() ->
-        # sniffer_detach() clears the port's reason bits along the way, and port_init_mode()
-        # re-arms only SNIFF_REASON_CACHE (port_manager.c:459-461) — while /sniffer/status
-        # deliberately reports only SNIFF_REASON_DISPLAY (sniffer_status_handler,
-        # main/bridge/sniffer.c). So no later, asynchronous step can move what is read below.
-        r = api.set_port_mode(1, "passive")
-        assert r.status_code == 200, f"Failed to set passive mode for port 1: {r.status_code}"
-
-        # Same inherited precondition as in test_sniffer_status_reflects_start_command: the
-        # port_2==False invariant below is held by the session, not by this test, because the
-        # firmware clears DISPLAY only on an explicit stop or a mode change. Read it once so
-        # that residue from an earlier test cannot be reported as a failure of independence.
-        _assert_sniffer_precondition(
-            api, {"port_2": False},
-            "precondition of test_sniffer_status_both_ports_independent (port 2 must be down "
-            "before either port is started; if it is not, an earlier test left its overlay up "
-            "rather than the start of port 1 raising it)")
-
-        ws, stop_ping, _ = _ws_connect(api, 1)
-
-        # _ws_connect() ends with {"cmd":"start","port":1}; wait for the firmware to publish it.
-        # port_2 rides along as an invariant rather than as a second polled target: it has never
-        # been started, so False must hold on every body read while waiting, when port_1 flips,
-        # and across the settle window — which is what turns "a firmware bug raises port_2" from
-        # an invisible pass into a failure whenever in that sequence it happens.
-        _poll_sniffer_status(api, "port_1", True, "after the WS start of port 1",
-                             invariants={"port_2": False})
-
-        # Start port 2 over the SAME socket (do not open a second one — it would
-        # evict this session).
-        r2 = api.set_port_mode(2, "passive")
-        assert r2.status_code == 200, \
-            f"set_port_mode(2, 'passive') expected 200, got {r2.status_code}"
-
-        ws.send(json.dumps({"cmd": "start", "port": 2}))
-        # Poll for the TARGET state only; port_1 is the invariant across this step. Polling for
-        # the PAIR would accept a port_1 that dropped and came back — the very defect this test
-        # exists to catch. The invariant is instead checked on every body read while waiting
-        # for port_2, at the instant port_2 appears, and over the settle window that follows,
-        # so a start of port 2 that clears port 1 BEFORE, WITH or AFTER publishing its own bit
-        # is caught. (Only the last two used to be: the poll read the earlier bodies and threw
-        # them away, so a clear-and-restore that finished before port_2 appeared was invisible.)
-        _poll_sniffer_status(api, "port_2", True, "after the WS start of port 2",
-                             invariants={"port_1": True})
-
-        # Stop only port 1 over the same socket; port 2 must stay up (independence).
-        ws.send(json.dumps({"cmd": "stop", "port": 1}))
-        _poll_sniffer_status(api, "port_1", False, "after the WS stop of port 1",
-                             invariants={"port_2": True})
-        print("✓ port 1 and port 2 sniffer states are independent over one socket")
-
-    finally:
-        if stop_ping is not None:
-            stop_ping.set()
-        if ws is not None:
-            try:
-                ws.send(json.dumps({"cmd": "stop", "port": 1}))
-                ws.send(json.dumps({"cmd": "stop", "port": 2}))
-            except Exception:
-                pass
-            try:
-                ws.close()
-            except Exception:
-                pass
-        if original_mode_1 is not None:
-            r = api.set_port_mode(1, original_mode_1)
-            assert r.status_code == 200, f"Failed to restore port 1 mode: {r.status_code}"
-        if original_mode_2 is not None:
-            r = api.set_port_mode(2, original_mode_2)
-            assert r.status_code == 200, f"Failed to restore port 2 mode: {r.status_code}"
-
-
-def test_sniffer_status_post_method_rejected(api):
-    """POST /sniffer/status must return HTTP 405 (method not allowed)."""
-    response = api.session.post(f"{api.base_url}/sniffer/status", timeout=10)
-    assert response.status_code == 405, (
-        f"Expected HTTP 405 for POST /sniffer/status, got {response.status_code}"
-    )
-    print("✓ POST /sniffer/status returns 405")
-
-
-def test_info_repeater_object_shape(api):
-    """C-1: GET /info must expose a well-formed 'repeater' object.
-
-    Validates the info_handlers.c repeater block against the openapi.yaml schema:
-    the object is present, all six keys exist, 'active' is a bool, and the five
-    counters/uptime are non-negative ints. Catches a dropped/renamed field or a
-    type drift (e.g. a counter serialized as a string) between firmware and API.
-    """
-    resp = api.get_info()
-    assert resp.status_code == 200, f"GET /info expected 200, got {resp.status_code}"
-    data = resp.json()
-    assert "repeater" in data, f"'repeater' object missing from /info: keys={list(data.keys())}"
-    rep = data["repeater"]
-    assert isinstance(rep, dict), f"'repeater' must be an object, got {type(rep)}"
-
-    assert "active" in rep, f"'active' missing from repeater: {rep}"
-    assert isinstance(rep["active"], bool), f"'active' must be bool, got {type(rep['active'])}"
-
-    for key in ("uptime_ms", "bytes_1to2", "bytes_2to1", "dropped_1", "dropped_2"):
-        assert key in rep, f"'{key}' missing from repeater: {rep}"
-        val = rep[key]
-        # In Python bool is a subclass of int — reject bools explicitly for the counters.
-        assert isinstance(val, int) and not isinstance(val, bool), \
-            f"'{key}' must be an integer, got {type(val)}: {val!r}"
-        assert val >= 0, f"'{key}' must be >= 0, got {val}"
-    print("✓ /info.repeater shape validated (6 keys, correct types)")

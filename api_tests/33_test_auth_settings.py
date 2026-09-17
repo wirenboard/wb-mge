@@ -683,41 +683,6 @@ def test_au04_login_missing_fields(api):
     assert "error" in data, "Login with empty JSON must include 'error' key"
 
 
-def test_st05_timeout_validation(api):
-    """ST-05: validate_timeout() boundary check via cache_value_timeout_s."""
-    time.sleep(1)  # Allow server to recover after the AU-02 burst of connections
-    original_settings = api.get_settings().json()
-    original_timeout = original_settings.get("cache_value_timeout_s")
-    try:
-        # 0 = disabled — must be accepted
-        resp = api.update_settings({"cache_value_timeout_s": 0})
-        assert resp.status_code == 200
-        assert resp.json().get("success") is True, \
-            "cache_value_timeout_s=0 (disable) should be accepted"
-
-        # Maximum allowed value
-        resp = api.update_settings({"cache_value_timeout_s": 65535})
-        assert resp.status_code == 200
-        assert resp.json().get("success") is True, \
-            "cache_value_timeout_s=65535 should be accepted"
-
-        # One over the maximum
-        resp = api.update_settings({"cache_value_timeout_s": 65536})
-        assert resp.status_code == 200
-        assert resp.json().get("success") is False, \
-            "cache_value_timeout_s=65536 should be rejected (max is 65535)"
-
-        # Negative value
-        resp = api.update_settings({"cache_value_timeout_s": -1})
-        assert resp.status_code == 200
-        assert resp.json().get("success") is False, \
-            "cache_value_timeout_s=-1 should be rejected"
-
-    finally:
-        if original_timeout is not None:
-            api.update_settings({"cache_value_timeout_s": original_timeout})
-
-
 def test_st06_bool_type_check(api):
     """ST-06: POST /settings {vout: 1} must be rejected; {vout: true} must be accepted."""
     original_settings = api.get_settings().json()

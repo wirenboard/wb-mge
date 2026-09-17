@@ -6,8 +6,8 @@ firmware's real ESP-IDF GPIO calls, transparently intercepted by the linker
 defaults: a pin only gains a direction once the firmware actually configures it.
 So these tests double as proof that the real firmware config drives the model:
     G34 (config button) -> INPUT  : config_button.c calls gpio_config(INPUT).
-    G04 (RS485-1 DE)     -> OUTPUT : serial.c calls uart_set_pin(...rts=G04...).
-    G15 (RS485-2 DE)     -> OUTPUT : serial.c calls uart_set_pin(...rts=G15...).
+    G04 (RS485-1 DE)     -> OUTPUT : mb_slave.c calls uart_set_pin(...rts=G04...).
+    G15 (RS485-2 DE)     -> OUTPUT : mb_slave.c calls uart_set_pin(...rts=G15...).
 
 The model enforces three rules NON-fatally (see main/qemu/virtual_io_qemu.c):
     - HOST writing an OUTPUT pin (raw G<NN>) is illegal   -> V<NN>/0, rejected.
@@ -20,7 +20,7 @@ record is emitted; the bus helper records it in ``bus.violations`` as
 
 A firmware ``gpio_set_level()`` on a pin that is not currently an output is NOT
 a violation: as on real silicon it writes the pad's output latch, which reaches
-the line only once the pad is switched to OUTPUT. serial.c relies on exactly
+the line only once the pad is switched to OUTPUT. mb_slave.c relies on exactly
 that to force the RS-485 DE pin LOW without a glitch.
 
 Non-destructive (all settings changed are restored in finally); NOT marked
@@ -53,11 +53,11 @@ def test_native_directions_from_real_config(api):
             f"Dump keys: {sorted(bus.state)}"
         )
         assert bus.get("D04") == 1, (
-            f"Expected G04 (RS485-1 DE) direction OUTPUT (D04==1) from serial.c "
+            f"Expected G04 (RS485-1 DE) direction OUTPUT (D04==1) from mb_slave.c "
             f"uart_set_pin, got {bus.get('D04')!r}. Dump keys: {sorted(bus.state)}"
         )
         assert bus.get("D15") == 1, (
-            f"Expected G15 (RS485-2 DE) direction OUTPUT (D15==1) from serial.c "
+            f"Expected G15 (RS485-2 DE) direction OUTPUT (D15==1) from mb_slave.c "
             f"uart_set_pin, got {bus.get('D15')!r}. Dump keys: {sorted(bus.state)}"
         )
 
