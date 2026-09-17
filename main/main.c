@@ -1,11 +1,10 @@
-#include "port_manager.h"
 #include "config.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "http_server.h"
+#include "mb_role.h"
 #include "nv_storage.h"
-#include "serial.h"
 #include "setting_items.h"
 #include "sys_info.h"
 #include "config_button.h"
@@ -13,6 +12,17 @@
 #include "network.h"
 #include "settings_update.h"
 #include "debug_log.h"
+
+// The Modbus stack of the built role, and the example task that goes with it. In the "none"
+// role neither header exists on this build and none of the calls below is made: the two
+// UARTs are simply left alone.
+#if WB_MB_ROLE_SLAVE
+    #include "mb_slave.h"
+    #include "user_app.h"
+#elif WB_MB_ROLE_MASTER
+    #include "mb_master.h"
+    #include "user_app.h"
+#endif
 
 // Hardware-logic headers: needed by both builds. In QEMU these resolve to the
 // virtual IO bus (gpio_expander.h symbols come from virtual_io_qemu.c).
@@ -131,95 +141,89 @@ void app_main(void)
     ESP_ERROR_CHECK(nvs_init());
     ESP_ERROR_CHECK(setting_items_init());
 
+    // The two locks that keep the tasks below out of each other's way: the Modbus stack
+    // ownership lock (the stop/start pair is run from the httpd task, settings_update_task
+    // and, on a factory reset, config_button_task) and the one that serialises the spawn
+    // decision in settings_update(). Created here, before any of those tasks exists;
+    // neither call can fail.
+    #if WB_MB_ROLE_SLAVE
+        mb_slave_lock_init();
+    #elif WB_MB_ROLE_MASTER
+        mb_master_lock_init();
+    #endif
+    settings_update_init();
+
     update_io_bus_control();
 
     print_setting_items();
 
+    // Both RS-485 transceivers into receive before anything else touches those pins. A no-op
+    // unless this is a "none" build; see the comment on the function for why that role needs
+    // it and the other two must not have it.
+    park_serial_direction_pins();
+
+    // The two RS-485 slaves come up HERE, before the network and before the web server.
+    // Everything they need is the per-port serial parameters, which are readable the
+    // moment setting_items_init() returns — and this device's primary use case is a board
+    // sitting on a controller's RS-485 bus with no Ethernet cable and no Wi-Fi at all.
+    // Gating them on a link, the way the TCP instance is gated at the end of this function,
+    // would mean such a device never opened its ports.
+    //
+    // Deliberately NOT ESP_ERROR_CHECK: this is the one function the device is installed
+    // for, so aborting on it takes that down instead of degrading it. Every cause that can
+    // make a port fail — too little heap, a UART that could not be installed — survives a
+    // reboot and meets the next boot the same way, so a panic loop is the one outcome to
+    // avoid. mb_slave_start_serial() brings up each port independently and logs the ones
+    // that did not make it.
+    //
+    // No mb_slave_lock_take() around this one, and that is not an oversight: nothing else
+    // can be touching the Modbus instances yet. The web server (http_server_init() below)
+    // and config_button_task (config_button_init() below) are the two tasks that reach
+    // settings_update_task, and neither has been created at this point. The TCP start at
+    // the end of app_main is a different matter — by then they both exist, so it takes the
+    // lock.
+    #if WB_MB_ROLE_SLAVE
+        esp_err_t mb_serial_ret = mb_slave_start_serial();
+        if (mb_serial_ret != ESP_OK) {
+            ESP_LOGE(TAG, "mb_slave_start_serial failed: %s - continuing with whatever came up",
+                     esp_err_to_name(mb_serial_ret));
+        }
+    #elif WB_MB_ROLE_MASTER
+        // The master role opens the same two UARTs, at the same point and for the same
+        // reason — it just drives the buses instead of answering them.
+        esp_err_t mb_serial_ret = mb_master_start_serial();
+        if (mb_serial_ret != ESP_OK) {
+            ESP_LOGE(TAG, "mb_master_start_serial failed: %s - continuing with whatever came up",
+                     esp_err_to_name(mb_serial_ret));
+        }
+    #endif
+
+    // The example application task, and the file a DIY user replaces. Started here rather
+    // than at the end of app_main for the same reason the serial half is: the wait loop
+    // down there never exits on a device with no network, so anything after it would never
+    // run.
+    //
+    // AFTER the Modbus bring-up above, and both roles need that, for their own reason:
+    //   - slave: the task blocks on mb_slave_event_queue(), and that queue exists only once
+    //     the call above has initialised the register framework — xQueueReceive() on a
+    //     handle that does not exist yet is a FreeRTOS assert;
+    //   - master: the task's first poll must meet instances that are already up, or it comes
+    //     straight back with ESP_ERR_INVALID_STATE before a single frame goes on the bus.
+    #if (!WB_MB_ROLE_NONE)
+        user_app_start();
+    #endif
+
     ESP_ERROR_CHECK(network_init());
 
-    // Bring up the network-independent subsystems BEFORE the HTTP server starts: the sniffer
-    // (queue, per-port response timers, WS mutex, WS task), the multimaster cache mutex, the
-    // repeater mutex, the RS-485 monitors and — first of all, above that function's own
-    // one-shot guard — the port_manager locks (the two per-port init mutexes and the
-    // cache-decision mutex, via port_manager_locks_init()). Those last ones are why the order
-    // is load-bearing in a second, harder way than the rest: they used to be created lazily
-    // inside the lock paths, and a lazy create is not atomic, so two tasks arriving together
-    // would each end up holding a mutex of their own and serialise nothing. Neither the POST
-    // /ports/N/* handlers registered below nor the config-button long-press callback
-    // (config_button_init() further down, then settings_update() -> update_serial_tx_disabled()
-    // -> port_manager_set_tx_disabled()) waits for port_manager_init(), so that race had the
-    // whole wait-for-network window to happen in. The lock paths now assert the handle exists,
-    // which is a check on THIS ordering and nothing else: those mutexes sit in static buffers,
-    // so their creation cannot fail and a NULL handle can only mean this call did not run.
-    //
-    // The original reason stands unchanged. http_server_init() registers URI handlers that
-    // reach straight into those FreeRTOS handles — the sniffer WS endpoint is one "enable" +
-    // "disable" message away from xTimerStop() on the response timer — and FreeRTOS
-    // configASSERTs on a NULL handle, which on this build is a panic and a reboot, not a failed
-    // request. Keep this call above http_server_init(), and do not fold it back into
-    // port_manager_init(): that one stays behind the wait-for-network loop at the end of this
-    // function, because the rest of it (cache Modbus server, TCP bridges) needs an interface to
-    // bind to. The order is still an invariant.
-    //
-    // It is no longer the only thing holding this up, though. Every public entry point of the
-    // sniffer now checks the handle it is about to use and degrades instead of panicking — the
-    // WS endpoint answers 503 — the way cache_multimaster has always done with its mutex. The
-    // order keeps the feature working; the checks keep a stray early request from rebooting the
-    // device.
-    //
-    // How wide that window really is, since the loop below invites a wrong reading: it is
-    // released by sys_info flags that network.c sets on LINK/ASSOCIATION events —
-    // ETHERNET_EVENT_CONNECTED, WIFI_EVENT_STA_CONNECTED, WIFI_EVENT_AP_STACONNECTED — and NOT
-    // on IP_EVENT_ETH_GOT_IP / IP_EVENT_STA_GOT_IP, which only fill in the address strings.
-    // Under SoftAP the window is therefore narrower — the counter is bumped when a client
-    // associates, before it has finished DHCP and asked for a page — but narrower is not
-    // closed: the loop below only samples that counter once a second
-    // (vTaskDelay(pdMS_TO_TICKS(1000))), so the association happening early buys nothing
-    // against a client that skips DHCP. One with a static address or a cached lease can
-    // request a page almost anywhere inside that second. The real exposure is Ethernet/STA
-    // on a static address (eth_dhcpc off), where the interface starts answering the instant
-    // the link comes up while this task is still up to a poll interval from noticing. A web
-    // UI tab left open somewhere, retrying its WebSocket, lands inside that second easily.
-    //
-    // Deliberately NOT ESP_ERROR_CHECK, for the same reason as http_server_init() below: the
-    // only way any of this fails is out of memory. These subsystems used to be brought up
-    // behind the wait-for-network loop, so a device with no network never reached them at all
-    // and still served its configuration interface over SoftAP quite happily. Aborting here
-    // would put a fresh boot-loop trigger exactly where the old code degraded — and a device
-    // that cannot spare a mutex has no better luck on the next boot. Continuing is safe
-    // precisely because of the checks described above: a handler that arrives now gets a
-    // refusal, not a NULL handle.
-    esp_err_t subsys_ret = port_manager_init_subsystems();
-    if (subsys_ret != ESP_OK) {
-        ESP_LOGE(TAG, "port_manager_init_subsystems failed: %s - continuing without the "
-                      "affected subsystem, the gateway keeps running", esp_err_to_name(subsys_ret));
-    }
-
     // Deliberately NOT ESP_ERROR_CHECK: a web server that will not start must not abort the boot.
-    // This device is a Modbus gateway first — routing RS-485/TCP traffic is what it is installed
-    // for, and it does that with no web interface at all. Nothing below needs a running httpd
-    // either: every URI handler is registered inside http_server_init() itself, and
-    // port_manager_init() (the gateway) does not touch it. The opposite direction — what those
-    // handlers need from the rest of the boot — is what the call above takes care of.
     // An abort() here panics and reboots, and every cause that can make the start fail — too
     // little heap, no free LWIP socket, a web_port already held by another listener, a refused
     // auth/wifi_scan init — survives the reboot and meets the next boot the same way: a panic
-    // loop that takes the gateway down too, instead of one degraded feature.
-    //
-    // The collision cause is back on that list. It was dropped while a bridge gateway and httpd
-    // disagreed about address family and could therefore both listen on one port; they agree now
-    // (create_listen_socket(), bridge/tcp_server.c binds the same dual-stack form httpd does),
-    // so whoever takes a shared port second gets EADDRINUSE from lwIP instead of quietly
-    // becoming a second listener on it. Note which side loses it HERE, though: this call runs
-    // before port_manager_init() opens any bridge or cache socket, so at boot httpd is always
-    // the first listener and the refusal goes to the other side. httpd is the one refused on the
-    // runtime path instead, where settings_update.c re-acquires the web server socket AFTER the
-    // ports (settings_update.c:264-279) — and that call site handles it exactly as this one
-    // does: log it, carry on, leave the web interface down until the device is power-cycled.
+    // loop instead of one degraded feature.
     esp_err_t http_ret = http_server_init();
     if (http_ret != ESP_OK) {
-        ESP_LOGE(TAG, "http_server_init failed: %s - continuing without the web interface, "
-                      "the gateway keeps running", esp_err_to_name(http_ret));
+        ESP_LOGE(TAG, "http_server_init failed: %s - continuing without the web interface",
+                 esp_err_to_name(http_ret));
     }
 
     #if (QEMU_BUILD)
@@ -236,32 +240,68 @@ void app_main(void)
 
     ESP_LOGI("main", "Firmware version: %s", FIRMWARE_VERSION);
 
+    // Modbus TCP belongs to the slave role and to no other, so this whole wait exists only
+    // there. In the master and "none" roles app_main simply returns here, and the FreeRTOS
+    // main task ends — everything the device does from then on runs on the tasks started
+    // above.
+#if WB_MB_ROLE_SLAVE
+    // Only the Modbus TCP instance waits here. The RS-485 pair has been answering since
+    // long before this point, and nothing below it is needed by anything else — this loop
+    // is the last thing app_main does, and on a device that never gets a link it simply
+    // never ends.
+    //
+    // The flags are set by network.c on LINK/ASSOCIATION events (ETHERNET_EVENT_CONNECTED,
+    // WIFI_EVENT_STA_CONNECTED, WIFI_EVENT_AP_STACONNECTED), not on the IP_EVENTs that
+    // only fill in the address strings.
     while (1)
     {
         if ((sys_info.wifi_ap_connections_count > 0) ||
             sys_info.eth_is_connected ||
             sys_info.wifi_sta_is_connected)
         {
-            // Deliberately NOT ESP_ERROR_CHECK, for the same reason as the two calls above:
-            // this is the call that brings the RS-485 ports up, so aborting on it takes down
-            // the one function the device is installed for. It used to abort — the cache
-            // Modbus TCP server was started through ESP_RETURN_ON_ERROR inside, so a mutex or
-            // socket it could not allocate, or a listen() refused because cache_modbus_port
-            // collides with another listener (a bridge port, or httpd on web_port), left the
-            // ports down and rebooted. A reboot clears none of that: the allocation failures
-            // recur on a deterministic boot path; a collision with web_port comes back
-            // unchanged, because http_server_init() above binds it on every boot before this
-            // runs; and a collision with a bridge port only swaps which side loses it, because
-            // the cache server starts before the port loop (the mechanics are in
-            // port_manager_init()). A panic loop is the one outcome to avoid.
+            // Deliberately NOT ESP_ERROR_CHECK, for the same reason as the serial half
+            // above: a TCP port another listener already holds, or a socket that could not
+            // be allocated, survives a reboot and meets the next boot the same way. Losing
+            // the TCP transport must not cost the device the two RS-485 ones as well.
             //
-            // As of today the function has no failure path left to report — it logs each one
-            // and returns ESP_OK. The check stays anyway: it costs two lines, and it is what
-            // keeps the next error path added in there from silently aborting the boot again.
-            esp_err_t pm_ret = port_manager_init();
-            if (pm_ret != ESP_OK) {
-                ESP_LOGE(TAG, "port_manager_init failed: %s - continuing with whatever came "
-                              "up, the device stays reachable", esp_err_to_name(pm_ret));
+            // This is the only call, and the loop breaks either way — but a failure is not
+            // final: mb_slave_start_tcp() records that a TCP instance was asked for, so
+            // mb_slave_check_settings_changed() reports a pending change while it is down
+            // and the next POST /settings retries the listener.
+            //
+            // Under the ownership lock, unlike the serial start earlier in this function:
+            // the web server and config_button_task are both up by now, and that "records
+            // that a TCP instance was asked for" is the hazard. mb_tcp_wanted is set at the
+            // TOP of mb_slave_start_tcp(), so from that instant until mb_tcp_running goes
+            // true, any POST /settings or button factory reset makes
+            // mb_slave_check_settings_changed() answer true through "wanted and not
+            // running" — and settings_update_task would then run its own stop/start over
+            // the instance being created here. Whichever way that interleaves it ends
+            // badly: a delete under the create, or the error path below deleting the
+            // instance the apply had just started while mb_tcp_running stays true. The
+            // latter is the unrecoverable one — "wanted and not running" is false, and the
+            // port comparison sits behind "if (mb_tcp_running)", so no settings write can
+            // ever see it, let alone repair it.
+            //
+            // Taken here rather than inside mb_slave_start_tcp(): the mutex is not
+            // recursive, and mb_slave_start() calls that function while already holding it.
+            bool mb_locked = mb_slave_lock_take(MB_SLAVE_LOCK_WAIT_FOREVER);
+            if (!mb_locked) {
+                // Unreachable: mb_slave_lock_init() is called unconditionally above.
+                // Starting unguarded still beats not starting at all — without this call
+                // mb_tcp_wanted is never set, and then no settings write ever retries the
+                // listener either.
+                ESP_LOGE(TAG, "Modbus ownership lock unavailable, starting the TCP slave "
+                              "without it");
+            }
+            esp_err_t mb_tcp_ret = mb_slave_start_tcp();
+            if (mb_locked) {
+                mb_slave_lock_give();
+            }
+            if (mb_tcp_ret != ESP_OK) {
+                ESP_LOGE(TAG, "mb_slave_start_tcp failed: %s - the RS-485 ports keep "
+                              "running and the device stays reachable",
+                         esp_err_to_name(mb_tcp_ret));
             }
             break;
         } else {
@@ -269,4 +309,5 @@ void app_main(void)
             ESP_LOGW(TAG, "Waiting for network connection");
         }
     }
+#endif // WB_MB_ROLE_SLAVE
 }

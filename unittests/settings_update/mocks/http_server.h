@@ -40,7 +40,7 @@ extern uint16_t mock_http_server_init_ports[MOCK_HTTP_INIT_PORT_LOG_MAX];
 extern uint16_t mock_http_server_init_last_port;
 
 // Global call id (call_sequence_get_call_id()) of the FIRST init() / deinit() since reset.
-// Lets a test assert the two-phase order against port_manager and the cache Modbus server.
+// Lets a test assert the release/acquire order of the web server socket.
 extern unsigned mock_http_server_init_call_seq;
 extern unsigned mock_http_server_deinit_call_seq;
 

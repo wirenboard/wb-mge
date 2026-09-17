@@ -1,0 +1,6 @@
+# Modbus role: master. Appended to SDKCONFIG_DEFAULTS by the Makefile for MB_ROLE=master;
+# see main/Kconfig.projbuild for what the roles mean.
+#
+# Both RS-485 ports run as Modbus RTU masters (main/mb_master/). No Modbus TCP, no slave
+# register store, and no mb_slave_id / mb_tcp_port settings.
+CONFIG_WB_MODBUS_ROLE_MASTER=y

@@ -29,7 +29,6 @@ INC += $(IDF_PATH)/components/esp_hw_support/include
 INC += $(UNITTEST_DIR)/mocks
 INC += $(PROJ_DIR)/main
 INC += $(PROJ_DIR)/main/network
-INC += $(PROJ_DIR)/main/bridge
 INC += $(PROJ_DIR)/main/wb_app_desc
 INC += $(IDF_PATH)/components/esp_common/include
 INC += $(IDF_PATH)/components/esp_netif/include

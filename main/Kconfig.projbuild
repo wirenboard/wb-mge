@@ -1,0 +1,49 @@
+menu "WB DIY firmware"
+
+choice WB_MODBUS_ROLE
+    prompt "Modbus role"
+    default WB_MODBUS_ROLE_SLAVE
+    help
+        What this firmware does with Modbus, decided once at BUILD time for the whole
+        device. It is not a runtime setting: the roles pull in different code, and the
+        point of "none" is that the Modbus stack is not linked at all.
+
+        Build it from the Makefile with MB_ROLE=<slave|master|none>, e.g.
+        `make MB_ROLE=master build-idf-project`; each role writes its own sdkconfig, so
+        switching back and forth cannot leave a stale configuration behind.
+
+config WB_MODBUS_ROLE_SLAVE
+    bool "slave - Modbus RTU on both RS-485 ports and a Modbus TCP server"
+    help
+        The default, and the behaviour this firmware has always had. Both RS-485 ports
+        answer as Modbus RTU slaves and the Modbus TCP server runs; all three share one
+        unit id (mb_slave_id), one TCP port setting (mb_tcp_port) and one register map
+        (main/mb_slave/mb_registers.c).
+
+        Modbus TCP belongs to this role and to no other.
+
+config WB_MODBUS_ROLE_MASTER
+    bool "master - poll other devices on both RS-485 ports"
+    help
+        The device is the master on both RS-485 buses: main/mb_master/ brings up one
+        Modbus RTU master per port and offers a blocking request API the application
+        calls from its own task. There is no Modbus TCP and no slave register store in
+        this role, so mb_slave_id and mb_tcp_port do not exist either.
+
+config WB_MODBUS_ROLE_NONE
+    bool "none - no Modbus at all"
+    help
+        Neither main/mb_slave/ nor main/mb_master/ is compiled and nothing references
+        esp-modbus, so the whole Modbus stack drops out of the image (~82 KB of flash).
+        Everything else - the web UI, the settings API, the RS-485 transceiver control,
+        the factory test - keeps working.
+
+        No UART driver is installed on either RS-485 port, so nothing is transmitted and
+        nothing is received. The two transceivers are NOT simply left alone, though: with
+        no UART to drive their direction lines, app_main parks both DE/RE pins LOW once at
+        boot, so each transceiver sits in receive and cannot hold a shared bus. The
+        485_tx_dis_N settings stay in the API but have nothing to apply to in this role.
+
+endchoice
+
+endmenu

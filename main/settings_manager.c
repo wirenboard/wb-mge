@@ -1,5 +1,6 @@
 #include "settings_manager.h"
 #include "setting_items.h"
+#include "mb_role.h"
 #include "json_utils.h"
 #include "auth.h"
 #include "array_size.h"
@@ -18,8 +19,6 @@ static const char *TAG = "settings_manager";
 
 // Machine-readable codes of the warnings reported in the response's "warnings" array.
 #define WARNING_CODE_PORT_COLLISION "port_collision"
-// The cache_en change was saved but could not be applied to the running ports.
-#define WARNING_CODE_CACHE_APPLY    "cache_apply_failed"
 
 typedef struct {
     const char *json_key;
@@ -31,11 +30,17 @@ static const setting_mapping_t top_level_mappings[] = {
     {"login", KEY_LOGIN},
     {"pass", KEY_PASS},
     {"web_port", KEY_WEB_PORT},
+#if WB_MB_ROLE_SLAVE
+    // Slave-role only, like the setting_items[] rows they map onto (see setting_items.c).
+    // In the other two roles these two JSON keys are simply not in this table, so they are
+    // neither reported by GET /settings nor written by POST /settings — the same treatment
+    // every other key this firmware does not know gets, since the apply walks THIS table and
+    // looks each entry up in the request, not the other way round.
+    {"mb_slave_id", KEY_MB_SLAVE_ID},
+    {"mb_tcp_port", KEY_MB_TCP_PORT},
+#endif
     {"io_bus", KEY_IO_BUS_ENABLED},
     {"vout", KEY_485_VOUT},
-    {"cache_modbus_port", KEY_CACHE_MODBUS_PORT},
-    {"cache_modbus_server_enabled", KEY_CACHE_MODBUS_SERVER_ENABLED},
-    {"cache_value_timeout_s", KEY_CACHE_VALUE_TIMEOUT_S},
     {"update_channel", KEY_UPDATE_CHANNEL},
 };
 
@@ -71,31 +76,6 @@ static const setting_mapping_t rs485_base_mappings[] = {
     {"term", "485_term"},
     {"fail_safe", "485_fail_safe"},
     {"tx_disabled", "485_tx_dis"},
-    // -> NVS port_mode_N (STRING, validate_port_mode).
-    //
-    // Note the deliberate asymmetry with POST /ports/N/mode, which is refused with 409
-    // while the clock_out factory test runs, whereas port_mode via POST /settings is
-    // accepted (200) even then. It is not an inconsistency:
-    //   - POST /ports/N/mode APPLIES the mode immediately (port_manager_set_mode ->
-    //     deinit + re-init of the port). During the test that would hand the TX and DE
-    //     pins back to the UART while the test is driving them — the TX pin from the
-    //     LEDC, the DE pin from the level the test holds it at (port 1 HIGH, port 2 LOW,
-    //     both plain GPIO) — so it must be refused.
-    //   - POST /settings only WRITES NVS here; the applying step is settings_update(),
-    //     and port_manager_apply_settings() is a no-op while the ports are frozen. The
-    //     new mode simply takes effect when the test ends and wb_test restores both
-    //     ports from NVS — which is exactly what a settings write is supposed to mean.
-    // So the request that touches the live hardware is blocked, and the one that only
-    // records intent is not.
-    {"port_mode", "port_mode"},
-    {"cache_en", "cache_en"},     // -> NVS cache_en_N  (BOOL,   validate_bool)
-};
-
-static const setting_mapping_t rs485_bridge_mappings[] = {
-    {"mode", "bridge_mode"},
-    {"port", "bridge_port"},
-    {"ip", "bridge_ip"},
-    {"modbus", "bridge_modbus"},
 };
 
 static esp_err_t add_rs485_settings_to_json(cJSON *parent);
@@ -315,44 +295,6 @@ static int effective_int(cJSON *parent, const char *json_key, const char *nvs_ke
     return cJSON_IsNumber(item) ? item->valueint : setting_items_read_int(nvs_key);
 }
 
-static bool effective_bool(cJSON *parent, const char *json_key, const char *nvs_key)
-{
-    if (parent == NULL) {
-        return setting_items_read_bool(nvs_key);
-    }
-    cJSON *item = cJSON_GetObjectItem(parent, json_key);
-    return cJSON_IsBool(item) ? cJSON_IsTrue(item) : setting_items_read_bool(nvs_key);
-}
-
-static bool nvs_str_equals(const char *nvs_key, const char *expected)
-{
-    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
-    if (setting_items_read(nvs_key, value) != ESP_OK) {
-        return false;
-    }
-    return strncmp(value, expected, SETTING_ITEM_MAX_STR_LEN) == 0;
-}
-
-static bool effective_str_equals(cJSON *parent, const char *json_key, const char *nvs_key,
-                                 const char *expected)
-{
-    if (parent == NULL) {
-        return nvs_str_equals(nvs_key, expected);
-    }
-    cJSON *item = cJSON_GetObjectItem(parent, json_key);
-    if (cJSON_IsString(item)) {
-        return strncmp(item->valuestring, expected, SETTING_ITEM_MAX_STR_LEN) == 0;
-    }
-    return nvs_str_equals(nvs_key, expected);
-}
-
-// Return parent's child object, or NULL if absent / not an object. parent may be NULL.
-static cJSON *get_object_or_null(cJSON *parent, const char *key)
-{
-    cJSON *obj = parent ? cJSON_GetObjectItem(parent, key) : NULL;
-    return (obj && cJSON_IsObject(obj)) ? obj : NULL;
-}
-
 // True when the request carries this key (parent may be NULL — group absent from the request).
 static bool json_has(cJSON *parent, const char *key)
 {
@@ -404,42 +346,26 @@ static void attach_warnings(cJSON *response_json, cJSON *warnings)
 // of them unable to bind (listen() -> EADDRINUSE errno 112) and, under repeated re-init without a
 // reboot, a stuck listen socket that permanently occupies the port.
 //
-// Only ports that are actually bound LOCALLY take part in the check:
-//   web_port          — always (the config web server always listens);
-//   cache_modbus_port — only when the cache Modbus server is enabled;
-//   bridge_port_N     — only when port_mode_N == tcp_bridge AND bridge_mode_N == server; in client
-//                       mode the port belongs to the REMOTE peer, so nothing is bound locally and
-//                       a "collision" with it is harmless.
-// Every pair of them is compared, which is what the old check was missing: it only compared
-// cache_modbus_port against the two bridge ports, so bridge_port_1 == bridge_port_2, and anything
-// colliding with web_port (default 80), went straight through.
+// The two locally bound listeners the settings layer knows about are the web server (web_port)
+// and the Modbus TCP slave (mb_tcp_port). Every listener the firmware gains has to be added here.
 //
-// Only collisions this request has a hand in are rejected. A listener counts as "touched" when the
-// request carries any of the fields that define it — its port, or the fields that make it a local
-// listener at all. A collision between two UNTOUCHED listeners is inherited from the saved
-// configuration (older firmware validated fewer pairs, so such devices exist) and must NOT fail the
-// request: it would make EVERY subsequent POST fail, including one that only changes the Wi-Fi
-// password, and the device could never be repaired over the REST API field by field. The factory
-// defaults (80/502/503/504) do not collide, so a fresh device is never in that state.
+// The Modbus TCP listener exists only in the slave role, so outside it there is exactly one
+// listener here and nothing to collide with. The loop below is left in place rather than
+// compiled away: it is the shape the next listener is added to, and over a one-element list
+// it does nothing at all.
 //
 // An accepted inherited collision still leaves one of the two listeners unable to bind, so it is
 // also appended to the warnings array (when the caller supplies one) and travels back to the client
 // in the response — otherwise the dead port would only ever be visible in the firmware log.
 static bool validate_port_collisions(cJSON *request_json, cJSON *warnings)
 {
-    static const char *const rs485_names[] = {"rs485_1", "rs485_2"};
-    static const char *const port_mode_keys[] = {KEY_PORT_MODE1, KEY_PORT_MODE2};
-    static const char *const bridge_mode_keys[] = {KEY_BRIDGE_MODE1, KEY_BRIDGE_MODE2};
-    static const char *const bridge_port_keys[] = {KEY_BRIDGE_PORT1, KEY_BRIDGE_PORT2};
-
     typedef struct {
         const char *name;    // human-readable source of the port, used in the log
         int         port;
         bool        touched; // this request carries one of the fields that define this listener
     } listener_t;
 
-    // web_port + cache_modbus_port + one bridge gateway per RS-485 port.
-    listener_t listeners[2 + ARRAY_SIZE(rs485_names)];
+    listener_t listeners[1 + WB_MB_ROLE_SLAVE];
     size_t count = 0;
 
     listeners[count].name = "web_port";
@@ -447,35 +373,12 @@ static bool validate_port_collisions(cJSON *request_json, cJSON *warnings)
     listeners[count].touched = json_has(request_json, "web_port");
     count++;
 
-    if (effective_bool(request_json, "cache_modbus_server_enabled", KEY_CACHE_MODBUS_SERVER_ENABLED)) {
-        listeners[count].name = "cache_modbus_port";
-        listeners[count].port = effective_int(request_json, "cache_modbus_port", KEY_CACHE_MODBUS_PORT);
-        // Enabling the server is what makes it a listener, so that counts as touching it too.
-        listeners[count].touched = json_has(request_json, "cache_modbus_port") ||
-                                   json_has(request_json, "cache_modbus_server_enabled");
-        count++;
-    }
-
-    for (size_t i = 0; i < ARRAY_SIZE(rs485_names); i++) {
-        cJSON *rs485 = get_object_or_null(request_json, rs485_names[i]);
-        cJSON *bridge = get_object_or_null(rs485, "bridge");
-
-        if (!effective_str_equals(rs485, "port_mode", port_mode_keys[i], PORT_MODE_TCP_BRIDGE_STR)) {
-            continue;   // port is disabled / passive / repeater — no TCP gateway
-        }
-        if (!effective_str_equals(bridge, "mode", bridge_mode_keys[i], BRIDGE_MODE_SERVER_STR)) {
-            continue;   // client mode — the port is remote, nothing is bound locally
-        }
-
-        listeners[count].name = rs485_names[i];
-        listeners[count].port = effective_int(bridge, "port", bridge_port_keys[i]);
-        // port_mode / bridge mode turn the gateway into a local listener, so they count as
-        // touching it as well; the other bridge/serial fields (baudrate, ip, ...) do not.
-        listeners[count].touched = json_has(bridge, "port") ||
-                                   json_has(rs485, "port_mode") ||
-                                   json_has(bridge, "mode");
-        count++;
-    }
+#if WB_MB_ROLE_SLAVE
+    listeners[count].name = "mb_tcp_port";
+    listeners[count].port = effective_int(request_json, "mb_tcp_port", KEY_MB_TCP_PORT);
+    listeners[count].touched = json_has(request_json, "mb_tcp_port");
+    count++;
+#endif
 
     for (size_t i = 0; i < count; i++) {
         for (size_t j = i + 1; j < count; j++) {
@@ -508,59 +411,7 @@ static bool validate_port_collisions(cJSON *request_json, cJSON *warnings)
     return true;
 }
 
-// Public wrapper around validate_port_collisions() for POST /ports/{n}/mode: report whether
-// switching one RS-485 port to a new transport mode would introduce a new local TCP listener
-// collision, without touching NVS. The REST handler calls this before applying the mode so the
-// conflict is rejected up front (409) instead of surfacing later as a bind() EADDRINUSE and a
-// rollback.
-esp_err_t settings_manager_check_port_mode_collision(unsigned port_index, const char *new_port_mode)
-{
-    static const char *const rs485_names[] = {"rs485_1", "rs485_2"};
-
-    // Out-of-range index or missing mode: nothing this call can model, so nothing to reject. The
-    // REST handler already validates the index via URI registration; this is just a safety net.
-    if ((port_index >= ARRAY_SIZE(rs485_names)) || (new_port_mode == NULL)) {
-        return ESP_OK;
-    }
-
-    // Build a minimal request that carries ONLY this port's new mode, e.g.
-    // {"rs485_1":{"port_mode":"tcp_bridge"}}. validate_port_collisions() reads every other listener
-    // (the other port, web_port, the cache Modbus server) from NVS through its effective_* helpers,
-    // so this single field fully models the post-switch listener set. For a non-tcp_bridge mode the
-    // rs485 loop's port_mode == tcp_bridge test is false, so this port contributes no listener and
-    // the result is ESP_OK.
-    cJSON *request_json = cJSON_CreateObject();
-    cJSON *rs485 = cJSON_CreateObject();
-    if ((request_json == NULL) || (rs485 == NULL)) {
-        // Allocation failure: fail open (skip the pre-check), exactly as POST /settings drops its
-        // warnings on OOM. The later bind() stays as the backstop, so no valid switch is wrongly
-        // rejected. rs485 is not attached yet, so freeing both here cannot double-free.
-        cJSON_Delete(request_json);
-        cJSON_Delete(rs485);
-        return ESP_OK;
-    }
-    // Same fail-open contract on OOM: if the port_mode field cannot be added, rs485 would carry no
-    // mode and validate_port_collisions() would silently evaluate the OLD saved mode instead of the
-    // requested one — wrong either way (a false 409 when switching AWAY from tcp_bridge, or a missed
-    // collision). rs485 is not attached to request_json yet, so free both separately here.
-    if (cJSON_AddStringToObject(rs485, "port_mode", new_port_mode) == NULL) {
-        cJSON_Delete(request_json);
-        cJSON_Delete(rs485);
-        return ESP_OK;
-    }
-    cJSON_AddItemToObject(request_json, rs485_names[port_index], rs485);
-
-    // warnings == NULL is safe: add_warning() returns early on NULL and validate_port_collisions()
-    // only ever touches the array through add_warning(). A pre-existing collision that does NOT
-    // involve this port is inherited, not newly introduced, so validate_port_collisions() still
-    // returns true (only a dropped warning) and the mode switch is correctly allowed.
-    bool no_collision = validate_port_collisions(request_json, NULL);
-
-    cJSON_Delete(request_json);
-    return no_collision ? ESP_OK : ESP_ERR_INVALID_STATE;
-}
-
-// Validate all RS485 port settings (base fields + bridge subgroup) in the request JSON.
+// Validate all RS485 port settings in the request JSON.
 // Returns false on the first invalid field.
 static bool validate_rs485_settings(cJSON *request_json)
 {
@@ -589,28 +440,6 @@ static bool validate_rs485_settings(cJSON *request_json)
 
                 if (!validate_setting_from_json(item, key_buf)) {
                     return false;
-                }
-            }
-        }
-
-        // Validate bridge subgroup
-        if (cJSON_HasObjectItem(rs485, "bridge")) {
-            cJSON *bridge = cJSON_GetObjectItem(rs485, "bridge");
-            if (!cJSON_IsObject(bridge)) {
-                ESP_LOGW(TAG, "Validation: bridge in %s must be an object", rs485_json_names[port]);
-                return false;
-            }
-
-            for (size_t i = 0; i < ARRAY_SIZE(rs485_bridge_mappings); i++) {
-                const setting_mapping_t *mapping = &rs485_bridge_mappings[i];
-
-                if (cJSON_HasObjectItem(bridge, mapping->json_key)) {
-                    cJSON *item = cJSON_GetObjectItem(bridge, mapping->json_key);
-                    snprintf(key_buf, sizeof(key_buf), "%s_%s", mapping->setting_key, rs485_suffix[port]);
-
-                    if (!validate_setting_from_json(item, key_buf)) {
-                        return false;
-                    }
                 }
             }
         }
@@ -700,21 +529,6 @@ static esp_err_t add_rs485_settings_to_json(cJSON *parent)
             add_setting_to_json(rs485_port, key_buf, mapping->json_key);
         }
 
-        // Add bridge subgroup
-        cJSON *bridge = cJSON_CreateObject();
-        if (bridge == NULL) {
-            ESP_LOGE(TAG, "Failed to create bridge JSON object for RS485_%d", port);
-            cJSON_Delete(rs485_port);
-            return ESP_FAIL;
-        }
-
-        for (size_t i = 0; i < ARRAY_SIZE(rs485_bridge_mappings); i++) {
-            const setting_mapping_t *mapping = &rs485_bridge_mappings[i];
-            snprintf(key_buf, sizeof(key_buf), "%s_%d", mapping->setting_key, port);
-            add_setting_to_json(bridge, key_buf, mapping->json_key);
-        }
-        cJSON_AddItemToObject(rs485_port, "bridge", bridge);
-
         // Add to main response
         snprintf(key_buf, sizeof(key_buf), "rs485_%d", port);
         cJSON_AddItemToObject(parent, key_buf, rs485_port);
@@ -754,29 +568,6 @@ static esp_err_t process_rs485_settings(cJSON *request_json)
                 if (!save_setting_from_json(item, key_buf)) {
                     ESP_LOGE(TAG, "Failed to save RS485 setting '%s'", key_buf);
                     return ESP_FAIL;
-                }
-            }
-        }
-
-        // Handle bridge subgroup
-        if (cJSON_HasObjectItem(rs485, "bridge")) {
-            cJSON *bridge = cJSON_GetObjectItem(rs485, "bridge");
-            if (cJSON_IsObject(bridge)) {
-                for (size_t i = 0; i < ARRAY_SIZE(rs485_bridge_mappings); i++) {
-                    const setting_mapping_t *mapping = &rs485_bridge_mappings[i];
-
-                    if (cJSON_HasObjectItem(bridge, mapping->json_key)) {
-                        cJSON *item = cJSON_GetObjectItem(bridge, mapping->json_key);
-
-                        // Create setting key with port suffix
-                        snprintf(key_buf, sizeof(key_buf), "%s_%s", mapping->setting_key, rs485_suffix[port]);
-
-                        // Return early on NVS write failure so the caller can report success:false.
-                        if (!save_setting_from_json(item, key_buf)) {
-                            ESP_LOGE(TAG, "Failed to save RS485 bridge setting '%s'", key_buf);
-                            return ESP_FAIL;
-                        }
-                    }
                 }
             }
         }
@@ -928,30 +719,9 @@ esp_err_t settings_process_request_json(cJSON *request_json, cJSON **response_js
         return ESP_OK; // Return OK so HTTP layer sends the error JSON
     }
 
-    // Applying the new settings to the live subsystems — including starting, stopping and moving
-    // the cache Modbus TCP server — is settings_update()'s job: it compares each subsystem's
-    // running state against NVS and reconciles the ones that actually changed. Doing it here, in
-    // the HTTP handler, meant the cache server was restarted BEFORE settings_update() re-applied
-    // the RS-485 ports and the web server, so no port could be handed over between them.
-    //
-    // One step of it is synchronous and reports back: moving the runtime cache overlay onto the
-    // port rs485_N.cache_en now names. Everything else settings_update() does is either applied
-    // by the async task (long after this response is sent) or retried by the next settings write,
-    // so this is the one failure the client can be told about while it is still listening.
-    esp_err_t cache_apply_err = ESP_OK;
-    settings_update_with_status(&cache_apply_err);
-
-    // success stays TRUE: the settings WERE saved, and a reboot will apply the overlay from NVS.
-    // What failed is only the attempt to move it on the running device, which is precisely what a
-    // warning is for — the same shape as an inherited port collision above.
-    if (cache_apply_err != ESP_OK) {
-        char message[WARNING_MSG_BUF_SIZE];
-        snprintf(message, sizeof(message),
-                 "Caching was saved but could not be applied to the running ports (%s); the cache "
-                 "keeps working as it did until the setting is saved again or the device restarts",
-                 esp_err_to_name(cache_apply_err));
-        add_warning(warnings, WARNING_CODE_CACHE_APPLY, message);
-    }
+    // Applying the new settings to the live subsystems is settings_update()'s job: it compares each
+    // subsystem's running state against NVS and reconciles the ones that actually changed.
+    settings_update();
 
     attach_warnings(*response_json, warnings);
 

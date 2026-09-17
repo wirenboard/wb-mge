@@ -67,3 +67,12 @@ CONFIG_IO_EXPANDER_ENABLE_GPIO_API_WRAPPER=n
 # Disabling only the auto-init keeps the TWDT subsystem compiled in
 # (CONFIG_ESP_TASK_WDT_EN stays =y) but prevents the spurious resets.
 CONFIG_ESP_TASK_WDT_INIT=n
+
+# Keep the Modbus stack out of mDNS, for the same reason as the hardware build
+# (sdkconfig.defaults carries the full rationale): with espressif/mdns in the
+# dependency set the integration compiles in, and mbc_slave_delete() then calls
+# mdns_free() on the service network.c owns, so every runtime restart of the
+# Modbus TCP slave took the device's own <hostname>.local down with it.
+# The QEMU build reads sdkconfig.qemu.minimal + this file, NOT sdkconfig.defaults,
+# so the option has to be repeated here.
+CONFIG_FMB_MDNS_INTEGRATION_ENABLE=n

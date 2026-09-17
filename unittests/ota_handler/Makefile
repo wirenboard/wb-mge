@@ -22,9 +22,8 @@ INC += $(UNITTEST_DIR)
 INC += $(UNITTEST_DIR)/mocks
 INC += $(UNITTEST_DIR)/mocks/freertos
 INC += $(PROJ_DIR)/main
-# sys_info.h pulls in bridge.h/serial.h and, through wb_app_desc.h, the ESP-IDF app-format headers;
+# sys_info.h pulls in the ESP-IDF app-format headers through wb_app_desc.h;
 # expose them on the host (mirrors the http_server and info_handlers unit-test setup).
-INC += $(PROJ_DIR)/main/bridge
 INC += $(PROJ_DIR)/main/wb_app_desc
 INC += $(IDF_PATH)/components/esp_common/include
 INC += $(IDF_PATH)/components/bootloader_support/include

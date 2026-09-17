@@ -35,6 +35,9 @@ const mock_setting_item_t expected_items[] = {
     {"io_bus", "true", SETTING_ITEM_TYPE_BOOL},
     {"vout", "true", SETTING_ITEM_TYPE_BOOL},
 
+    {"mb_slave_id", "1", SETTING_ITEM_TYPE_INT},
+    {"mb_tcp_port", "502", SETTING_ITEM_TYPE_INT},
+
     {"wifi_perm_dis", "false", SETTING_ITEM_TYPE_BOOL},
 
     {"wifi_mode", "ap", SETTING_ITEM_TYPE_STRING},
@@ -64,11 +67,6 @@ const mock_setting_item_t expected_items[] = {
     {"485_term_1", "true", SETTING_ITEM_TYPE_BOOL},
     {"485_fail_safe_1", "true", SETTING_ITEM_TYPE_BOOL},
     {"485_tx_dis_1", "false", SETTING_ITEM_TYPE_BOOL},
-    {"cache_en_1", "false", SETTING_ITEM_TYPE_BOOL},
-    {"bridge_mode_1", "server", SETTING_ITEM_TYPE_STRING},
-    {"bridge_port_1", "502", SETTING_ITEM_TYPE_INT},
-    {"bridge_ip_1", "192.168.5.2", SETTING_ITEM_TYPE_STRING},
-    {"bridge_modbus_1", "false", SETTING_ITEM_TYPE_BOOL},
 
     {"baudrate_2", "9600", SETTING_ITEM_TYPE_INT},
     {"stopbits_2", "2", SETTING_ITEM_TYPE_STRING},
@@ -77,17 +75,6 @@ const mock_setting_item_t expected_items[] = {
     {"485_term_2", "true", SETTING_ITEM_TYPE_BOOL},
     {"485_fail_safe_2", "true", SETTING_ITEM_TYPE_BOOL},
     {"485_tx_dis_2", "false", SETTING_ITEM_TYPE_BOOL},
-    {"cache_en_2", "false", SETTING_ITEM_TYPE_BOOL},
-    {"bridge_mode_2", "server", SETTING_ITEM_TYPE_STRING},
-    {"bridge_port_2", "503", SETTING_ITEM_TYPE_INT},
-    {"bridge_ip_2", "192.168.5.2", SETTING_ITEM_TYPE_STRING},
-    {"bridge_modbus_2", "false", SETTING_ITEM_TYPE_BOOL},
-
-    {"port_mode_1", "tcp_bridge", SETTING_ITEM_TYPE_STRING},
-    {"port_mode_2", "tcp_bridge", SETTING_ITEM_TYPE_STRING},
-    {"cache_mb_port", "504", SETTING_ITEM_TYPE_INT},
-    {"cache_mb_srv_en", "true", SETTING_ITEM_TYPE_BOOL},
-    {"cache_val_tout", "60", SETTING_ITEM_TYPE_INT},
 
     {"upd_channel", "stable", SETTING_ITEM_TYPE_STRING},
 };
@@ -257,25 +244,6 @@ void test_port_validators(void)
     TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_WEB_PORT, "80"));
     TEST_ASSERT_TRUE_MESSAGE(mock_validate_port_called, "validate_port should be called for web port");
 
-    // Test bridge port 1 validator
-    mock_reset_validator_flags();
-    TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_BRIDGE_PORT1, "80"));
-    TEST_ASSERT_TRUE_MESSAGE(mock_validate_port_called, "validate_port should be called for bridge port 1");
-
-    // Test bridge port 2 validator
-    mock_reset_validator_flags();
-    TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_BRIDGE_PORT2, "80"));
-    TEST_ASSERT_TRUE_MESSAGE(mock_validate_port_called, "validate_port should be called for bridge port 2");
-
-    // Test cache modbus port validator
-    mock_reset_validator_flags();
-    TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_CACHE_MODBUS_PORT, "502"));
-    TEST_ASSERT_TRUE_MESSAGE(mock_validate_port_called, "validate_port should be called for cache modbus port");
-
-    // Test cache value timeout validator
-    mock_reset_validator_flags();
-    TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(KEY_CACHE_VALUE_TIMEOUT_S, "120"));
-    TEST_ASSERT_TRUE_MESSAGE(mock_validate_timeout_called, "validate_timeout should be called for cache_val_tout");
 }
 
 void test_ip_validators(void)
@@ -287,8 +255,7 @@ void test_ip_validators(void)
     const char* ip_keys[] = {
         KEY_ETH_IP_STATIC, KEY_ETH_MASK_STATIC, KEY_ETH_GW_STATIC,
         KEY_AP_IP_STATIC, KEY_AP_MASK_STATIC, KEY_AP_GW_STATIC,
-        KEY_STA_IP_STATIC, KEY_STA_MASK_STATIC, KEY_STA_GW_STATIC,
-        KEY_BRIDGE_IP1, KEY_BRIDGE_IP2
+        KEY_STA_IP_STATIC, KEY_STA_MASK_STATIC, KEY_STA_GW_STATIC
     };
 
     for (size_t i = 0; i < ARRAY_SIZE(ip_keys); i++) {
@@ -376,25 +343,16 @@ void test_serial_validators(void)
     }
 }
 
-void test_bridge_and_bool_validators(void)
+void test_bool_validators(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test bridge and boolean validators");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test boolean validators");
     LOG_MESSAGE();
 
-    // Test bridge mode validators
-    const char* bridge_mode_keys[] = {KEY_BRIDGE_MODE1, KEY_BRIDGE_MODE2};
-    for (size_t i = 0; i < ARRAY_SIZE(bridge_mode_keys); i++) {
-        mock_reset_validator_flags();
-        TEST_ASSERT_EQUAL_INT(ESP_OK, setting_items_save(bridge_mode_keys[i], "client"));
-        TEST_ASSERT_TRUE_MESSAGE(mock_validate_bridge_mode_called, "validate_bridge_mode should be called for bridge mode");
-    }
-
-    // Test boolean validators
     const char* bool_keys[] = {
         KEY_ETH_DHCPC, KEY_STA_DHCPC, KEY_IO_BUS_ENABLED, KEY_485_VOUT,
-        KEY_485_TERM_1, KEY_485_FAIL_SAFE_1, KEY_BRIDGE_MB1,
-        KEY_485_TERM_2, KEY_485_FAIL_SAFE_2, KEY_BRIDGE_MB2
+        KEY_485_TERM_1, KEY_485_FAIL_SAFE_1,
+        KEY_485_TERM_2, KEY_485_FAIL_SAFE_2
     };
 
     for (size_t i = 0; i < ARRAY_SIZE(bool_keys); i++) {
@@ -687,8 +645,8 @@ void test_setting_items_read_bool(void)
     TEST_ASSERT_FALSE_MESSAGE(read_value, "Should return false for non-boolean setting");
 
     // Test 4: Test boolean key that defaults to false
-    read_value = setting_items_read_bool(KEY_BRIDGE_MB1);
-    TEST_ASSERT_FALSE_MESSAGE(read_value, "Should return default bridge_modbus_1 value (false) from default_value");
+    read_value = setting_items_read_bool(KEY_485_TX_DISABLED_1);
+    TEST_ASSERT_FALSE_MESSAGE(read_value, "Should return default 485_tx_dis_1 value (false) from default_value");
 
     // Test 5: Test boolean key that defaults to true
     read_value = setting_items_read_bool(KEY_485_TERM_1);
@@ -740,10 +698,10 @@ void test_setting_items_save_bool(void)
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_ERR_NOT_FOUND, result, "Should return ESP_ERR_NOT_FOUND for unknown key");
 
     // Test 3: Save true value to boolean setting
-    result = setting_items_save_bool(KEY_BRIDGE_MB1, false);
+    result = setting_items_save_bool(KEY_485_TX_DISABLED_1, false);
     TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Should successfully save false value");
 
-    read_value = setting_items_read_bool(KEY_BRIDGE_MB1);
+    read_value = setting_items_read_bool(KEY_485_TX_DISABLED_1);
     TEST_ASSERT_FALSE_MESSAGE(read_value, "Should read back false value");
 
     // Test 4: Save false value to boolean setting
@@ -1018,10 +976,10 @@ void test_setting_items_validate(void)
     );
 
     // Known key with valid value must return ESP_OK
-    // validate_timeout mock always returns true, so "100" is valid
+    // validate_port mock always returns true, so "100" is valid
     TEST_ASSERT_EQUAL_INT_MESSAGE(
         ESP_OK,
-        setting_items_validate(KEY_CACHE_VALUE_TIMEOUT_S, "100"),
+        setting_items_validate(KEY_WEB_PORT, "100"),
         "Known key with valid value should return ESP_OK"
     );
 
@@ -1129,204 +1087,6 @@ void test_wifi_perm_disable_key_exists_in_setting_items(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE("false", default_value, "Default value for wifi_perm_disable should be 'false'");
 }
 
-// ── Legacy port_mode migration (setting_items_migrate_port_mode) ──────────────
-// On an upgraded device port_mode_N does not exist; it is derived from the legacy
-// bridge_mode_N value BEFORE defaults run, so the previous on/off state survives.
-
-// Upgraded device, port was OFF: legacy bridge_mode_1="disabled", no port_mode_1.
-// After init port_mode_1 must be "disabled" (default "tcp_bridge" must NOT win).
-void test_migrate_port_mode_legacy_disabled(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - legacy bridge_mode 'disabled'");
-    LOG_MESSAGE();
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, "disabled"),
-                                  "Pre-seeding legacy bridge_mode_1 should succeed");
-
-    esp_err_t result = setting_items_init_with_storage(&test_storage);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
-
-    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, value),
-                                  "Reading port_mode_1 should succeed");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_DISABLED_STR, value,
-                                     "Legacy disabled bridge should migrate to port_mode 'disabled'");
-
-    // The legacy "disabled" sentinel is not a valid bridge_mode any more: it must be erased
-    // after migration so it does not linger in NVS. set_defaults() then restores the default
-    // role (DEFAULT_BRIDGE_MODE == BRIDGE_MODE_SERVER_STR).
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_BRIDGE_MODE1, value),
-                                  "Reading bridge_mode_1 should succeed");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE(BRIDGE_MODE_SERVER_STR, value,
-                                     "Stale legacy bridge_mode must be replaced by the default role");
-}
-
-// Upgraded device, port was an active bridge: legacy bridge_mode_1="client",
-// no port_mode_1. After init port_mode_1 must be "tcp_bridge".
-//
-// The legacy value is deliberately "client", not "server": "server" is also
-// DEFAULT_BRIDGE_MODE, so a "server" fixture would still pass if the migration
-// erased bridge_mode_1 and set_defaults() recreated it from the default - i.e. it
-// could not tell role preservation apart from role loss. "client" differs from the
-// default, so it only survives if the migration really keeps the key.
-void test_migrate_port_mode_legacy_client(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - legacy bridge_mode 'client'");
-    LOG_MESSAGE();
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, BRIDGE_MODE_CLIENT_STR),
-                                  "Pre-seeding legacy bridge_mode_1 should succeed");
-
-    esp_err_t result = setting_items_init_with_storage(&test_storage);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
-
-    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, value),
-                                  "Reading port_mode_1 should succeed");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_TCP_BRIDGE_STR, value,
-                                     "Legacy client bridge should migrate to port_mode 'tcp_bridge'");
-
-    // "client" is still a valid TCP role, so the migration must NOT erase it - otherwise
-    // set_defaults() would silently reset the user's role to "server" after an upgrade.
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_BRIDGE_MODE1, value),
-                                  "Reading bridge_mode_1 should succeed");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE(BRIDGE_MODE_CLIENT_STR, value,
-                                     "A still-valid bridge role must be preserved by the migration");
-}
-
-// Upgraded device carrying an UNKNOWN legacy bridge_mode_1 (junk from some older
-// build). The port was not "disabled", so it becomes a tcp_bridge - but the value
-// itself is not a valid bridge_mode, so it must be erased just like the sentinel:
-// set_defaults() only fills MISSING keys, so leaving it would hand an invalid role
-// to the bridge on the next read.
-void test_migrate_port_mode_legacy_unknown_value(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - unknown legacy bridge_mode");
-    LOG_MESSAGE();
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, "bogus_mode"),
-                                  "Pre-seeding legacy bridge_mode_1 should succeed");
-
-    esp_err_t result = setting_items_init_with_storage(&test_storage);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
-
-    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, value),
-                                  "Reading port_mode_1 should succeed");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_TCP_BRIDGE_STR, value,
-                                     "A non-disabled legacy value means the port was active");
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_BRIDGE_MODE1, value),
-                                  "Reading bridge_mode_1 should succeed");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE(BRIDGE_MODE_SERVER_STR, value,
-                                     "An invalid legacy bridge_mode must be replaced by the default role");
-}
-
-// Both keys already present (e.g. user already set port_mode_1="passive"). The
-// migration must NOT overwrite an existing port_mode value.
-void test_migrate_port_mode_existing_value_preserved(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - existing value preserved");
-    LOG_MESSAGE();
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, "server"),
-                                  "Pre-seeding legacy bridge_mode_1 should succeed");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_PORT_MODE1, PORT_MODE_PASSIVE_STR),
-                                  "Pre-seeding existing port_mode_1 should succeed");
-
-    esp_err_t result = setting_items_init_with_storage(&test_storage);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
-
-    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, value),
-                                  "Reading port_mode_1 should succeed");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_PASSIVE_STR, value,
-                                     "Existing port_mode_1 must be preserved, not overwritten by migration");
-}
-
-// Interrupted migration: port_mode_1 was already written by an earlier boot, but the
-// power was lost before the stale legacy bridge_mode_1 could be erased (they are two
-// independent NVS commits). The cleanup must therefore be idempotent and run on every
-// boot, not only on the boot that derives port_mode: set_defaults() only fills MISSING
-// keys, so an invalid bridge_mode left here would stay in NVS forever and
-// string_to_bridge_mode() would silently map it to BRIDGE_MODE_DISABLED, bringing a
-// tcp_bridge port up with no serial_desc.
-void test_migrate_port_mode_stale_legacy_cleaned_after_reboot(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - stale legacy cleaned on a later boot");
-    LOG_MESSAGE();
-
-    // NVS as an interrupted migration would leave it: port_mode_1 derived and saved,
-    // the invalid legacy bridge_mode_1 still there.
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_PORT_MODE1, PORT_MODE_DISABLED_STR),
-                                  "Pre-seeding already-migrated port_mode_1 should succeed");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, "disabled"),
-                                  "Pre-seeding stale legacy bridge_mode_1 should succeed");
-
-    esp_err_t result = setting_items_init_with_storage(&test_storage);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
-
-    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, value),
-                                  "Reading port_mode_1 should succeed");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_DISABLED_STR, value,
-                                     "An already-migrated port_mode must not be overwritten by the cleanup");
-
-    // The stale record is erased and set_defaults() recreates the key with the default
-    // role, so no invalid bridge_mode survives the reboot.
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_BRIDGE_MODE1, value),
-                                  "Reading bridge_mode_1 should succeed");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE(BRIDGE_MODE_SERVER_STR, value,
-                                     "A stale legacy bridge_mode left by an interrupted migration must be cleaned up");
-}
-
-// Same interrupted-migration shape, but the surviving legacy value is still a VALID
-// role: the cleanup must leave it alone (erasing it would let set_defaults() reset the
-// user's role to "server"). Guards the idempotent cleanup against over-reach.
-void test_migrate_port_mode_valid_legacy_kept_after_reboot(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - valid legacy role kept on a later boot");
-    LOG_MESSAGE();
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_PORT_MODE1, PORT_MODE_TCP_BRIDGE_STR),
-                                  "Pre-seeding already-migrated port_mode_1 should succeed");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, rams_write_str(KEY_BRIDGE_MODE1, BRIDGE_MODE_CLIENT_STR),
-                                  "Pre-seeding valid bridge_mode_1 role should succeed");
-
-    esp_err_t result = setting_items_init_with_storage(&test_storage);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
-
-    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_BRIDGE_MODE1, value),
-                                  "Reading bridge_mode_1 should succeed");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE(BRIDGE_MODE_CLIENT_STR, value,
-                                     "A valid bridge role must survive the idempotent cleanup");
-}
-
-// Fresh device (neither key present). The migration is a no-op and the default
-// "tcp_bridge" is written by setting_items_set_defaults().
-void test_migrate_port_mode_fresh_device_default(void)
-{
-    LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test migrate port_mode - fresh device default");
-    LOG_MESSAGE();
-
-    esp_err_t result = setting_items_init_with_storage(&test_storage);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, result, "Initialization should succeed");
-
-    char value[SETTING_ITEM_MAX_STR_LEN] = {0};
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ESP_OK, setting_items_read(KEY_PORT_MODE1, value),
-                                  "Reading port_mode_1 should succeed");
-    TEST_ASSERT_EQUAL_STRING_MESSAGE(PORT_MODE_TCP_BRIDGE_STR, value,
-                                     "Fresh device should get the default port_mode 'tcp_bridge'");
-}
-
 int main(void)
 {
     UNITY_BEGIN();
@@ -1340,7 +1100,7 @@ int main(void)
     RUN_TEST(test_ip_validators);
     RUN_TEST(test_wifi_validators);
     RUN_TEST(test_serial_validators);
-    RUN_TEST(test_bridge_and_bool_validators);
+    RUN_TEST(test_bool_validators);
 
     RUN_TEST(test_setting_items_save_error_conditions);
     RUN_TEST(test_setting_items_read_success);
@@ -1369,14 +1129,6 @@ int main(void)
     RUN_TEST(test_wifi_perm_disable_default_is_false);
     RUN_TEST(test_wifi_perm_disable_can_be_set_to_true);
     RUN_TEST(test_wifi_perm_disable_key_exists_in_setting_items);
-
-    RUN_TEST(test_migrate_port_mode_legacy_disabled);
-    RUN_TEST(test_migrate_port_mode_legacy_client);
-    RUN_TEST(test_migrate_port_mode_legacy_unknown_value);
-    RUN_TEST(test_migrate_port_mode_existing_value_preserved);
-    RUN_TEST(test_migrate_port_mode_stale_legacy_cleaned_after_reboot);
-    RUN_TEST(test_migrate_port_mode_valid_legacy_kept_after_reboot);
-    RUN_TEST(test_migrate_port_mode_fresh_device_default);
 
     return UNITY_END();
 }

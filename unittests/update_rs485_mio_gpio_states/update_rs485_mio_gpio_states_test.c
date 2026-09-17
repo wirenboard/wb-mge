@@ -5,18 +5,14 @@
 #include "setting_items.h"
 #include "rs485_control.h"
 #include "mio_control.h"
-
-extern int mock_port_manager_set_tx_disabled_called;
-extern unsigned mock_port_manager_set_tx_disabled_port[];
-extern bool mock_port_manager_set_tx_disabled_value[];
-extern void mock_port_manager_reset(void);
+#include "mb_slave.h"
 
 void setUp(void)
 {
     mock_rs485_control_reset();
     mock_mio_control_reset();
     mock_setting_items_reset();
-    mock_port_manager_reset();
+    mock_mb_slave_reset();
 }
 
 void tearDown(void)
@@ -94,7 +90,7 @@ void test_update_rs485_control_all_enabled(void)
 
     update_rs485_control();
 
-    // Verify setting_items_read_bool was called 5 times (GPIO settings only; TX disabled is handled by update_serial_tx_disabled)
+    // Verify setting_items_read_bool was called 5 times (GPIO settings only)
     TEST_ASSERT_EQUAL_INT_MESSAGE(5, mock_setting_items_read_bool_called,
         "setting_items_read_bool should be called 5 times");
 
@@ -377,7 +373,11 @@ void test_update_io_bus_control_disabled(void)
     verify_rs485_function_not_called();
 }
 
-// Tests for update_serial_tx_disabled()
+// Tests for update_serial_tx_disabled().
+// The kill-switch reaches the hardware through mb_slave_set_tx_disabled(), which takes the
+// port's DE/RE pin away from the UART; what is asserted here is the mapping alone — NVS key
+// 485_tx_dis_1 -> index 0, 485_tx_dis_2 -> index 1, in that order and with the value passed
+// through unchanged.
 void test_update_serial_tx_disabled_both_disabled(void)
 {
     LOG_MESSAGE();
@@ -396,15 +396,15 @@ void test_update_serial_tx_disabled_both_disabled(void)
     TEST_ASSERT_EQUAL_STRING_MESSAGE(KEY_485_TX_DISABLED_2, mock_setting_items_read_bool_keys[1],
         "Second read should be KEY_485_TX_DISABLED_2");
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_port_manager_set_tx_disabled_called,
-        "port_manager_set_tx_disabled should be called twice");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_port_manager_set_tx_disabled_port[0],
-        "First call should be for port 0");
-    TEST_ASSERT_EQUAL_MESSAGE(false, mock_port_manager_set_tx_disabled_value[0],
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_mb_slave_set_tx_disabled_called,
+        "mb_slave_set_tx_disabled should be called twice");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_mb_slave_set_tx_disabled_indexes[0],
+        "First call should be for port index 0");
+    TEST_ASSERT_EQUAL_MESSAGE(false, mock_mb_slave_set_tx_disabled_values[0],
         "Port 0 tx_disabled should be false");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_port_manager_set_tx_disabled_port[1],
-        "Second call should be for port 1");
-    TEST_ASSERT_EQUAL_MESSAGE(false, mock_port_manager_set_tx_disabled_value[1],
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_mb_slave_set_tx_disabled_indexes[1],
+        "Second call should be for port index 1");
+    TEST_ASSERT_EQUAL_MESSAGE(false, mock_mb_slave_set_tx_disabled_values[1],
         "Port 1 tx_disabled should be false");
 }
 
@@ -419,11 +419,11 @@ void test_update_serial_tx_disabled_both_enabled(void)
 
     update_serial_tx_disabled();
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_port_manager_set_tx_disabled_called,
-        "port_manager_set_tx_disabled should be called twice");
-    TEST_ASSERT_EQUAL_MESSAGE(true, mock_port_manager_set_tx_disabled_value[0],
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_mb_slave_set_tx_disabled_called,
+        "mb_slave_set_tx_disabled should be called twice");
+    TEST_ASSERT_EQUAL_MESSAGE(true, mock_mb_slave_set_tx_disabled_values[0],
         "Port 0 tx_disabled should be true");
-    TEST_ASSERT_EQUAL_MESSAGE(true, mock_port_manager_set_tx_disabled_value[1],
+    TEST_ASSERT_EQUAL_MESSAGE(true, mock_mb_slave_set_tx_disabled_values[1],
         "Port 1 tx_disabled should be true");
 }
 
@@ -438,11 +438,11 @@ void test_update_serial_tx_disabled_mixed(void)
 
     update_serial_tx_disabled();
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_port_manager_set_tx_disabled_called,
-        "port_manager_set_tx_disabled should be called twice");
-    TEST_ASSERT_EQUAL_MESSAGE(true, mock_port_manager_set_tx_disabled_value[0],
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, mock_mb_slave_set_tx_disabled_called,
+        "mb_slave_set_tx_disabled should be called twice");
+    TEST_ASSERT_EQUAL_MESSAGE(true, mock_mb_slave_set_tx_disabled_values[0],
         "Port 0 tx_disabled should be true");
-    TEST_ASSERT_EQUAL_MESSAGE(false, mock_port_manager_set_tx_disabled_value[1],
+    TEST_ASSERT_EQUAL_MESSAGE(false, mock_mb_slave_set_tx_disabled_values[1],
         "Port 1 tx_disabled should be false");
 }
 

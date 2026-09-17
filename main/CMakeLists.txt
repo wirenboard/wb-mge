@@ -14,24 +14,6 @@ set(COMPONENT_SRCS "main.c"
                    "network/network.c"
                    "network/ethernet.c"
                    "network/wifi_apsta.c"
-                   "bridge/bridge.c"
-                   "bridge/serial.c"
-                   "bridge/tcp_client.c"
-                   "bridge/tcp_server.c"
-                   "bridge/transparent_tcp.c"
-                   "bridge/modbus_tcp.c"
-                   "bridge/mbtcp_reasm.c"
-                   "bridge/packet_queue.c"
-                   "bridge/modbus_helpers.c"
-                   "bridge/rs485_stats.c"
-                   "bridge/fast_modbus.c"
-                   "bridge/sniffer.c"
-                   "bridge/stream_splitter.c"
-                   "bridge/cache_multimaster.c"
-                   "bridge/cache_modbus_server.c"
-                   "bridge/mb_device.c"
-                   "bridge/port_manager.c"
-                   "bridge/repeater.c"
                    "wb_app_desc/wb_app_desc.c"
                    "settings_update.c"
                    "settings_save_timer.c"
@@ -39,6 +21,39 @@ set(COMPONENT_SRCS "main.c"
                    "wb_test.c"
                    "coverage_dump.c"
                    "update_rs485_mio_gpio_states.c")
+
+# Modbus role (main/Kconfig.projbuild, Makefile MB_ROLE=slave|master|none). Exactly one of
+# the two directories is compiled, and in the "none" role neither is — which is the whole
+# point of that role: with nothing left referencing esp-modbus, the linker drops the
+# component out of the image.
+#
+# The CONFIG_* variables are readable here because ESP-IDF generates the sdkconfig before it
+# processes any component CMakeLists.txt.
+#
+# The messages are guarded against the early component-requirements expansion pass, where
+# this file is include()d in script mode with no CONFIG_* set at all: without the guard every
+# build announced "Modbus role: slave" first and then its real role. That pass collects
+# REQUIRES only and ignores SRCS, so the list below is free to be wrong there.
+if(CONFIG_WB_MODBUS_ROLE_MASTER)
+    list(APPEND COMPONENT_SRCS
+        "mb_master/mb_master.c"
+        "mb_master/user_app.c")
+    if(NOT CMAKE_BUILD_EARLY_EXPANSION)
+        message(STATUS "Modbus role: master — RTU master on both RS-485 ports, no TCP, no slave")
+    endif()
+elseif(CONFIG_WB_MODBUS_ROLE_NONE)
+    if(NOT CMAKE_BUILD_EARLY_EXPANSION)
+        message(STATUS "Modbus role: none — no Modbus stack is compiled")
+    endif()
+else()
+    list(APPEND COMPONENT_SRCS
+        "mb_slave/mb_slave.c"
+        "mb_slave/mb_registers.c"
+        "mb_slave/user_app.c")
+    if(NOT CMAKE_BUILD_EARLY_EXPANSION)
+        message(STATUS "Modbus role: slave — RTU on both RS-485 ports + Modbus TCP")
+    endif()
+endif()
 
 # Conditionally add files based on build type
 if($ENV{CONFIG_ETH_USE_OPENETH})
@@ -95,7 +110,12 @@ list(APPEND COMPONENT_SRCS ${CONDITIONAL_SRCS})
 
 idf_component_register(SRCS ${COMPONENT_SRCS}
                         INCLUDE_DIRS "."
-                            "bridge"
+                            # Both role directories are on the include path in every role.
+                            # Only the compiled one has any sources, and nothing outside a
+                            # role's own files includes its header without guarding on the
+                            # role first (see main/mb_role.h).
+                            "mb_slave"
+                            "mb_master"
                             "indication"
                             "network"
                             "wb_app_desc"

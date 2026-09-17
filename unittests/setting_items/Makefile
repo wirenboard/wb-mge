@@ -21,7 +21,6 @@ INC += mocks
 INC += $(UNITTEST_DIR)
 INC += $(UNITTEST_DIR)/mocks
 INC += $(PROJ_DIR)/main/
-INC += $(PROJ_DIR)/main/bridge
 INC += $(PROJ_DIR)/main/wb_app_desc
 INC += $(IDF_PATH)/components/bootloader_support/include
 INC += $(IDF_PATH)/components/esp_app_format/include

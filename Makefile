@@ -65,9 +65,61 @@ MODEL_DEFINE := $(shell echo MODEL_$(TARGET))
 DEFS += DEVICE_SIGNATURE=$(TARGET)
 DEFS += MODEL_DEFINE=$(MODEL_DEFINE)
 
+#######################################
+# Modbus role
+#######################################
+
+# What this firmware does with Modbus, chosen at BUILD time for the whole device:
+#
+#   slave  (default) both RS-485 ports answer as Modbus RTU slaves AND the Modbus TCP
+#                    server runs. TCP belongs to this role and to no other.
+#   master           the device polls other devices on both RS-485 ports. No TCP, no slave.
+#   none             no Modbus at all — the esp-modbus component drops out of the image.
+#
+# Usage, in the same style as TARGET:
+#   make MB_ROLE=master build-idf-project
+#   make MB_ROLE=none   qemu-test
+#
+# The value reaches the firmware as the Kconfig choice in main/Kconfig.projbuild, through
+# the matching sdkconfig.defaults.role_<role> appended to SDKCONFIG_DEFAULTS below. It is
+# NOT a runtime setting: "none" exists precisely to keep the component out of the link, and
+# no runtime flag can do that.
+#
+# The validation mirrors TARGET's, and for the same reasons — a mistyped role would
+# otherwise reach CMake as a missing defaults file, and the word count catches the empty and
+# multi-word values filter-out cannot see. Both checks run at parse time, for every target.
+MB_ROLE_LIST := slave master none
+MB_ROLE ?= $(firstword $(MB_ROLE_LIST))
+override MB_ROLE := $(strip $(MB_ROLE))
+
+ifneq ($(words $(MB_ROLE)),1)
+    $(error MB_ROLE must name exactly one role, got '$(MB_ROLE)'; expected one of: $(MB_ROLE_LIST). Check the environment too)
+endif
+ifneq ($(filter-out $(MB_ROLE_LIST),$(MB_ROLE)),)
+    $(error unknown MB_ROLE '$(MB_ROLE)'; expected one of: $(MB_ROLE_LIST). Check the environment too)
+endif
+
+MB_ROLE_DEFAULT := $(firstword $(MB_ROLE_LIST))
+MB_ROLE_SDKCONFIG_DEFAULTS := sdkconfig.defaults.role_$(MB_ROLE)
+
+# The suffix every generated sdkconfig of a NON-default role carries, and which the default
+# role deliberately does not: with it, `make MB_ROLE=slave ...` keeps writing exactly the
+# file names it always has.
+#
+# A role-specific file is not cosmetic, it is required. kconfgen loads the --defaults files
+# FIRST and the existing --config sdkconfig ON TOP, so a value already present in a
+# generated sdkconfig WINS over the defaults chain: with one shared sdkconfig, switching
+# MB_ROLE would silently keep building the role whose config was generated first.
+ifeq ($(MB_ROLE),$(MB_ROLE_DEFAULT))
+    MB_ROLE_SUFFIX :=
+else
+    MB_ROLE_SUFFIX := .$(MB_ROLE)
+endif
+
 # Per-target generated sdkconfig so switching TARGET never reuses another
-# signature's PSRAM/pin config (mirrors the dedicated sdkconfig.qemu_build).
-SDKCONFIG_FILE := sdkconfig.$(TARGET)
+# signature's PSRAM/pin config (mirrors the dedicated sdkconfig.qemu_build),
+# and per-role for the reason above.
+SDKCONFIG_FILE := sdkconfig.$(TARGET)$(MB_ROLE_SUFFIX)
 
 # Legacy names that no longer come from MODEL_LIST: the removed native build
 # flavour today, plus any signature retired from MODEL_LIST later. `clean` keeps
@@ -78,7 +130,13 @@ SDKCONFIG_LEGACY := sdkconfig.native
 # Every sdkconfig `clean` removes. A bare sdkconfig is written by no make target —
 # they all pass -DSDKCONFIG= — only by a manual idf.py run; idf.py keeps a .old
 # backup next to every sdkconfig it rewrites, hence the second line.
-SDKCONFIG_BASES := sdkconfig $(SDKCONFIG_LEGACY) sdkconfig.qemu_build $(addprefix sdkconfig.,$(MODEL_LIST))
+#
+# The role variants are removed too, and for EVERY role rather than only the one being
+# built: `make clean` is expected to leave no generated sdkconfig behind, and a leftover
+# sdkconfig.<signature>.master is exactly the stale-role file the suffix exists to prevent.
+SDKCONFIG_ROLE_BASES := sdkconfig.qemu_build $(addprefix sdkconfig.,$(MODEL_LIST))
+SDKCONFIG_BASES := sdkconfig $(SDKCONFIG_LEGACY) $(SDKCONFIG_ROLE_BASES) \
+    $(foreach role,$(filter-out $(MB_ROLE_DEFAULT),$(MB_ROLE_LIST)),$(addsuffix .$(role),$(SDKCONFIG_ROLE_BASES)))
 SDKCONFIG_GENERATED := $(SDKCONFIG_BASES) $(addsuffix .old,$(SDKCONFIG_BASES))
 
 #######################################
@@ -415,7 +473,7 @@ apply-idf-patches: check-idf-pins
 # one signature to another run `make clean` first to avoid a stale/mixed artifact.
 build-idf-project: check-idf-pins apply-idf-patches
 	@echo 'Building ESP-IDF project'
-	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET)" $(addprefix -D, $(DEFS)) build
+	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET);$(MB_ROLE_SDKCONFIG_DEFAULTS)" $(addprefix -D, $(DEFS)) build
 	@$(MAKE) prepare_release
 
 prepare_release:
@@ -449,7 +507,7 @@ clean:
 # unverified set of pins. flash-all, monitor and ota-flash need no such guard —
 # they only push or read back artefacts that an earlier build produced.
 flash: check-idf-pins
-	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET)" flash
+	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET);$(MB_ROLE_SDKCONFIG_DEFAULTS)" flash
 
 # Flash all partitions (bootloader + partition table + OTA data + app) via esptool directly.
 # Useful when idf.py flash cannot detect the port automatically.
@@ -463,7 +521,7 @@ flash-all:
 		0x90000 build/$(TARGET).bin
 
 monitor:
-	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET)" monitor
+	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET);$(MB_ROLE_SDKCONFIG_DEFAULTS)" monitor
 
 #######################################
 # OTA flash

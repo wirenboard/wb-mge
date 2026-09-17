@@ -52,8 +52,8 @@ BaseType_t xTimerStop(TimerHandle_t xTimer, TickType_t xTicksToWait)
     /* The real xTimerStop() opens with configASSERT(xTimer), and this firmware is
      * built with assertion level 2 — a NULL handle is a panic and a reboot on the
      * device, not a quiet no-op. Reproduce that verdict here instead of accepting
-     * NULL, so a caller that runs before its owner's init (the boot window that
-     * port_manager_init_subsystems() closes) fails the test on the host too. */
+     * NULL, so a caller that runs before its owner's init fails the test on the
+     * host too. */
     TEST_ASSERT_NOT_NULL_MESSAGE(xTimer,
         "xTimerStop(NULL): FreeRTOS configASSERT panics the device on this handle");
     mock_xTimerStop_xTimer = xTimer;
