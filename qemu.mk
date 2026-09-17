@@ -7,6 +7,12 @@
 # Prefer the local .venv (developer workflow); fall back to the Docker image venv (CI/Jenkins).
 PYTEST_PYTHON ?= $(shell [ -f "$(CURDIR)/api_tests/.venv/bin/python" ] && echo "$(CURDIR)/api_tests/.venv/bin/python" || echo /opt/api_tests_venv/bin/python)
 
+# The QEMU build's generated sdkconfig, carrying the same MB_ROLE suffix as the hardware
+# one (Makefile, SDKCONFIG_FILE): kconfgen lets an existing sdkconfig override the defaults
+# chain, so one shared file would make `make MB_ROLE=master qemu-test` keep building
+# whichever role wrote sdkconfig.qemu_build first. The default role keeps the plain name.
+QEMU_SDKCONFIG_FILE := sdkconfig.qemu_build$(MB_ROLE_SUFFIX)
+
 # Host ports for the QEMU launchers below, taken from api_tests/qemu_ports.py — the SAME
 # module conftest.py builds its hostfwd/-serial arguments and its --ip default from.
 #
@@ -140,10 +146,10 @@ build-idf-project-qemu: check-idf-pins qemu-apply-idf-patches
 	@if [ -f "build/CMakeCache.txt" ]; then \
 	    if ! grep -q "qemu_mge" "build/CMakeCache.txt"; then \
 	        echo "Detected hardware build cache — running fullclean before QEMU build..."; \
-	        $(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build fullclean; \
+	        $(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(QEMU_SDKCONFIG_FILE) fullclean; \
 	    fi; \
 	fi
-	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" $(addprefix -D, $(DEFS)) build
+	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=$(QEMU_SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra;$(MB_ROLE_SDKCONFIG_DEFAULTS)" $(addprefix -D, $(DEFS)) build
 
 qemu-create-flash-image: build-idf-project-qemu
 	@echo "Generating QEMU flash image..."
@@ -162,14 +168,14 @@ qemu-create-efuse-image:
 
 qemu-monitor:
 	@echo "Starting QEMU monitor..."
-	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" monitor
+	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=$(QEMU_SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra;$(MB_ROLE_SDKCONFIG_DEFAULTS)" monitor
 
 qemu-run:
 	$(call run_locked,$(MAKE) --no-print-directory qemu-run-locked)
 
 qemu-run-locked: qemu-create-flash-image qemu-create-efuse-image
 	@echo "Running in QEMU..."
-	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" qemu monitor
+	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=$(QEMU_SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra;$(MB_ROLE_SDKCONFIG_DEFAULTS)" qemu monitor
 
 # Print the host ports this tree/slot uses, without starting anything. The one command to
 # run before `pytest --ip ...` against an already-running QEMU, and what README_QEMU.md
@@ -229,7 +235,7 @@ qemu-web-locked: qemu-create-flash-image qemu-create-efuse-image
 	    if [ -z "$$QEMU_BIN" ]; then \
 	        echo "QEMU binary not found. Using idf.py method instead..."; \
 	        echo "Note: This method will not have port forwarding built-in"; \
-	        $(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" qemu monitor; \
+	        $(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=$(QEMU_SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra;$(MB_ROLE_SDKCONFIG_DEFAULTS)" qemu monitor; \
 	    else \
 	        echo "Found QEMU at: $$QEMU_BIN"; \
 	        echo "Host ports (api_tests/qemu_ports.py): $(QEMU_PORT_SUMMARY)"; \
@@ -248,7 +254,7 @@ qemu-web-locked: qemu-create-flash-image qemu-create-efuse-image
 	            $(QEMU_SERIAL_ARGS) || { \
 	                echo "Direct QEMU launch failed. Trying idf.py qemu monitor..."; \
 	                echo "Note: This method will not have port forwarding - you will need to find the ESP32 IP"; \
-	                $(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" qemu monitor; \
+	                $(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=$(QEMU_SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra;$(MB_ROLE_SDKCONFIG_DEFAULTS)" qemu monitor; \
 	            }; \
 	    fi; \
 	}
@@ -331,7 +337,7 @@ qemu-coverage-report:
 # Dry-run: collect and list QEMU API tests without running them or building firmware.
 # Usage:
 #   make qemu-collect-only                          — list all qemu-marked tests
-#   make qemu-collect-only PYTEST_ARGS="38_test_sniffer_slow_response.py"
+#   make qemu-collect-only PYTEST_ARGS="18_test_uart_chardev.py"
 qemu-collect-only:
 	cd api_tests && $(PYTEST_PYTHON) -m pytest --collect-only -q $(PYTEST_ARGS)
 
@@ -351,7 +357,7 @@ qemu-help:
 	@echo "  qemu-coverage           - Build instrumented firmware, run tests (no reboot), pull /gcov, build coverage report"
 	@echo "  qemu-coverage-report    - Rebuild the coverage report from an existing build/coverage.stream (no QEMU run)"
 	@echo "  qemu-collect-only       - List collected API tests without building or running"
-	@echo "  qemu-clean              - Remove build/ and sdkconfig.qemu_build"
+	@echo "  qemu-clean              - Remove build/ and this role's sdkconfig.qemu_build"
 	@echo ""
 	@echo "qemu-run, qemu-web and qemu-test hold an exclusive lock on this working tree"
 	@echo "(.e2e-tree.lock) for their whole run, build included: they all rewrite"
@@ -366,8 +372,8 @@ qemu-help:
 	@echo "List tests:  make qemu-collect-only"
 
 qemu-clean:
-	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=sdkconfig.qemu_build -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra" fullclean
+	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(QEMU_SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra;$(MB_ROLE_SDKCONFIG_DEFAULTS)" fullclean
 	@rm -rf build
-	@rm -f sdkconfig.qemu_build sdkconfig.qemu_build.old
+	@rm -f $(QEMU_SDKCONFIG_FILE) $(QEMU_SDKCONFIG_FILE).old
 
 .PHONY: qemu-build qemu-apply-idf-patches build-idf-project-qemu qemu-create-flash-image qemu-create-efuse-image qemu-monitor qemu-run qemu-run-locked qemu-web qemu-web-locked qemu-ports qemu-bin-path qemu-test qemu-test-locked qemu-coverage qemu-coverage-report qemu-collect-only qemu-help qemu-clean

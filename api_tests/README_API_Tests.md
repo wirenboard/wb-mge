@@ -5,12 +5,13 @@
 Automated integration tests for the WB-MGE HTTP API. Uses **pytest**; execution order is determined by numeric file name prefixes (`01_`, `02_`, …). Tests cover:
 
 - **Auth and sessions** — login, logout, password change, endpoint protection
-- **Device info** — structure, data types (heap, PSRAM, cache), field formats
+- **Device info** — structure, data types (heap, PSRAM), field formats
 - **Settings** — read, write, validation, partial update
-- **Modbus TCP** — bridge parameters, limit validation
 - **WiFi** — scanning, edge cases, network fields, AP clients
-- **Cache** — /cache/status, /cache/csv, /cache/json, server toggle, multimaster
-- **Ports** — port modes, sniffer, WB test endpoint
+- **RS-485 ports** — line parameters (baudrate/parity/stopbits/databits, terminator,
+  fail-safe, tx_disabled), the WB factory test endpoint
+- **I/O bus** — MIO state bus, direction pins, indication
+- **OTA** — firmware update
 - **Misc** — uptime, hostname, static files, HTTP method guard, commands
 - **Reboot** — device reboot with uptime verification
 
@@ -22,26 +23,31 @@ Automated integration tests for the WB-MGE HTTP API. Uses **pytest**; execution 
 api_tests/
 ├── conftest.py              # pytest fixtures (api client, --ip, --qemu, connection check)
 ├── api_client.py            # WBMGEAPI class — HTTP client for all endpoints
-├── modbus_helpers.py        # Modbus TCP utilities (encode/decode, worker threads, staleness)
+├── io_bus_helpers.py        # QEMU virtual I/O bus client (GPIO/expander observation)
+├── qemu_ports.py            # Host/guest port block derived from WB_MGE_PORT_SLOT
+├── tree_lock.py             # Exclusive per-working-tree lock for QEMU runs
 ├── pytest.ini               # pytest configuration
 ├── requirements.txt         # Dependencies
 │
+├── 00_test_heap_session.py  # Heap baseline / leak check bracketing the session
 ├── 01_test_auth.py          # Auth, sessions, password change
 ├── 02_test_info.py          # Device info
 ├── 03_test_settings.py      # Settings, validation, partial update
 ├── 04_test_uptime.py        # Uptime
-├── 05_test_modbus.py        # Modbus TCP parameters
 ├── 06_test_wifi.py          # WiFi scanner, edge cases, AP clients
 ├── 07_test_static_files.py  # Static files
 ├── 08_test_http.py          # HTTP method guard
 ├── 09_test_commands.py      # Commands (set_default_settings)
 ├── 10_test_hostname.py      # Hostname endpoint
-├── 11_test_cache.py         # Cache endpoints, multimaster
-├── 12_test_sniffer_ws.py    # WebSocket sniffer
-├── 13_test_ports.py         # Ports, sniffer, WB test
+├── 13_test_ports.py         # RS-485 port parameters, WB factory test
 ├── 14_test_reboot.py        # Reboot, uptime verification
-├── 15_test_ws_pong_race.py  # WebSocket pong race condition (long-running)
-└── 16_test_uart_teardown_crash.py  # UART teardown crash (long-running, always last)
+├── 18_test_uart_chardev.py  # QEMU UART chardev plumbing
+├── 22_test_ota.py           # OTA firmware update
+├── 23_test_tx_disabled.py   # tx_disabled setting
+├── 30_test_wifi_perm_disable.py    # Permanent WiFi disable latch
+├── 33_test_auth_settings.py # Auth settings persistence across reboot
+├── 40_test_web_port.py      # Web server port change
+└── 44..48_test_io_*.py      # MIO I/O bus: state, direction, indication
 ```
 
 ---
@@ -65,8 +71,8 @@ pytest api_tests/
 pytest api_tests/ --ip localhost:21000
 ```
 
-> **Ports follow a slot.** Every host port the suite uses — web, Modbus gateway, transparent
-> bridge, cache Modbus server, both UART chardevs, the UDP IO bus — comes from one integer,
+> **Ports follow a slot.** Every host port the suite uses — web, both UART chardevs, the
+> UDP IO bus — comes from one integer,
 > `WB_MGE_PORT_SLOT` (default 0 → the `21000` block; in Jenkins it defaults to the
 > executor number). `make qemu-ports` prints the resolved block, and pytest prints it in its
 > report header. The slot separates PORTS only: `make qemu-test` (and `make qemu-web` /
@@ -86,7 +92,7 @@ pytest api_tests/ -x
 pytest api_tests/01_test_auth.py
 
 # Run a specific test by name
-pytest api_tests/ -k test_cache_multimaster
+pytest api_tests/ -k test_wb_test
 
 # Quiet output (no print)
 pytest api_tests/ --no-header -q
@@ -101,9 +107,10 @@ pytest api_tests/ --no-header -q
 QEMU runs the firmware in an emulator and tests the HTTP API without physical hardware. All hardware-specific features are mocked:
 
 - **WiFi**: scanning returns two fake networks (`QEMU-TestNetwork-1`, `QEMU-TestNetwork-2`)
-- **RS-485 / Modbus RTU**: a mock task injects synthetic packets into the sniffer to populate the cache
-- **Cache Modbus TCP server**: listens on guest port 50504; QEMU forwards this slot's
-  `cache/bridge1` host port to it (`localhost:21004 → ESP32:50504` for slot 0)
+- **RS-485 UARTs**: each port's UART is a single-client TCP chardev on the host
+  (`-serial tcp::<slot UART port>,server,nowait`)
+- **GPIO / I/O expander**: a virtual bus publishes pin transitions over UDP, which
+  `io_bus_helpers.IoBus` reads
 
 > **CI:** Jenkins **does** run this suite by default — the `RUN_E2E` build parameter defaults to
 > on, enabling the `E2E tests (QEMU)` stage. Untick it to skip that stage.
@@ -144,7 +151,7 @@ This boots QEMU, runs the full pytest suite, and stops QEMU automatically.
 Filter by test name:
 
 ```bash
-make qemu-test PYTEST_ARGS="-k test_cache_multimaster"
+make qemu-test PYTEST_ARGS="-k test_wb_test"
 ```
 
 ### 3. Run QEMU manually with web UI
@@ -175,14 +182,14 @@ I (XXXX) http_server: HTTP server started on port: 80
 | Test | Behaviour in QEMU |
 | ---- | ----------------- |
 | `test_wifi_scanner` | Completes immediately with 2 fake networks |
-| `test_cache_multimaster` | Switches port 1 to `cache_bus`, waits for cache fill (~2 s), connects to this slot's cache host port (guest 50504) |
+| `test_wb_test` | Drives the factory clock_out and observes LEDs/DE pins over the virtual I/O bus |
 | `test_reboot` | Reboots the QEMU emulator, waits for it to come back |
 
 ---
 
 ## Adding a New Test
 
-1. Add a function to a suitable file, or create a new file with an appropriate numeric prefix (e.g. `11a_test_cache_extra.py`)
+1. Add a function to a suitable file, or create a new file with an appropriate numeric prefix (e.g. `13a_test_ports_extra.py`)
 2. Use the `api` fixture — it provides an authenticated `WBMGEAPI` client
 3. Execution order is determined by the file's numeric prefix; within a file, by function definition order
 

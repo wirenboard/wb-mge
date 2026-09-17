@@ -72,37 +72,38 @@ def test_rs485_direction_pins_idle_high(api):
     G04 (RS485-1 dir) and G15 (RS485-2 dir) default to 1 in rs485_control.c
     when no transmission is in progress.
 
-    Precondition: both ports MUST be in an active transport so their DE pins are
-    RTS-attached and idle HIGH. A prior test may have left a port disabled or
-    tx_disabled (DE pin parked LOW), so we force tcp_bridge on both ports and let
-    the disabled->active reinit transient settle before polling for the level.
+    No bring-up step: the Modbus slave opens both RS-485 ports at boot,
+    unconditionally, so their DE pins are RTS-attached for the whole session and
+    there is no "disabled" state a test could have left them in. The one
+    precondition that can still be violated from outside this file is
+    rs485_N.tx_disabled — True parks the DE pin LOW — and conftest's
+    _restore_rs485_settings writes it back to False after every module
+    (_RS485_SAFE_DEFAULTS), which is exactly the contamination this assertion
+    used to be defenceless against. It is asserted here rather than re-written,
+    so a leak is reported as a leak instead of being silently papered over.
     """
-    info_resp = api.get_info()
-    assert info_resp.status_code == 200, f"GET /info returned {info_resp.status_code}"
-    info = info_resp.json()
-    original_mode_1 = info.get("rs485_1", {}).get("port_mode", "tcp_bridge")
-    original_mode_2 = info.get("rs485_2", {}).get("port_mode", "tcp_bridge")
+    settings_resp = api.get_settings()
+    assert settings_resp.status_code == 200, (
+        f"GET /settings returned {settings_resp.status_code}"
+    )
+    settings = settings_resp.json()
+    for port in ("rs485_1", "rs485_2"):
+        assert settings.get(port, {}).get("tx_disabled") is False, (
+            f"{port}.tx_disabled is not False before this test — an earlier module leaked "
+            f"it and the DE pin is parked LOW by design, so the assertions below would "
+            f"blame the firmware for test contamination. GET /settings said: "
+            f"{settings.get(port)!r}"
+        )
 
-    try:
-        # Force both ports into an active transport so the DE pins are RTS-attached
-        # and idle HIGH, then let the disabled->active reinit transient
-        # (gpio_reset_pin Pullup->HIGH) fully settle BEFORE reading the pins.
-        api.set_port_mode(1, "tcp_bridge")
-        api.set_port_mode(2, "tcp_bridge")
-        time.sleep(1.0)
-
-        with IoBus() as bus:
-            reached = bus.wait_for("G04", 1, timeout=4.0)
-            assert reached, (
-                f"RS485-1 direction (G04) expected idle HIGH, got {bus.get('G04')}"
-            )
-            reached = bus.wait_for("G15", 1, timeout=4.0)
-            assert reached, (
-                f"RS485-2 direction (G15) expected idle HIGH, got {bus.get('G15')}"
-            )
-    finally:
-        api.set_port_mode(1, original_mode_1)
-        api.set_port_mode(2, original_mode_2)
+    with IoBus() as bus:
+        reached = bus.wait_for("G04", 1, timeout=4.0)
+        assert reached, (
+            f"RS485-1 direction (G04) expected idle HIGH, got {bus.get('G04')}"
+        )
+        reached = bus.wait_for("G15", 1, timeout=4.0)
+        assert reached, (
+            f"RS485-2 direction (G15) expected idle HIGH, got {bus.get('G15')}"
+        )
 
 
 def test_config_button_short_press_increments_counter(api):

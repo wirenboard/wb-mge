@@ -44,14 +44,13 @@ Rationale for an env var over the alternatives:
     released port before our QEMU binds it. A fixed slot has no such window.
 
 Layout: a slot maps to a CONTIGUOUS block of ports, NOT an offset added to each
-legacy base port. The legacy base ports sit only one apart (8080/8081,
-50502/50503/50504, 5561/5562), so adding a small per-instance offset to each
-would alias one instance's port onto another's. A contiguous block per slot
-cannot alias.
+legacy base port. The legacy base ports sat only one apart (8080/8081, 5561/5562),
+so adding a small per-instance offset to each would alias one instance's port onto
+another's. A contiguous block per slot cannot alias.
 
     block_start = _BLOCK_BASE + slot * _BLOCK_SIZE
 
-_BLOCK_BASE is 21000 and _BLOCK_SIZE is 16 (> the 8 ports assigned per block), so
+_BLOCK_BASE is 21000 and _BLOCK_SIZE is 16 (> the 6 ports assigned per block), so
 the ports for the slots actually run (0..~10) land in 21000..21175 — comfortably
 below the ephemeral range, so the OS will not hand a random client socket one of
 our reserved numbers. _MAX_SLOT enforces that same property for EVERY accepted
@@ -174,24 +173,15 @@ SLOT, SLOT_SOURCE = _slot_from_env()
 _BLOCK_START = _BLOCK_BASE + SLOT * _BLOCK_SIZE
 
 HOST = "127.0.0.1"
-GATEWAY_HOST = HOST  # alias used across the test modules
 
 # Host ports, one per index within this slot's block. The guest port each one
 # forwards to is noted in the comment (guest ports are fixed inside QEMU).
 HTTP_HOST_PORT = _BLOCK_START + 0                 # guest 80    (web API)
 ALT_WEB_HOST_PORT = _BLOCK_START + 1              # guest 8081  (alt web-port test)
-GATEWAY_HOST_PORT = _BLOCK_START + 2              # guest 502   (Modbus gateway)
-TRANSPARENT_PORT2_HOST_PORT = _BLOCK_START + 3    # guest 503   (transparent bridge, port 2)
-# Guest 50504 is shared by the cache Modbus server AND transparent bridge port 1,
-# so all these names alias one host port.
-CACHE_MODBUS_HOST_PORT = _BLOCK_START + 4         # guest 50504
-TRANSPARENT_PORT1_HOST_PORT = CACHE_MODBUS_HOST_PORT
-TRANSPARENT_HOST_PORT = CACHE_MODBUS_HOST_PORT    # 25_'s name for the same port
-QEMU_CACHE_MODBUS_PORT = CACHE_MODBUS_HOST_PORT   # 20_/31_/37_/42_/43_'s name
-MODBUS_TCP_HOST_PORT = GATEWAY_HOST_PORT          # 26_'s name for the gateway port
-IO_BUS_UDP_PORT = _BLOCK_START + 5                # guest 5570  (UDP IO state bus)
-UART1_TCP_PORT = _BLOCK_START + 6                 # QEMU -serial chardev, UART1 (RS485-1)
-UART2_TCP_PORT = _BLOCK_START + 7                 # QEMU -serial chardev, UART2 (RS485-2)
+MB_TCP_HOST_PORT = _BLOCK_START + 2               # guest 502   (Modbus TCP slave)
+IO_BUS_UDP_PORT = _BLOCK_START + 3                # guest 5570  (UDP IO state bus)
+UART1_TCP_PORT = _BLOCK_START + 4                 # QEMU -serial chardev, UART1 (RS485-1)
+UART2_TCP_PORT = _BLOCK_START + 5                 # QEMU -serial chardev, UART2 (RS485-2)
 
 # Web-port test (40_) names: the "default" web port is the HTTP port; the "alt"
 # is the alternate. Guest side stays 80 / 8081; only host moves.
@@ -202,21 +192,16 @@ ALT_PORT_GUEST = 8081  # guest port unchanged
 # Fixed guest ports — the '-:<N>' side of each hostfwd, i.e. the port the FIRMWARE
 # listens on INSIDE the guest. These do NOT move per slot: each slot is a separate QEMU
 # with its own network stack, so guest ports never collide across slots. A test that
-# WRITES a firmware port setting (cache_modbus_port, rs485_N.bridge.port, web_port) must
-# use the GUEST value, because that is what the hostfwd forwards to; the host/connect side
-# uses the dynamic *_HOST_PORT above. (The two coincided in the legacy fixed-port scheme —
-# host 50504 == guest 50504 — which is why one constant used to serve both.)
+# WRITES a firmware port setting (mb_tcp_port, web_port) must use the GUEST value, because
+# that is what the hostfwd forwards to; the host/connect side uses the dynamic *_HOST_PORT
+# above.
 _GUEST_HTTP = 80
 _GUEST_ALT_WEB = 8081
-_GUEST_GATEWAY = 502
-_GUEST_TRANSPARENT_P2 = 503
-_GUEST_CACHE_MODBUS = 50504
+_GUEST_MB_TCP = 502
 _GUEST_IO_BUS = 5570
 
 # Public guest-port names for firmware settings writes.
-CACHE_MODBUS_GUEST_PORT = _GUEST_CACHE_MODBUS       # firmware cache_modbus_port setting
-TRANSPARENT_P1_GUEST_PORT = _GUEST_CACHE_MODBUS     # firmware bridge.port for transparent port 1
-GATEWAY_GUEST_PORT = _GUEST_GATEWAY                 # firmware bridge.port for the Modbus gateway
+MB_TCP_GUEST_PORT = _GUEST_MB_TCP                   # firmware mb_tcp_port setting (default)
 # The firmware web_port setting for the alt-port test is published as ALT_PORT_GUEST above,
 # next to the 40_ host-port names that go with it.
 
@@ -229,9 +214,7 @@ GATEWAY_GUEST_PORT = _GUEST_GATEWAY                 # firmware bridge.port for t
 MY_TCP_HOST_PORTS = [
     HTTP_HOST_PORT,
     ALT_WEB_HOST_PORT,
-    GATEWAY_HOST_PORT,
-    TRANSPARENT_PORT2_HOST_PORT,
-    CACHE_MODBUS_HOST_PORT,
+    MB_TCP_HOST_PORT,
     UART1_TCP_PORT,
     UART2_TCP_PORT,
 ]
@@ -248,9 +231,7 @@ def qemu_nic_arg() -> str:
         "user,model=open_eth,"
         f"hostfwd=tcp:{HOST}:{HTTP_HOST_PORT}-:{_GUEST_HTTP},"
         f"hostfwd=tcp:{HOST}:{ALT_WEB_HOST_PORT}-:{_GUEST_ALT_WEB},"
-        f"hostfwd=tcp:{HOST}:{GATEWAY_HOST_PORT}-:{_GUEST_GATEWAY},"
-        f"hostfwd=tcp:{HOST}:{TRANSPARENT_PORT2_HOST_PORT}-:{_GUEST_TRANSPARENT_P2},"
-        f"hostfwd=tcp:{HOST}:{CACHE_MODBUS_HOST_PORT}-:{_GUEST_CACHE_MODBUS},"
+        f"hostfwd=tcp:{HOST}:{MB_TCP_HOST_PORT}-:{_GUEST_MB_TCP},"
         f"hostfwd=udp:{HOST}:{IO_BUS_UDP_PORT}-:{_GUEST_IO_BUS}"
     )
 
@@ -285,9 +266,7 @@ def port_summary() -> str:
     return (
         f"slot {SLOT} (from {SLOT_SOURCE}): "
         f"web={HTTP_HOST_PORT}->80 altweb={ALT_WEB_HOST_PORT}->{_GUEST_ALT_WEB} "
-        f"gateway={GATEWAY_HOST_PORT}->{_GUEST_GATEWAY} "
-        f"bridge2={TRANSPARENT_PORT2_HOST_PORT}->{_GUEST_TRANSPARENT_P2} "
-        f"cache/bridge1={CACHE_MODBUS_HOST_PORT}->{_GUEST_CACHE_MODBUS} "
+        f"mbtcp={MB_TCP_HOST_PORT}->{_GUEST_MB_TCP} "
         f"io-bus/udp={IO_BUS_UDP_PORT}->{_GUEST_IO_BUS} "
         f"uart1={UART1_TCP_PORT} uart2={UART2_TCP_PORT}"
     )

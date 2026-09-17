@@ -27,18 +27,6 @@ def test_settings(api):
     assert 1 <= original_settings["web_port"] <= 65535, f"Field web_port has incorrect value: {original_settings['web_port']}"
     assert isinstance(original_settings["io_bus"], bool), "Field io_bus has incorrect type"
 
-    assert "cache_modbus_port" in original_settings, "Field cache_modbus_port is missing"
-    assert isinstance(original_settings["cache_modbus_port"], int) and \
-        1 <= original_settings["cache_modbus_port"] <= 65535, \
-        f"Field cache_modbus_port has incorrect value: {original_settings['cache_modbus_port']}"
-    assert "cache_modbus_server_enabled" in original_settings, "Field cache_modbus_server_enabled is missing"
-    assert isinstance(original_settings["cache_modbus_server_enabled"], bool), \
-        "Field cache_modbus_server_enabled has incorrect type"
-    assert "cache_value_timeout_s" in original_settings, "Field cache_value_timeout_s is missing"
-    assert isinstance(original_settings["cache_value_timeout_s"], int) and \
-        original_settings["cache_value_timeout_s"] >= 0, \
-        "Field cache_value_timeout_s must be a non-negative integer"
-
     assert "update_channel" in original_settings, "Field update_channel is missing"
     assert original_settings["update_channel"] in ["stable", "testing"], \
         f"Field update_channel has incorrect value: {original_settings['update_channel']}"
@@ -71,7 +59,7 @@ def test_settings(api):
         rs485 = original_settings[port]
         rs485_fields = [
             "term", "fail_safe", "tx_disabled", "baudrate", "stopbits",
-            "parity", "databits", "port_mode", "cache_en", "bridge"
+            "parity", "databits"
         ]
         for field in rs485_fields:
             assert field in rs485, f"Field {field} is missing"
@@ -88,21 +76,6 @@ def test_settings(api):
             f"Field parity has incorrect value: {rs485['parity']}"
         assert rs485["databits"] in ["5", "6", "7", "8"], \
             f"Field databits has incorrect value: {rs485['databits']}"
-        assert rs485["port_mode"] in ["disabled", "tcp_bridge", "passive", "repeater"], \
-            f"Field port_mode has incorrect value: {rs485['port_mode']}"
-        assert isinstance(rs485["cache_en"], bool), "Field cache_en has incorrect type"
-
-        bridge = rs485["bridge"]
-        bridge_fields = [
-            "mode", "port", "ip", "modbus"
-        ]
-        for field in bridge_fields:
-            assert field in bridge, f"Field {field} is missing"
-
-        assert bridge["mode"] in ["server", "client"], f"Field mode has incorrect value: {bridge['mode']}"
-        assert isinstance(bridge["port"], int), "Field port has incorrect type"
-        assert 1 <= bridge["port"] <= 65535, f"Field port has incorrect value: {bridge['port']}"
-        assert isinstance(bridge["modbus"], bool), "Field modbus has incorrect type"
 
     print("✓ Settings structure is correct")
 
@@ -140,13 +113,7 @@ def test_settings(api):
             "baudrate": 115200,
             "stopbits": "1.5",
             "parity": "even",
-            "databits": "7",
-            "bridge": {
-                "mode": "server",
-                "port": 5020,
-                "ip": "192.168.1.49",
-                "modbus": True
-            }
+            "databits": "7"
         },
         "rs485_2": {
             "term": not original_settings["rs485_2"]["term"],
@@ -155,13 +122,7 @@ def test_settings(api):
             "baudrate": 38400,
             "stopbits": "1",
             "parity": "odd",
-            "databits": "6",
-            "bridge": {
-                "mode": "client",
-                "port": 5021,
-                "ip": "192.168.1.50",
-                "modbus": False
-            }
+            "databits": "6"
         }
     }
 
@@ -198,23 +159,10 @@ def test_settings(api):
             assert rs485_1[field] == test_settings["rs485_1"][field], \
                 f"Incorrect value for field {field}: {rs485_1[field]}"
 
-        bridge_1 = new_settings["rs485_1"]["bridge"]
-        bridge_fields = [
-            "mode", "port", "ip", "modbus"
-        ]
-        for field in bridge_fields:
-            assert bridge_1[field] == test_settings["rs485_1"]["bridge"][field], \
-                f"Incorrect value for field {field}: {bridge_1[field]}"
-
         rs485_2 = new_settings["rs485_2"]
         for field in rs485_main_fields:
             assert rs485_2[field] == test_settings["rs485_2"][field], \
                 f"Incorrect value for field {field}: {rs485_2[field]}"
-
-        bridge_2 = new_settings["rs485_2"]["bridge"]
-        for field in bridge_fields:
-            assert bridge_2[field] == test_settings["rs485_2"]["bridge"][field], \
-                f"Incorrect value for field {field}: {bridge_2[field]}"
 
         print("✓ All settings are saved correctly")
 
@@ -247,13 +195,7 @@ def test_settings(api):
                 "baudrate": 123456,
                 "stopbits": "2.5",
                 "parity": "all",
-                "databits": "2",
-                "bridge": {
-                    "mode": "station",
-                    "port": 0,
-                    "ip": "201.250.252.256",
-                    "modbus": "enabled"
-                }
+                "databits": "2"
             },
             "rs485_2": {
                 "term": "true",
@@ -262,13 +204,7 @@ def test_settings(api):
                 "baudrate": 0,
                 "stopbits": "0.5",
                 "parity": "disabled",
-                "databits": "4",
-                "bridge": {
-                    "mode": "server",
-                    "port": 65536,
-                    "ip": "102.abc.126.18",
-                    "modbus": "disabled"
-                }
+                "databits": "4"
             },
             "vout": "true",
             "io_bus": "true"
@@ -294,53 +230,6 @@ def test_settings(api):
             print(f"✗ Failed to restore original settings: HTTP {resp.status_code}")
         else:
             print("✓ Original settings restored")
-
-
-def test_port_mode_cache_en_round_trip(api):
-    """W8: port_mode (repeater) and cache_en export/import round-trip.
-
-    The per-port transport mode (port_mode) and cache overlay flag (cache_en)
-    must survive a POST /settings -> GET /settings round-trip — this is the
-    settings export/import path. Enabling repeater mode via POST and reading it
-    back via GET must return the saved values. An invalid port_mode must be
-    rejected (success=false) and must not be persisted.
-    """
-    original_response = api.get_settings()
-    assert original_response.status_code == 200
-    original = original_response.json()
-
-    try:
-        # Round-trip: enable repeater mode + cache overlay on port 1
-        response = api.update_settings(
-            {"rs485_1": {"port_mode": "repeater", "cache_en": True}}
-        )
-        assert response.status_code == 200
-        assert response.json().get("success") is True, \
-            f"port_mode=repeater + cache_en=true must be accepted: {response.json()}"
-
-        check = api.get_settings()
-        assert check.status_code == 200
-        current = check.json()
-        assert current["rs485_1"]["port_mode"] == "repeater", \
-            f"port_mode was not saved: {current['rs485_1'].get('port_mode')}"
-        assert current["rs485_1"]["cache_en"] is True, \
-            f"cache_en was not saved: {current['rs485_1'].get('cache_en')}"
-        print("✓ port_mode=repeater and cache_en=true round-tripped correctly")
-
-        # Negative: an invalid port_mode must be rejected and not saved
-        response = api.update_settings({"rs485_1": {"port_mode": "bogus"}})
-        assert response.status_code == 200
-        assert response.json().get("success") is False, \
-            f"Invalid port_mode must be rejected: {response.json()}"
-
-        check = api.get_settings()
-        assert check.status_code == 200
-        assert check.json()["rs485_1"]["port_mode"] == "repeater", \
-            "Invalid port_mode was saved (expected rejection; value must stay 'repeater')"
-        print("✓ Invalid port_mode rejected and not saved")
-    finally:
-        api.update_settings(original)
-        print("✓ Original settings restored")
 
 
 def test_update_channel_round_trip(api):
@@ -398,8 +287,8 @@ def test_settings_document_round_trip(api):
     itself must always be accepted. On a device that had never joined a Wi-Fi
     network this used to fail: the exported wifi.sta_ssid was the factory default
     empty string, which the station SSID validator rejected. Validation is
-    all-or-nothing, so the whole import was refused and hostname, ports, cache
-    settings and update_channel were lost together with it.
+    all-or-nothing, so the whole import was refused and hostname, ports and
+    update_channel were lost together with it.
     """
     original_response = api.get_settings()
     assert original_response.status_code == 200
@@ -439,31 +328,31 @@ def test_settings_document_round_trip(api):
         print("✓ Original settings restored")
 
 
-# 430 s, not 180 s: this is the most HTTP-heavy item in the suite, and CI build #16
+# 370 s, not 180 s: this is the most HTTP-heavy item in the suite, and CI build #16
 # reported it as "Failed: Timeout (>180.0s) from pytest-timeout". That was not a hang —
-# the log carried all 20 "✓ Rejected: ..." lines, so the loop had finished and the budget
+# the log carried every "✓ Rejected: ..." line, so the loop had finished and the budget
 # ran out in the tail (last verification / finally restore / final assert). The item makes
-# 42 sequential /settings calls: 1 GET before the loop, 20 x (POST one invalid field +
+# 36 sequential /settings calls: 1 GET before the loop, 17 x (POST one invalid field +
 # GET read-back to prove it was not saved), and 1 restore POST in the finally.
 #
 # Each call carries a 30 s CLIENT-timeout ceiling (api_client.get_settings /
-# update_settings), so the theoretical worst case is 42 x 30 = 1260 s — past any sane
+# update_settings), so the theoretical worst case is 36 x 30 = 1080 s — past any sane
 # marker. That ceiling is theoretical: observed GET/POST /settings latencies under QEMU are
 # an order of magnitude smaller (sub-second on an idle node, which is why 180 s held until
 # a loaded one). Budget instead the bad-case figure api_client.get_settings documents for
 # itself, "occasionally >10 s" per call:
-#     42 calls x 10 s               = 420.0 s
-#     42 x _DelayedSession.DELAY_S  =   4.2 s   (the client sleeps 100 ms before every request)
-#     20 x sleep(0.1) between cases =   2.0 s
+#     36 calls x 10 s               = 360.0 s
+#     36 x _DelayedSession.DELAY_S  =   3.6 s   (the client sleeps 100 ms before every request)
+#     17 x sleep(0.1) between cases =   1.7 s
 #                                     -------
-#                                       426.2 s  -> 430 s
-# 430 is a defensible compromise, NOT a proven worst-case bound (42 x 30 would blow past
+#                                       365.3 s  -> 370 s
+# 370 is a defensible compromise, NOT a proven worst-case bound (36 x 30 would blow past
 # it) — if these calls genuinely pinned their 30 s ceiling, this test SHOULD fail as a real
 # firmware/infra problem. It deliberately exceeds pytest.ini's global 180 s: raising that
 # global instead would loosen every other test in the suite, including the ones whose tight
 # budget is the point. To cut this marker, cut the call count (see the per-case read-back
 # in the loop), not the number.
-@pytest.mark.timeout(430)
+@pytest.mark.timeout(370)
 def test_per_field_validation(api):
     """Validate each field independently so that each validator is exercised.
 
@@ -520,39 +409,20 @@ def test_per_field_validation(api):
          "ethernet.mask_static wrong type (int)"),
         ({"rs485_1": {"term": 1, "fail_safe": "off", "tx_disabled": False,
                       "baudrate": 123456, "stopbits": "1", "parity": "none",
-                      "databits": "8", "bridge": {"mode": "server", "port": 502,
-                      "ip": "0.0.0.0", "modbus": "true"}}},
+                      "databits": "8"}},
          "rs485_1.baudrate invalid value"),
         ({"rs485_1": {"term": False, "fail_safe": "off", "tx_disabled": False,
                       "baudrate": 9600, "stopbits": "2.5", "parity": "none",
-                      "databits": "8", "bridge": {"mode": "server", "port": 502,
-                      "ip": "0.0.0.0", "modbus": "true"}}},
+                      "databits": "8"}},
          "rs485_1.stopbits invalid value"),
         ({"rs485_1": {"term": False, "fail_safe": "off", "tx_disabled": False,
                       "baudrate": 9600, "stopbits": "1", "parity": "all",
-                      "databits": "8", "bridge": {"mode": "server", "port": 502,
-                      "ip": "0.0.0.0", "modbus": "true"}}},
+                      "databits": "8"}},
          "rs485_1.parity invalid value"),
         ({"rs485_1": {"term": False, "fail_safe": "off", "tx_disabled": False,
                       "baudrate": 9600, "stopbits": "1", "parity": "none",
-                      "databits": "2", "bridge": {"mode": "server", "port": 502,
-                      "ip": "0.0.0.0", "modbus": "true"}}},
+                      "databits": "2"}},
          "rs485_1.databits invalid value"),
-        ({"rs485_1": {"term": False, "fail_safe": "off", "tx_disabled": False,
-                      "baudrate": 9600, "stopbits": "1", "parity": "none",
-                      "databits": "8", "bridge": {"mode": "client", "port": 0,
-                      "ip": "0.0.0.0", "modbus": "true"}}},
-         "rs485_1.bridge.port=0 invalid"),
-        ({"rs485_1": {"term": False, "fail_safe": "off", "tx_disabled": False,
-                      "baudrate": 9600, "stopbits": "1", "parity": "none",
-                      "databits": "8", "bridge": {"mode": "client", "port": 65536,
-                      "ip": "0.0.0.0", "modbus": "true"}}},
-         "rs485_1.bridge.port=65536 out of range"),
-        ({"rs485_1": {"term": False, "fail_safe": "off", "tx_disabled": False,
-                      "baudrate": 9600, "stopbits": "1", "parity": "none",
-                      "databits": "8", "bridge": {"mode": "client", "port": 502,
-                      "ip": "201.250.252.256", "modbus": "true"}}},
-         "rs485_1.bridge.ip invalid"),
     ]
 
     failed_cases = []
@@ -578,7 +448,7 @@ def test_per_field_validation(api):
             # Brief pause between cases: lets the firmware finish the background
             # settings_update task kicked off by the previous write before the next
             # POST lands, instead of queueing behind it. It COSTS budget rather than
-            # saving it — 20 x 0.1 s = 2 s, counted in the marker arithmetic above.
+            # saving it — 17 x 0.1 s = 1.7 s, counted in the marker arithmetic above.
             # (It never guarded a "60s budget": the commit that added this sleep added
             # the local timeout marker too, so the then-global 60 s never applied here,
             # and pytest.ini's global has since been raised to 180 s anyway.)
@@ -735,8 +605,7 @@ def test_settings_partial_update(api):
         assert updated["vout"] == new_vout, \
             f"vout was not updated: expected {new_vout}, got {updated['vout']}"
 
-        preserved_fields = ["hostname", "login", "web_port", "io_bus",
-                            "cache_modbus_port", "cache_modbus_server_enabled", "cache_value_timeout_s"]
+        preserved_fields = ["hostname", "login", "web_port", "io_bus", "update_channel"]
         for field in preserved_fields:
             if field in original:
                 assert updated[field] == original[field], \

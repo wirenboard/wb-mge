@@ -22,14 +22,14 @@ pipeline {
         // Every host port that is fixed in advance — the QEMU hostfwd targets, the two UART
         // chardev TCP ports, and the UDP IO-bus port — is derived from WB_MGE_PORT_SLOT (see
         // the two QEMU stages and api_tests/qemu_ports.py), so concurrent runs in different
-        // slots already coexist on separate ports. Grepping api_tests/ for `.bind(` finds four
-        // calls, and none of them adds a collision. Three are the listeners the tests own
-        // themselves (25_test_transparent_tcp_e2e.py, and 32_test_transparent_sniffer.py
-        // twice): they bind port 0, so the OS hands each a free ephemeral port and they cannot
-        // collide by construction. The fourth is the stale-port preflight probe in
-        // conftest.py, which binds the slot-derived UDP IO-bus port — already covered by the
-        // slot argument above. (The IO-bus client socket in io_bus_helpers.py never binds at
-        // all; its sendto takes an implicit ephemeral source port.)
+        // slots already coexist on separate ports. Grepping api_tests/ for `.bind(` finds one
+        // call, and it does not add a collision: the stale-port preflight probe in conftest.py,
+        // which binds the slot-derived UDP IO-bus port — already covered by the slot argument
+        // above. (The test-owned listeners that used to make up the other three calls belonged
+        // to the transparent-bridge and sniffer e2e files, which the DIY strip deleted; they
+        // bound port 0 and could not collide either. The IO-bus client socket in
+        // io_bus_helpers.py never binds at all; its sendto takes an implicit ephemeral source
+        // port.)
         //
         // Residual limitation, deliberately not solved here: disableConcurrentBuilds is a
         // per-branch job property, so it only stops a branch from doubling up on ITSELF and

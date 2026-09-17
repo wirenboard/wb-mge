@@ -7,15 +7,6 @@ import requests
 import qemu_ports
 
 
-# Client timeout of GET /sniffer/status. Named rather than inlined so that everything which
-# talks to this endpoint reads the same number: get_sniffer_status() below, the poll budget in
-# sniffer_helpers._poll_sniffer_status(), and 13_test_ports' unauthenticated check, which uses
-# a bare requests.Session against the same URL and should not be more or less patient than the
-# client. It carries no other contract — in particular, the poll's budget is deliberately
-# LARGER than this timeout, and why that is safe is stated once, in that poll's docstring.
-SNIFFER_STATUS_TIMEOUT_S = 10
-
-
 class _DelayedSession(requests.Session):
     """A requests.Session that sleeps 100ms before every request."""
 
@@ -125,70 +116,9 @@ class WBMGEAPI:
         """Get device uptime"""
         return self.session.get(f"{self.base_url}/uptime", timeout=10)
 
-    def get_cache_status(self):
-        """Get cache server status"""
-        return self.session.get(f"{self.base_url}/cache/status", timeout=10)
-
-    def get_cache_csv(self):
-        """Get cached register map as CSV"""
-        return self.session.get(f"{self.base_url}/cache/csv", timeout=10)
-
-    def get_cache_json(self):
-        """Get cached register map as JSON"""
-        return self.session.get(f"{self.base_url}/cache/json", timeout=10)
-
     def get_hostname(self):
         """Get device hostname"""
         return self.session.get(f"{self.base_url}/hostname", timeout=10)
-
-    def set_port_mode(self, port_num, mode, settle_retries=2, settle_s=0.5):
-        """Set port mode via POST /ports/{port_num}/mode
-
-        30s timeout: a port-mode change runs serial+bridge deinit and reinit,
-        which under host CPU contention (QEMU on a busy host) can take several
-        seconds — especially when the listen socket from the previous mode is
-        still being released by lwIP and create_listen_socket() retries.
-
-        Transient-ESP_FAIL retry: under sustained mode switching without a reboot
-        (the firmware's create_listen_socket retries bind() a few times at 100 ms
-        while the previous mode's TCP pcb is still being released by lwIP, then
-        gives up and the handler returns HTTP 400 {"error":"ESP_FAIL"}), wait and
-        retry to give lwIP more time to free the socket. Only this specific
-        transient failure is retried; a 200 or any other 400 (e.g. validation
-        errors on a bad mode string) is returned immediately and unchanged.
-        """
-        resp = None
-        for attempt in range(settle_retries + 1):
-            resp = self.session.post(
-                f"{self.base_url}/ports/{port_num}/mode",
-                json={"mode": mode},
-                timeout=30
-            )
-            if resp.status_code != 400 or "ESP_FAIL" not in resp.text:
-                return resp
-            if attempt < settle_retries:
-                time.sleep(settle_s)
-        return resp
-
-    def set_port_cache(self, port_num, enabled):
-        """Enable/disable the per-port cache overlay via POST /ports/{port_num}/cache.
-
-        The cache overlay is orthogonal to the transport mode: it can be toggled
-        live without a port reinit, so a short timeout is sufficient.
-        """
-        return self.session.post(
-            f"{self.base_url}/ports/{port_num}/cache",
-            json={"enabled": enabled},
-            timeout=10
-        )
-
-    def send_packet(self, port_num: int, hex_str: str):
-        """Send a raw RTU hex frame to an RS-485 port via POST /ports/{N}/send"""
-        return self.session.post(
-            f"{self.base_url}/ports/{port_num}/send",
-            json={"hex": hex_str},
-            timeout=10
-        )
 
     def get_wb_test(self):
         """Get WB test status"""
@@ -197,11 +127,6 @@ class WBMGEAPI:
     def set_wb_test(self, clock_out: bool):
         """Set WB test clock_out"""
         return self.session.post(f"{self.base_url}/wb_test", json={"clock_out": clock_out}, timeout=10)
-
-    def get_sniffer_status(self):
-        """Get sniffer status for all ports"""
-        return self.session.get(f"{self.base_url}/sniffer/status",
-                                timeout=SNIFFER_STATUS_TIMEOUT_S)
 
     def wait_for_ready(self, timeout=1800, interval=1):
         """Poll the server until it responds, then reconnect and re-auth."""

@@ -178,10 +178,10 @@ _LOG_TS_RE = re.compile(r"^[VDIWE] \((\d+)\)")
 # and it exits the moment that marker appears.
 _SERIAL_SCAN_MAX_S = 10.0
 
-# Same stable, greppable marker the sibling guard on this branch uses
-# (37_test_cache_server_deinit_hang.py::_skip_detector_disarmed), so runs abandoned because
-# the ENVIRONMENT invalidated the measurement can be counted across builds with one grep
-# whichever file produced them.
+# A stable, greppable marker, so runs abandoned because the ENVIRONMENT invalidated the
+# measurement can be counted across builds with one grep. It used to be shared with a
+# sibling guard in 37_test_cache_server_deinit_hang.py; that file covered the cache Modbus
+# server, which the DIY firmware does not have, so this is now the only producer.
 _DISARMED_MARKER = "DETECTOR-DISARMED"
 
 
