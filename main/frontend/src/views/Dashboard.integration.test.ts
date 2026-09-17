@@ -34,8 +34,6 @@ const makeInfo = (firmware: string, signature = 'mge_v3'): Partial<Info> => ({
     mode: 'ap', con_ap: 0, con_sta: false, con_sta_ssid: '', enabled: false,
     sta_ip: '', sta_mask: '', sta_gw: '', sta_mac: '', ap_ip: '192.168.4.1', ap_channel: 1, ap_mac: 'aa:bb:cc:dd:ee:00',
   },
-  rs485_1: { is_busy: false, error_percentage: 0, server_connections_count: 0, port_mode: 'tcp_bridge', cache_enabled: false },
-  rs485_2: { is_busy: false, error_percentage: 0, server_connections_count: 0, port_mode: 'disabled', cache_enabled: false },
 });
 
 const makeRs = () => ({
@@ -46,7 +44,6 @@ const makeRs = () => ({
   term: false,
   fail_safe: false,
   tx_disabled: false,
-  bridge: { mode: 'server' as const, ip: '', port: 502, modbus: true },
 });
 
 const makeSettings = (): Partial<Settings> => ({

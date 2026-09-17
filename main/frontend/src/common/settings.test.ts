@@ -9,9 +9,6 @@ const makeInitialSettings = () => ({
     web_port: 80,
     io_bus: false,
     vout: true,
-    cache_modbus_port: 502,
-    cache_modbus_server_enabled: false,
-    cache_value_timeout_s: 10,
     update_channel: 'stable',
     ethernet: { dhcpc: true, ip_static: '', mask_static: '', gw_static: '' },
     rs485_1: {
@@ -22,7 +19,6 @@ const makeInitialSettings = () => ({
         term: false,
         fail_safe: false,
         tx_disabled: false,
-        bridge: { mode: 'server', ip: '', port: 502, modbus: true },
     },
     rs485_2: {
         baudrate: 9600,
@@ -32,7 +28,6 @@ const makeInitialSettings = () => ({
         term: false,
         fail_safe: false,
         tx_disabled: false,
-        bridge: { mode: 'server', ip: '', port: 503, modbus: true },
     },
 });
 

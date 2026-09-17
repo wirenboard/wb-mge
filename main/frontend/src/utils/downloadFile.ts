@@ -3,7 +3,7 @@
  *
  * Scheme: `wb-mge-<what>-<timestamp>.<ext>`
  *   <what>      kebab-case description of the payload, including the port number where the
- *               export is per-port (e.g. 'sniffer-port1').
+ *               export is per-port (e.g. 'port1').
  *   <timestamp> LOCAL wall clock as `YYYY-MM-DDTHH-mm-ss`.
  *
  * The timestamp deliberately avoids colons. `Date#toISOString()` produces `12:34:56`, and a
@@ -11,10 +11,9 @@
  * user ends up with is not the one we asked for. Local time (not UTC) is used because these
  * files are read next to the device's own UI, where the operator thinks in local time.
  *
- * The firmware serves one more export of its own, the Modbus cache CSV, whose name comes from
- * a Content-Disposition header (main/bridge/cache_multimaster.c). It follows the same scheme
- * without the timestamp: the device has no guaranteed wall clock (SNTP is optional and the
- * board has no RTC), so a timestamp there would be a lie more often than not.
+ * A file the firmware itself names (through a Content-Disposition header) follows the same
+ * scheme without the timestamp: the device has no guaranteed wall clock (SNTP is optional and
+ * the board has no RTC), so a timestamp there would be a lie more often than not.
  */
 export function exportTimestamp(now: Date = new Date()): string {
   const pad = (n: number) => String(n).padStart(2, '0');
