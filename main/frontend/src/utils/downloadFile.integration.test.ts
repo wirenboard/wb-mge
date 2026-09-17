@@ -98,7 +98,7 @@ describe('downloadFile', () => {
 
 /**
  * The export naming scheme is the single place where every downloadable file gets its name;
- * these tests pin the shape the three call sites (settings, register map, sniffer) rely on.
+ * these tests pin the shape its call sites (today: the settings export) rely on.
  */
 describe('exportFileName / exportTimestamp', () => {
   // Fixed local-time instant used by the deterministic cases below.
@@ -114,8 +114,8 @@ describe('exportFileName / exportTimestamp', () => {
   // DF-U-06: full name follows wb-mge-<what>-<timestamp>.<ext>.
   it('DF-U-06: exportFileName builds wb-mge-<what>-<timestamp>.<ext>', () => {
     expect(exportFileName('settings', 'json', instant)).toBe('wb-mge-settings-2026-08-05T09-04-03.json');
-    expect(exportFileName('register-map', 'json', instant)).toBe('wb-mge-register-map-2026-08-05T09-04-03.json');
-    expect(exportFileName('sniffer-port2', 'csv', instant)).toBe('wb-mge-sniffer-port2-2026-08-05T09-04-03.csv');
+    // A per-port payload keeps the port number in <what>; the scheme must survive the dash.
+    expect(exportFileName('port2', 'csv', instant)).toBe('wb-mge-port2-2026-08-05T09-04-03.csv');
   });
 
   // DF-U-07: with no explicit instant the name still matches the scheme.

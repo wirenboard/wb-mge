@@ -14,10 +14,6 @@ import GaugeIcon from '@/assets/gaugeIcon.svg?component';
 import SlidersIcon from '@/assets/slidersIcon.svg?component';
 import NetworkIcon from '@/assets/networkIcon.svg?component';
 import CpuIcon from '@/assets/cpuIcon.svg?component';
-import ActivityIcon from '@/assets/activityIcon.svg?component';
-import PlugIcon from '@/assets/plugIcon.svg?component';
-import GridSidebarIcon from '@/assets/gridSidebarIcon.svg?component';
-import RepeatIcon from '@/assets/repeatIcon.svg?component';
 import { useHostname } from '@/common/hostname';
 import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
@@ -28,10 +24,6 @@ const MENU_ICONS: Record<string, Component> = {
   sliders: SlidersIcon,
   network: NetworkIcon,
   cpu: CpuIcon,
-  activity: ActivityIcon,
-  plug: PlugIcon,
-  grid: GridSidebarIcon,
-  repeat: RepeatIcon,
 };
 
 function getMenuIcon(key: unknown): Component | undefined {
@@ -117,11 +109,7 @@ watch(
         <div class="sb-port">
           <div class="sb-port-head">
             <span class="sb-port-name">{{ t('port_1') }}</span>
-            <span :class="['sb-port-state', info.rs485_1.is_busy ? 'on' : 'off']">
-              <span class="dot" />{{ info.rs485_1.is_busy ? t('status_active') : t('status_idle') }}
-            </span>
           </div>
-          <div class="sb-port-row"><span class="sb-port-k">{{ t('mode') }}</span><span class="sb-port-v">{{ t(`port_mode_${info.rs485_1.port_mode}`, info.rs485_1.port_mode) }}</span></div>
           <div class="sb-port-row mono">
             <span class="sb-port-k">{{ t('line') }}</span>
             <span class="sb-port-v">
@@ -132,11 +120,7 @@ watch(
         <div class="sb-port">
           <div class="sb-port-head">
             <span class="sb-port-name">{{ t('port_2') }}</span>
-            <span :class="['sb-port-state', info.rs485_2.is_busy ? 'on' : 'off']">
-              <span class="dot" />{{ info.rs485_2.is_busy ? t('status_active') : t('status_idle') }}
-            </span>
           </div>
-          <div class="sb-port-row"><span class="sb-port-k">{{ t('mode') }}</span><span class="sb-port-v">{{ t(`port_mode_${info.rs485_2.port_mode}`, info.rs485_2.port_mode) }}</span></div>
           <div class="sb-port-row mono">
             <span class="sb-port-k">{{ t('line') }}</span>
             <span class="sb-port-v">
@@ -387,39 +371,6 @@ watch(
   letter-spacing: 0.01em;
 }
 
-.sb-port-state {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-weight: 500;
-}
-
-.sb-port-state .dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-
-.sb-port-state.on {
-  color: var(--brand-on-dark);
-}
-
-.sb-port-state.on .dot {
-  background: var(--brand-on-dark);
-  box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand-on-dark) 20%, transparent);
-}
-
-.sb-port-state.off {
-  color: var(--text-on-dark-dim);
-}
-
-.sb-port-state.off .dot {
-  background: var(--text-on-dark-dim);
-}
-
 .sb-port-row {
   display: flex;
   justify-content: space-between;
@@ -490,7 +441,6 @@ watch(
 {
   "en": {
     "group_overview": "Overview",
-    "group_modbus_tools": "Modbus tools",
     "group_configuration": "Configuration",
     "link_docs": "Documentation",
     "link_support": "Support",
@@ -499,18 +449,10 @@ watch(
     "toggle_menu": "Toggle navigation menu",
     "port_1": "Port 1",
     "port_2": "Port 2",
-    "status_active": "ACTIVE",
-    "status_idle": "IDLE",
-    "line": "Line",
-    "mode": "Mode",
-    "port_mode_disabled": "Disabled",
-    "port_mode_tcp_bridge": "TCP bridge",
-    "port_mode_passive": "Passive listen",
-    "port_mode_repeater": "Repeater"
+    "line": "Line"
   },
   "ru": {
     "group_overview": "Обзор",
-    "group_modbus_tools": "Инструменты Modbus",
     "group_configuration": "Конфигурация",
     "link_docs": "Документация",
     "link_support": "Техподдержка",
@@ -519,18 +461,10 @@ watch(
     "toggle_menu": "Открыть меню",
     "port_1": "Порт 1",
     "port_2": "Порт 2",
-    "status_active": "АКТИВЕН",
-    "status_idle": "ПРОСТОЙ",
-    "line": "Линия",
-    "mode": "Режим",
-    "port_mode_disabled": "Отключён",
-    "port_mode_tcp_bridge": "TCP-мост",
-    "port_mode_passive": "Пассивный (прослушка)",
-    "port_mode_repeater": "Повторитель"
+    "line": "Линия"
   },
   "kk": {
     "group_overview": "Шолу",
-    "group_modbus_tools": "Modbus құралдары",
     "group_configuration": "Конфигурация",
     "link_docs": "Құжаттама",
     "link_support": "Қолдау",
@@ -539,18 +473,10 @@ watch(
     "toggle_menu": "Мәзірді ашу",
     "port_1": "Порт 1",
     "port_2": "Порт 2",
-    "status_active": "БЕЛСЕНДІ",
-    "status_idle": "БОС",
-    "line": "Желі",
-    "mode": "Режим",
-    "port_mode_disabled": "Өшірілген",
-    "port_mode_tcp_bridge": "TCP көпір",
-    "port_mode_passive": "Пассивті тыңдау",
-    "port_mode_repeater": "Қайталағыш"
+    "line": "Желі"
   },
   "it": {
     "group_overview": "Panoramica",
-    "group_modbus_tools": "Strumenti Modbus",
     "group_configuration": "Configurazione",
     "link_docs": "Documentazione",
     "link_support": "Supporto",
@@ -559,18 +485,10 @@ watch(
     "toggle_menu": "Apri menu",
     "port_1": "Porta 1",
     "port_2": "Porta 2",
-    "status_active": "ATTIVO",
-    "status_idle": "INATTIVO",
-    "line": "Linea",
-    "mode": "Modalità",
-    "port_mode_disabled": "Disabilitato",
-    "port_mode_tcp_bridge": "Bridge TCP",
-    "port_mode_passive": "Ascolto passivo",
-    "port_mode_repeater": "Ripetitore"
+    "line": "Linea"
   },
   "de": {
     "group_overview": "Übersicht",
-    "group_modbus_tools": "Modbus-Werkzeuge",
     "group_configuration": "Konfiguration",
     "link_docs": "Dokumentation",
     "link_support": "Support",
@@ -579,14 +497,7 @@ watch(
     "toggle_menu": "Menü öffnen",
     "port_1": "Port 1",
     "port_2": "Port 2",
-    "status_active": "AKTIV",
-    "status_idle": "INAKTIV",
-    "line": "Leitung",
-    "mode": "Modus",
-    "port_mode_disabled": "Deaktiviert",
-    "port_mode_tcp_bridge": "TCP-Bridge",
-    "port_mode_passive": "Passives Mithören",
-    "port_mode_repeater": "Repeater"
+    "line": "Leitung"
   }
 }
 </i18n>

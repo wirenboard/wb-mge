@@ -57,8 +57,6 @@ const makeInfo = (firmware: string, signature = 'mge_v3'): Partial<Info> => ({
   psram_available: false,
   psram_size_kb: 0,
   system_voltage: 12,
-  rs485_1: { is_busy: false, error_percentage: 0, server_connections_count: 0, port_mode: 'tcp_bridge', cache_enabled: false },
-  rs485_2: { is_busy: false, error_percentage: 0, server_connections_count: 0, port_mode: 'disabled', cache_enabled: false },
 });
 
 const makeRs = () => ({
@@ -69,7 +67,6 @@ const makeRs = () => ({
   term: false,
   fail_safe: false,
   tx_disabled: false,
-  bridge: { mode: 'server' as const, ip: '', port: 502, modbus: true },
 });
 
 const makeSettings = (): Partial<Settings> => ({

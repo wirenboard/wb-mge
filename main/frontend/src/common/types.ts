@@ -18,32 +18,6 @@ export interface Uptime {
   seconds: number;
 }
 
-export type PortMode = 'disabled' | 'tcp_bridge' | 'passive' | 'repeater';
-
-export interface RsStatus {
-  is_busy: boolean;
-  error_percentage: number;
-  server_connections_count: number;
-  port_mode: PortMode;
-  cache_enabled: boolean;
-}
-
-// Live stats for the transparent RS-485 repeater (Port 1 <-> Port 2 passthrough).
-export interface RepeaterStats {
-  // true when both ports are in repeater mode
-  active: boolean;
-  // milliseconds since forwarding became active (0 if inactive)
-  uptime_ms: number;
-  // bytes forwarded Port 1 -> Port 2 (the TX->RX / forward arrow)
-  bytes_1to2: number;
-  // bytes forwarded Port 2 -> Port 1 (the RX<-TX / reverse arrow)
-  bytes_2to1: number;
-  // bytes dropped on Port 1
-  dropped_1: number;
-  // bytes dropped on Port 2
-  dropped_2: number;
-}
-
 export interface Info {
   device_name: string;
   signature?: string; // device signature, e.g. 'mge_v3' (WB-MGE) or 'mgu_v1' (WB-MGU)
@@ -77,12 +51,9 @@ export interface Info {
     ap_channel: number;
     ap_mac: string;
   };
-  rs485_1: RsStatus;
-  rs485_2: RsStatus;
-  repeater?: RepeaterStats; // optional: older firmware may omit it
-  cache_modbus_port: number;
-  cache_modbus_server_enabled: boolean;
-  cache_value_timeout_s: number;
+  // /info still carries "rs485_1"/"rs485_2", but the firmware now reports nothing inside them:
+  // the module that measured port activity is gone, so the objects arrive empty and the UI
+  // has nothing to read from them.
   psram_available: boolean;
   psram_size_kb: number;
 }
@@ -97,8 +68,6 @@ export type Databits = '5' | '6' | '7' | '8';
 
 export type Parity = 'none' | 'even' | 'odd';
 
-export type BridgeMode = 'client' | 'server';
-
 export type WiFiMode = 'none' | 'ap' | 'sta';
 
 export type UpdateChannel = 'stable' | 'testing';
@@ -111,12 +80,6 @@ export interface RsSettings {
   stopbits: Stopbits;
   parity: Parity;
   databits: Databits;
-  bridge: {
-    mode: BridgeMode;
-    ip: string;
-    port: number;
-    modbus: boolean;
-  };
 }
 
 export interface Settings {
@@ -124,11 +87,16 @@ export interface Settings {
   login: string;
   pass?: string;
   web_port: number;
+  // Modbus slave identity of the device itself, not of one port: the device answers at
+  // `mb_slave_id` (1..247) on BOTH RS-485 ports, and serves Modbus TCP on `mb_tcp_port`.
+  // Optional: the Modbus role is chosen when the firmware is built (MB_ROLE=slave|master|none)
+  // and only a slave build has a Modbus identity to expose, so a master or Modbus-less build
+  // sends neither key. Their presence in the document is the only signal of the role there is —
+  // the firmware reports it nowhere else — so readers must treat both as possibly absent.
+  mb_slave_id?: number;
+  mb_tcp_port?: number;
   io_bus: boolean;
   vout: boolean;
-  cache_modbus_port: number;
-  cache_modbus_server_enabled: boolean;
-  cache_value_timeout_s: number;
   update_channel: UpdateChannel;
   wifi_perm_disable?: boolean;
   wifi?: {

@@ -3,19 +3,16 @@ import { computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useChannelRelease } from '@/common/channelRelease';
 import { useInfo } from '@/common/info';
-import { useSettings } from '@/common/settings';
 import { useUptime } from '@/common/uptime';
 import { useRouter } from 'vue-router';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
-import RsStatus from '@/components/RsStatus.vue';
 import InfoRow from '@/components/InfoRow.vue';
 import GearIcon from '@/assets/gearIcon.svg?component';
 
 const { t } = useI18n();
 const { info } = useInfo();
-const { data: settings } = useSettings();
 const { uptime } = useUptime();
 const router = useRouter();
 
@@ -116,7 +113,9 @@ const getDisplayValue = (val: string | boolean | number) => {
             </template>
           </div>
         </section>
+      </div>
 
+      <div class="stack">
         <section class="card">
           <div class="card-header">
             <div class="title">{{ t('gateway') }}</div>
@@ -145,40 +144,6 @@ const getDisplayValue = (val: string | boolean | number) => {
                 <Button v-if="hasUpdate" type="button" variant="primary" @click="router.push('/system')">{{ t('firmware_update_btn') }}</Button>
               </span>
             </InfoRow>
-          </div>
-        </section>
-      </div>
-
-      <div class="stack">
-        <section class="card">
-          <div class="card-header">
-            <div class="card-title-row">
-              <div class="title">{{ t('port_1') }}</div>
-              <button class="card-edit-btn" :title="t('edit_settings')" :aria-label="t('edit_settings')" @click="router.push('/settings')">
-                <GearIcon />
-              </button>
-            </div>
-            <span v-if="info!.rs485_1.is_busy" class="pill ok"><span class="dot" />{{ t('active') }}</span>
-            <span v-else class="pill muted">{{ t('inactive') }}</span>
-          </div>
-          <div class="card-body">
-            <RsStatus :title="t('rs_status_1')" :info="info!.rs485_1" :settings="settings!.rs485_1" />
-          </div>
-        </section>
-
-        <section class="card">
-          <div class="card-header">
-            <div class="card-title-row">
-              <div class="title">{{ t('port_2') }}</div>
-              <button class="card-edit-btn" :title="t('edit_settings')" :aria-label="t('edit_settings')" @click="router.push('/settings')">
-                <GearIcon />
-              </button>
-            </div>
-            <span v-if="info!.rs485_2.is_busy" class="pill ok"><span class="dot" />{{ t('active') }}</span>
-            <span v-else class="pill muted">{{ t('inactive') }}</span>
-          </div>
-          <div class="card-body">
-            <RsStatus :title="t('rs_status_2')" :info="info!.rs485_2" :settings="settings!.rs485_2" />
           </div>
         </section>
       </div>
@@ -241,8 +206,6 @@ const getDisplayValue = (val: string | boolean | number) => {
     "gateway_sub": "Power & auxiliary output",
     "power": "Supply voltage",
     "v": "V",
-    "active": "Active",
-    "inactive": "Inactive",
     "edit_settings": "Settings",
     "uptime": "Uptime",
     "uptime_days": "- | {n} day | {n} days | {n} days",
@@ -254,11 +217,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_up_to_date": "up to date",
     "firmware_check_failed": "update check unavailable",
     "firmware_channels_unavailable": "no update channels published for this board yet",
-    "firmware_update_btn": "Update",
-    "port_1": "RS-485 · Port 1",
-    "port_2": "RS-485 · Port 2",
-    "rs_status_1": "RS-485 1",
-    "rs_status_2": "RS-485 2"
+    "firmware_update_btn": "Update"
   },
   "ru": {
     "title": "Обзор",
@@ -287,8 +246,6 @@ const getDisplayValue = (val: string | boolean | number) => {
     "gateway_sub": "Питание и вспомогательный выход",
     "power": "Напряжение питания",
     "v": "В",
-    "active": "Активен",
-    "inactive": "Неактивен",
     "edit_settings": "Настройки",
     "uptime": "Время работы",
     "uptime_days": "- | {n} день | {n} дня | {n} дней",
@@ -300,11 +257,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_up_to_date": "актуальная",
     "firmware_check_failed": "проверка обновлений недоступна",
     "firmware_channels_unavailable": "для этой платы каналы обновлений пока не опубликованы",
-    "firmware_update_btn": "Обновить",
-    "port_1": "RS-485 · Порт 1",
-    "port_2": "RS-485 · Порт 2",
-    "rs_status_1": "RS-485 1",
-    "rs_status_2": "RS-485 2"
+    "firmware_update_btn": "Обновить"
   },
   "kk": {
     "title": "Шолу",
@@ -333,8 +286,6 @@ const getDisplayValue = (val: string | boolean | number) => {
     "gateway_sub": "Қуат және көмекші шығыс",
     "power": "Қорек кернеуі",
     "v": "В",
-    "active": "Белсенді",
-    "inactive": "Белсенді емес",
     "edit_settings": "Баптаулар",
     "uptime": "Жұмыс уақыты",
     "uptime_days": "- | {n} күн | {n} күн | {n} күн",
@@ -346,11 +297,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_up_to_date": "өзекті",
     "firmware_check_failed": "жаңарту тексерісі қолжетімсіз",
     "firmware_channels_unavailable": "бұл тақта үшін жаңарту арналары әзірге жарияланбаған",
-    "firmware_update_btn": "Жаңарту",
-    "port_1": "RS-485 · Порт 1",
-    "port_2": "RS-485 · Порт 2",
-    "rs_status_1": "RS-485 1",
-    "rs_status_2": "RS-485 2"
+    "firmware_update_btn": "Жаңарту"
   },
   "it": {
     "title": "Dashboard",
@@ -379,8 +326,6 @@ const getDisplayValue = (val: string | boolean | number) => {
     "gateway_sub": "Alimentazione e uscita ausiliaria",
     "power": "Tensione di alimentazione",
     "v": "V",
-    "active": "Attivo",
-    "inactive": "Inattivo",
     "edit_settings": "Impostazioni",
     "uptime": "Tempo di attività",
     "uptime_days": "- | {n} giorno | {n} giorni | {n} giorni",
@@ -392,11 +337,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_up_to_date": "aggiornato",
     "firmware_check_failed": "controllo aggiornamenti non disponibile",
     "firmware_channels_unavailable": "per questa scheda i canali di aggiornamento non sono ancora pubblicati",
-    "firmware_update_btn": "Aggiorna",
-    "port_1": "RS-485 · Porta 1",
-    "port_2": "RS-485 · Porta 2",
-    "rs_status_1": "RS-485 1",
-    "rs_status_2": "RS-485 2"
+    "firmware_update_btn": "Aggiorna"
   },
   "de": {
     "title": "Übersicht",
@@ -425,8 +366,6 @@ const getDisplayValue = (val: string | boolean | number) => {
     "gateway_sub": "Stromversorgung und Hilfsausgang",
     "power": "Versorgungsspannung",
     "v": "V",
-    "active": "Aktiv",
-    "inactive": "Inaktiv",
     "edit_settings": "Einstellungen",
     "uptime": "Betriebszeit",
     "uptime_days": "- | {n} Tag | {n} Tage | {n} Tage",
@@ -438,11 +377,7 @@ const getDisplayValue = (val: string | boolean | number) => {
     "firmware_up_to_date": "aktuell",
     "firmware_check_failed": "Update-Prüfung nicht verfügbar",
     "firmware_channels_unavailable": "für diese Platine sind noch keine Update-Kanäle veröffentlicht",
-    "firmware_update_btn": "Aktualisieren",
-    "port_1": "RS-485 · Port 1",
-    "port_2": "RS-485 · Port 2",
-    "rs_status_1": "RS-485 1",
-    "rs_status_2": "RS-485 2"
+    "firmware_update_btn": "Aktualisieren"
   }
 }
 </i18n>

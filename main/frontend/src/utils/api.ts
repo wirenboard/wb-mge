@@ -16,8 +16,8 @@ export class ApiError extends Error {
   }
 }
 
-// Only an explicit `false` counts as a refusal. A body without the field at all is left alone: that
-// is every GET, plus POST /ports/N/mode and POST /ports/N/cache, which answer with their new state.
+// Only an explicit `false` counts as a refusal. A body without the field at all is left alone:
+// that is every GET, and any POST that answers with its new state instead of an envelope.
 const rejectionEnvelope = (body: unknown): { error?: unknown } | null => {
   if (typeof body !== 'object' || body === null) {
     return null;
@@ -52,9 +52,8 @@ export const api = async <T>(url: string, options: Options = {}): Promise<T> => 
       // above already turns into a rejection. Two send it with plain HTTP 200, so ky resolves them
       // as if they had succeeded: POST /settings when validation or an NVS write fails
       // (settings_manager.c) and POST /wifi_scan/start when a scan is already running
-      // (wifi_scan.c). POST /settings alone has four callers — updateSettings() and three direct
-      // posts in RegisterMap.vue — so a check inside updateSettings() would fix one of them and
-      // leave the other three failing in silence.
+      // (wifi_scan.c). Keeping the check here covers every caller of every endpoint at once,
+      // instead of one wrapper at a time while the rest fail in silence.
       const rejected = rejectionEnvelope(body);
       if (rejected) {
         throw new ApiError(typeof rejected.error === 'string' ? rejected.error : undefined);
