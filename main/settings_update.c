@@ -24,6 +24,10 @@
     #define MB_STACK_CHECK_CHANGED()    mb_slave_check_settings_changed()
 #elif WB_MB_ROLE_MASTER
     #include "mb_master.h"
+    // The mixer engine rides on the master, so it exists in this role and only in it - and so
+    // does the MQTT client, which publishes that engine and nothing else.
+    #include "mixer.h"
+    #include "mqtt_client_wb.h"
     #define MB_STACK_LOCK_WAIT_FOREVER  MB_MASTER_LOCK_WAIT_FOREVER
     #define MB_STACK_LOCK_TAKE(ms)      mb_master_lock_take(ms)
     #define MB_STACK_LOCK_GIVE()        mb_master_lock_give()
@@ -43,6 +47,7 @@
 #define ETHERNET_FLAG                       BIT10
 #define WIFI_FLAG                           BIT11
 #define MODBUS_STACK_FLAG                   BIT12
+#define MQTT_FLAG                           BIT13
 
 #define HTTP_NETWORK_UPDATE_DELAY_MS        1000            // Delay before updating HTTP / Ethernet / WiFi settings
 
@@ -246,6 +251,17 @@ static void settings_update_task(void *arg)
         network_update_mdns_settings();
     }
 
+    // The MQTT client owns a socket of its own, but nothing else contends for it - a broker's
+    // port is on another host - so it is neither part of the release/acquire pass above nor
+    // ordered against it. A restart drops the connection and builds a new one from the settings
+    // that have just been written; esp-mqtt takes it from there.
+#if WB_MB_ROLE_MASTER
+    if (flags & MQTT_FLAG) {
+        ESP_LOGD(TAG, "Applying new settings to the MQTT client");
+        mqtt_client_wb_restart();
+    }
+#endif
+
     if (flags & ETHERNET_FLAG) {
         ESP_LOGD(TAG, "Applying new settings to Ethernet");
         network_update_eth_settings();
@@ -316,6 +332,14 @@ esp_err_t settings_update(void)
     update_serial_tx_disabled();
     update_io_bus_control();
 
+    // The mixer engine owns no driver and no socket, so applying its settings is nothing but
+    // telling its task to read them again on the next tick - a single atomic store. That
+    // needs neither the deferred task below nor the one-second delay it waits out, and doing
+    // it here is what keeps "nothing changed" from spawning that task on every POST.
+#if WB_MB_ROLE_MASTER
+    mixer_settings_changed();
+#endif
+
     // From here to the xTaskCreate() below is one critical section: the wait for an
     // in-flight apply and the decision to spawn a new one have to be indivisible, or two
     // callers on two tasks both pass the wait and both create a task (see spawn_mutex).
@@ -355,6 +379,13 @@ esp_err_t settings_update(void)
         ESP_LOGD(TAG, "WiFi settings were changed");
         flags |= WIFI_FLAG;
     }
+
+#if WB_MB_ROLE_MASTER
+    if (mqtt_client_wb_check_settings_changed()) {
+        ESP_LOGD(TAG, "MQTT settings were changed");
+        flags |= MQTT_FLAG;
+    }
+#endif
 
     // In the "none" role this collapses to `if (false)`, so the flag is never raised and
     // the apply above compiles out with nothing left to call.

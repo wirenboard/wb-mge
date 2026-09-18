@@ -56,6 +56,25 @@ export interface Info {
   // has nothing to read from them.
   psram_available: boolean;
   psram_size_kb: number;
+  mixer?: MixerInfo;
+}
+
+export type MixerState = 'stopped' | 'running' | 'error';
+
+// Live state of the mixer task and of the VFD it drives. Optional in Info because a build or a
+// board without the mixer sends no such object at all.
+export interface MixerInfo {
+  state: MixerState;
+  program: number; // program being run, 0..3
+  step: number; // index of the running step inside that program
+  step_left: number; // seconds left in the running step
+  speed: number; // rpm asked of the VFD
+  step_type: 0 | 1 | 2; // type of the running step: 0 pause/stopped, 1 forward, 2 reverse
+  vfd_online: boolean; // the VFD answers on RS-485
+  frequency: number; // Hz on the VFD output
+  voltage: number; // V on the DC bus
+  current: number; // A drawn by the motor
+  temperature: number; // °C on the VFD heatsink
 }
 
 export type WiFiSecuityProtocol = 'open' | 'wpa2_psk' | 'wpa3_psk';
@@ -123,6 +142,34 @@ export interface Settings {
   };
   rs485_1: RsSettings;
   rs485_2: RsSettings;
+  // Mixer: the master switch, the program the device runs (0..3), the four programs themselves
+  // (base64, see common/mixerProgram.ts) with their names, and the VFD wiring — how many shaft
+  // rpm 50 Hz gives, which RS-485 port the drive hangs on, its Modbus address, and the command
+  // code its revision uses for reverse.
+  mix_enabled: boolean;
+  mix_prog: number;
+  mix_p0: string;
+  mix_p1: string;
+  mix_p2: string;
+  mix_p3: string;
+  mix_p0_name: string;
+  mix_p1_name: string;
+  mix_p2_name: string;
+  mix_p3_name: string;
+  mix_rpm_50hz: number;
+  mix_vfd_port: 1 | 2;
+  mix_vfd_addr: number;
+  mix_rev_code: 3 | 5;
+  // MQTT: whether the device connects to a broker, where that broker is, what it logs in as, and
+  // the identifier it appears under in /devices/<id>/... . An empty mqtt_id means the firmware
+  // builds one from the model and the MAC; an empty mqtt_host means no broker is configured and
+  // nothing is started even with mqtt_enabled true.
+  mqtt_enabled: boolean;
+  mqtt_host: string;
+  mqtt_port: number;
+  mqtt_user: string;
+  mqtt_pass: string;
+  mqtt_id: string;
 }
 
 export interface WifiScanStartResponce {

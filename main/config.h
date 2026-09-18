@@ -49,6 +49,29 @@
 
 #define DEFAULT_UPDATE_CHANNEL              UPDATE_CHANNEL_STABLE_STR
 
+// Mixer. Off out of the box, with four empty programs: a device that has never been
+// configured must not start a motor by itself.
+#define DEFAULT_MIX_ENABLED         "false"
+#define DEFAULT_MIX_PROG            "0"
+#define DEFAULT_MIX_RPM_50HZ        "1500"      // shaft rpm at 50 Hz
+#define DEFAULT_MIX_VFD_PORT        "1"
+#define DEFAULT_MIX_VFD_ADDR        "1"
+#define DEFAULT_MIX_REV_CODE        "5"         // new drive revisions; old ones want 3
+#define DEFAULT_MIX_PROGRAM         ""
+#define DEFAULT_MIX_P0_NAME         "Program 1"
+#define DEFAULT_MIX_P1_NAME         "Program 2"
+#define DEFAULT_MIX_P2_NAME         "Program 3"
+#define DEFAULT_MIX_P3_NAME         "Program 4"
+
+// MQTT. Off out of the box with nothing configured: a device that has never been told about a
+// broker must not go looking for one. The empty id means "build one from the model and the MAC".
+#define DEFAULT_MQTT_ENABLED        "false"
+#define DEFAULT_MQTT_HOST           ""
+#define DEFAULT_MQTT_PORT           "1883"
+#define DEFAULT_MQTT_USER           ""
+#define DEFAULT_MQTT_PASS           ""
+#define DEFAULT_MQTT_ID             ""
+
 
 #ifdef MODEL_mge_v3
     #define DEVICE_MODEL            "WB-MGE v.3"

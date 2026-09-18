@@ -7,6 +7,13 @@
 #include "sys_info.h"
 #include "voltage_monitor.h"
 #include "config_button.h"
+#include "mb_role.h"
+
+#if WB_MB_ROLE_MASTER
+    // The mixer engine is compiled into the master role only, and so is the object it fills
+    // in below (see main/CMakeLists.txt).
+    #include "mixer.h"
+#endif
 
 #include <esp_log.h>
 #include <esp_wifi.h>
@@ -134,6 +141,54 @@ static esp_err_t info_build_rs485_json(cJSON **rs485_json)
 
     return ESP_OK;
 }
+
+#if WB_MB_ROLE_MASTER
+static const char *mixer_state_to_string(mixer_state_t state)
+{
+    switch (state) {
+    case MIXER_RUNNING:
+        return "running";
+    case MIXER_ERROR:
+        return "error";
+    case MIXER_STOPPED:
+    default:
+        return "stopped";
+    }
+}
+
+// The whole of mixer_status_t, in the units a human reads rather than the ones the drive
+// counts in: the engine keeps 0.1 Hz, 0.1 V and 0.01 A because that is what the registers
+// hold, and this is the one place they turn into Hz, V and A.
+static esp_err_t info_build_mixer_json(cJSON **mixer_json)
+{
+    if (mixer_json == NULL) {
+        return ESP_FAIL;
+    }
+
+    *mixer_json = cJSON_CreateObject();
+    if (*mixer_json == NULL) {
+        ESP_LOGE(TAG, "Failed to create mixer JSON object");
+        return ESP_FAIL;
+    }
+
+    mixer_status_t status;
+    mixer_get_status(&status);
+
+    cJSON_AddStringToObject(*mixer_json, "state", mixer_state_to_string(status.state));
+    cJSON_AddNumberToObject(*mixer_json, "program", status.program);
+    cJSON_AddNumberToObject(*mixer_json, "step", status.step);
+    cJSON_AddNumberToObject(*mixer_json, "step_left", status.step_left_s);
+    cJSON_AddNumberToObject(*mixer_json, "speed", status.speed_rpm);
+    cJSON_AddNumberToObject(*mixer_json, "step_type", status.step_type);
+    cJSON_AddBoolToObject(*mixer_json, "vfd_online", status.vfd_online);
+    cJSON_AddNumberToObject(*mixer_json, "frequency", (double)status.freq_dhz / 10.0);
+    cJSON_AddNumberToObject(*mixer_json, "voltage", (double)status.bus_voltage_dv / 10.0);
+    cJSON_AddNumberToObject(*mixer_json, "current", (double)status.current_ca / 100.0);
+    cJSON_AddNumberToObject(*mixer_json, "temperature", status.temp_c);
+
+    return ESP_OK;
+}
+#endif /* WB_MB_ROLE_MASTER */
 
 static esp_err_t info_build_uptime_json(cJSON **uptime_json)
 {
@@ -316,6 +371,15 @@ esp_err_t info_get_handler(httpd_req_t *req)
 
         cJSON_Delete(rs485_json);
     }
+
+#if WB_MB_ROLE_MASTER
+    // Mixer status. This is what the web panel polls, so it is built here and not behind a
+    // route of its own.
+    cJSON *mixer_json = NULL;
+    if (info_build_mixer_json(&mixer_json) == ESP_OK && mixer_json != NULL) {
+        cJSON_AddItemToObject(response_json, "mixer", mixer_json);
+    }
+#endif
 
     json_utils_send_response(req, NULL, response_json);
     return ESP_OK;

@@ -5,6 +5,7 @@ import { useSettings } from '@/common/settings';
 import type { LogoutResponse } from '@/common/types';
 import Dashboard from '@/views/Dashboard.vue';
 import Login from '@/views/Login.vue';
+import Mixer from '@/views/Mixer.vue';
 import Network from '@/views/Network.vue';
 import SerialPorts from '@/views/SerialPorts.vue';
 import System from '@/views/System.vue';
@@ -47,6 +48,20 @@ const router = createRouter({
       name: 'settings',
       component: SerialPorts,
       meta: { requiresAuth: true, menuName: 'serial_ports', menuGroup: 'configuration', menuIcon: 'sliders' },
+      beforeEnter: [checkSession, async () => {
+        const { fetchInfo } = useInfo();
+        const { refresh } = useSettings();
+        await Promise.all([
+          fetchInfo(),
+          refresh(),
+        ]);
+      }],
+    },
+    {
+      path: '/mixer',
+      name: 'mixer',
+      component: Mixer,
+      meta: { requiresAuth: true, menuName: 'mixer', menuGroup: 'configuration', menuIcon: 'mixer' },
       beforeEnter: [checkSession, async () => {
         const { fetchInfo } = useInfo();
         const { refresh } = useSettings();

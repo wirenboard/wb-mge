@@ -58,6 +58,35 @@
 #define KEY_MB_SLAVE_ID             "mb_slave_id"
 #define KEY_MB_TCP_PORT             "mb_tcp_port"
 
+// Mixer. The engine (main/mixer/) reads every one of these; nothing else does.
+// NVS keys are capped at 15 characters, which is what the abbreviations below are for.
+#define KEY_MIX_ENABLED             "mix_enabled"
+#define KEY_MIX_PROG                "mix_prog"
+#define KEY_MIX_RPM_50HZ            "mix_rpm_50hz"
+#define KEY_MIX_VFD_PORT            "mix_vfd_port"
+#define KEY_MIX_VFD_ADDR            "mix_vfd_addr"
+#define KEY_MIX_REV_CODE            "mix_rev_code"
+
+// MQTT. What the client in main/mqtt/ needs to reach a Wiren Board controller's broker and what
+// to call itself there. An empty mqtt_id means "the model name and the MAC", which is what a
+// device that was never named answers to.
+#define KEY_MQTT_ENABLED            "mqtt_enabled"
+#define KEY_MQTT_HOST               "mqtt_host"
+#define KEY_MQTT_PORT               "mqtt_port"
+#define KEY_MQTT_USER               "mqtt_user"
+#define KEY_MQTT_PASS               "mqtt_pass"
+#define KEY_MQTT_ID                 "mqtt_id"
+
+// The four stored programs (base64, see main/mixer/program.h) and their display names.
+#define KEY_MIX_P0                  "mix_p0"
+#define KEY_MIX_P1                  "mix_p1"
+#define KEY_MIX_P2                  "mix_p2"
+#define KEY_MIX_P3                  "mix_p3"
+#define KEY_MIX_P0_NAME             "mix_p0_name"
+#define KEY_MIX_P1_NAME             "mix_p1_name"
+#define KEY_MIX_P2_NAME             "mix_p2_name"
+#define KEY_MIX_P3_NAME             "mix_p3_name"
+
 // WiFi modes
 #define WIFI_MODE_AP_STR            "ap"
 #define WIFI_MODE_STA_STR           "sta"

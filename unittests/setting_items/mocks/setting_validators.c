@@ -153,3 +153,63 @@ bool validate_wifi_password(const char *value)
     mock_validate_wifi_password_called = true;
     return true;
 }
+
+/* Mixer validators. No "was it called" flag for these, unlike the ones above: this suite
+ * checks the settings TABLE, and no test of it asserts that a mixer value reached its
+ * validator — that is what unittests/setting_validators and unittests/mixer_program are for.
+ * They exist here only so the table links. */
+bool validate_mixer_program(const char *value)
+{
+    (void)value;
+    return true;
+}
+
+bool validate_mixer_prog_index(const char *value)
+{
+    (void)value;
+    return true;
+}
+
+bool validate_mixer_prog_name(const char *value)
+{
+    (void)value;
+    return true;
+}
+
+bool validate_mixer_rpm_50hz(const char *value)
+{
+    (void)value;
+    return true;
+}
+
+bool validate_mixer_vfd_port(const char *value)
+{
+    (void)value;
+    return true;
+}
+
+bool validate_mixer_rev_code(const char *value)
+{
+    (void)value;
+    return true;
+}
+
+/* MQTT validators, here for the same reason as the mixer ones above: the table links against
+ * them, and what they accept is checked in unittests/setting_validators. */
+bool validate_mqtt_host(const char *value)
+{
+    (void)value;
+    return true;
+}
+
+bool validate_mqtt_credential(const char *value)
+{
+    (void)value;
+    return true;
+}
+
+bool validate_mqtt_id(const char *value)
+{
+    (void)value;
+    return true;
+}

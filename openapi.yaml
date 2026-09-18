@@ -286,6 +286,8 @@ paths:
                     $ref: '#/components/schemas/RS485Status'
                   rs485_2:
                     $ref: '#/components/schemas/RS485Status'
+                  mixer:
+                    $ref: '#/components/schemas/MixerStatus'
         '400':
           description: Bad request
           content:
@@ -932,6 +934,71 @@ components:
         currently carries no fields of its own.
       properties: {}
 
+    MixerStatus:
+      type: object
+      description: >-
+        What the mixer engine is doing, in GET /info. Present only in a firmware built with
+        the Modbus master role (make MB_ROLE=master) — the engine drives the frequency
+        converter through the RTU master, so no other build has one. A client must read its
+        absence as "this build has no mixer", not as an error.
+
+        The units here are the ones a human reads: the engine keeps the drive's own 0.1 Hz,
+        0.1 V and 0.01 A, and this object converts them.
+      properties:
+        state:
+          type: string
+          enum: [stopped, running, error]
+          description: >-
+            stopped — switched off, or the active program has no steps;
+            running — walking the steps;
+            error — meant to be running, but the drive has not answered 8 exchanges in a row.
+        program:
+          type: integer
+          minimum: 0
+          maximum: 3
+          description: "Active program, the index of the mix_pN setting it came from"
+        step:
+          type: integer
+          minimum: 0
+          maximum: 10
+          description: "Current step within the program, 0-based. 0 while stopped"
+        step_left:
+          type: integer
+          minimum: 0
+          maximum: 65535
+          description: "Whole seconds left in the current step, rounded up. 0 while stopped"
+        speed:
+          type: integer
+          minimum: 0
+          maximum: 2550
+          description: "Speed of the current step in rpm. 0 while stopped or pausing"
+        step_type:
+          type: integer
+          enum: [0, 1, 2]
+          description: "Current step's type: 0 pause/stopped, 1 forward, 2 reverse"
+        vfd_online:
+          type: boolean
+          description: "False once 8 exchanges with the drive have failed in a row"
+        frequency:
+          type: number
+          format: float
+          minimum: 0.0
+          maximum: 99.0
+          description: "Frequency the drive reports, in Hz, to one decimal"
+        voltage:
+          type: number
+          format: float
+          minimum: 0.0
+          description: "DC bus voltage, in volts"
+        current:
+          type: number
+          format: float
+          minimum: 0.0
+          description: "Drive current, in amperes"
+        temperature:
+          type: integer
+          description: "Heatsink temperature in degrees Celsius. 0 on drives with no sensor"
+
     RS485Settings:
       type: object
       properties:
@@ -1098,6 +1165,136 @@ components:
           type: boolean
           default: false
           description: "Permanently disable WiFi. Always present in GET; when true the response omits the wifi sub-object"
+
+        # Mixer. These keys exist in every build, but only a master-role firmware has the
+        # engine that acts on them (see the MixerStatus schema).
+        mix_enabled:
+          type: boolean
+          default: false
+          description: >-
+            Whether the mixer runs. Stored, so a device that was mixing when the power went
+            starts mixing again when it comes back — from the first step of the program.
+        mix_prog:
+          type: integer
+          minimum: 0
+          maximum: 3
+          default: 0
+          description: "Which of the four stored programs is the active one"
+        mix_rpm_50hz:
+          type: integer
+          minimum: 1
+          maximum: 20000
+          default: 1500
+          description: >-
+            Shaft rpm at 50 Hz. Turns a step's speed into the drive's frequency setpoint:
+            hz = rpm * 50 / mix_rpm_50hz, clamped into the drive's 1.0 .. 99.0 Hz.
+        mix_vfd_port:
+          type: integer
+          minimum: 1
+          maximum: 2
+          default: 1
+          description: "Which RS-485 port the frequency converter is on"
+        mix_vfd_addr:
+          type: integer
+          minimum: 1
+          maximum: 247
+          default: 1
+          description: "Modbus unit id of the frequency converter"
+        mix_rev_code:
+          type: integer
+          enum: [3, 5]
+          default: 5
+          description: >-
+            The value register 3 takes for "reverse": 5 on new drive revisions, 3 on old
+            ones. Forward and stop are the same on every revision and are not configurable.
+        mix_p0:
+          $ref: '#/components/schemas/MixerProgram'
+        mix_p1:
+          $ref: '#/components/schemas/MixerProgram'
+        mix_p2:
+          $ref: '#/components/schemas/MixerProgram'
+        mix_p3:
+          $ref: '#/components/schemas/MixerProgram'
+        mix_p0_name:
+          $ref: '#/components/schemas/MixerProgramName'
+        mix_p1_name:
+          $ref: '#/components/schemas/MixerProgramName'
+        mix_p2_name:
+          $ref: '#/components/schemas/MixerProgramName'
+        mix_p3_name:
+          $ref: '#/components/schemas/MixerProgramName'
+
+        # MQTT. Like the mixer keys above, these exist in every build; the client that acts on
+        # them is compiled into a master-role firmware only, where it publishes the mixer on a
+        # Wiren Board controller's broker following the Wiren Board MQTT conventions.
+        mqtt_enabled:
+          type: boolean
+          default: false
+          description: >-
+            Whether the device connects to an MQTT broker. With no broker configured
+            (mqtt_host empty) nothing is started even when this is true.
+        mqtt_host:
+          type: string
+          maxLength: 63
+          pattern: '^[!-~]{0,63}$'
+          default: ""
+          description: "Broker host name or IP address. Empty means no broker is configured."
+        mqtt_port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          default: 1883
+          description: "TCP port of the broker"
+        mqtt_user:
+          type: string
+          maxLength: 63
+          pattern: '^[ -~]{0,63}$'
+          default: ""
+          description: "User name for the broker. Empty means an anonymous connection."
+        mqtt_pass:
+          type: string
+          maxLength: 63
+          pattern: '^[ -~]{0,63}$'
+          default: ""
+          description: "Password for the broker. Empty means none is sent."
+        mqtt_id:
+          type: string
+          maxLength: 63
+          pattern: '^[!-"$-*,-.0-~]{0,63}$'
+          default: ""
+          description: >-
+            The identifier this device appears under in /devices/<id>/... , and the MQTT client
+            id it connects with. It is pasted into a topic, so '/', '+', '#' and spaces are
+            refused. Empty means the firmware derives one from the model and the MAC
+            (for example WB-MGE-030405).
+
+    MixerProgram:
+      type: string
+      maxLength: 60
+      pattern: '^$|^[A-Za-z0-9+/]+={0,2}$'
+      default: ""
+      description: >-
+        One mixing program: base64 of a list of 4-byte steps, at most 11 of them (60 base64
+        characters), or the empty string for a program with no steps.
+
+        Each step is [type u8][speed u8][duration u16 big-endian]:
+        type — 0 pause (motor stopped), 1 forward, 2 reverse;
+        speed — tens of rpm (20 = 200 rpm), ignored for a pause. Zero is rejected on a forward
+          or reverse step: the engine would raise it to the drive's 1.0 Hz floor and turn the
+          shaft, so a step that stands still is a pause step;
+        duration — seconds, 1..65535. Zero is rejected.
+
+        A value that does not decode to whole, valid steps is refused by POST /settings.
+
+    MixerProgramName:
+      type: string
+      minLength: 1
+      maxLength: 63
+      description: >-
+        Display name of the program with the matching index. The limit is 63 BYTES, the whole
+        room a setting value has, and the name may be written in any alphabet: only the C0
+        control codes and DEL are refused. A name in Cyrillic therefore fits about 31
+        characters, one in Latin 63.
 
     SettingsWarning:
       type: object

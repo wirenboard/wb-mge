@@ -20,7 +20,11 @@ set(COMPONENT_SRCS "main.c"
                    "debug_log.c"
                    "wb_test.c"
                    "coverage_dump.c"
-                   "update_rs485_mio_gpio_states.c")
+                   "update_rs485_mio_gpio_states.c"
+                   # The mixing program is the data model behind the mix_pN settings and the
+                   # validator that guards them, so it is compiled in every role — unlike the
+                   # engine and the drive below, which call into the Modbus master.
+                   "mixer/program.c")
 
 # Modbus role (main/Kconfig.projbuild, Makefile MB_ROLE=slave|master|none). Exactly one of
 # the two directories is compiled, and in the "none" role neither is — which is the whole
@@ -37,7 +41,16 @@ set(COMPONENT_SRCS "main.c"
 if(CONFIG_WB_MODBUS_ROLE_MASTER)
     list(APPEND COMPONENT_SRCS
         "mb_master/mb_master.c"
-        "mb_master/user_app.c")
+        "mb_master/user_app.c"
+        # The mixer engine and the drive it talks to: both sit on mb_master_*(), which only
+        # this role links, so neither can be compiled anywhere else.
+        "mixer/vfd_t13.c"
+        "mixer/mixer.c"
+        # The MQTT side publishes that engine and drives it, so it lives and dies with it. The
+        # esp-mqtt component it uses comes with ESP-IDF and needs no REQUIRES of its own: main
+        # depends on every component in the build.
+        "mqtt/wb_device.c"
+        "mqtt/mqtt_client_wb.c")
     if(NOT CMAKE_BUILD_EARLY_EXPANSION)
         message(STATUS "Modbus role: master — RTU master on both RS-485 ports, no TCP, no slave")
     endif()
@@ -116,6 +129,13 @@ idf_component_register(SRCS ${COMPONENT_SRCS}
                             # role first (see main/mb_role.h).
                             "mb_slave"
                             "mb_master"
+                            # Headers only in the non-master roles: setting_validators.c
+                            # takes the mixer's bounds from them, and declarations link
+                            # nothing.
+                            "mixer"
+                            # Sources only in the master role, headers on the path everywhere,
+                            # for the same reason.
+                            "mqtt"
                             "indication"
                             "network"
                             "wb_app_desc"

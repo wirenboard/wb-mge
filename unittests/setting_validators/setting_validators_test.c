@@ -489,6 +489,308 @@ void test_validate_wifi_password(void)
     TEST_ASSERT_FALSE_MESSAGE(validate_wifi_password(wifi_pass_with_del), "Wi-Fi password with DEL character (0x7F) should be invalid");
 }
 
+/* The mixer program, as the settings API sees it: one base64 string holding four-byte steps.
+ * The bytes behind each constant, so a failure says what was being stored:
+ *   B64_PROG_ONE_STEP    01 14 00 78              forward, 200 rpm, 120 s
+ *   B64_PROG_ZERO_DUR    01 14 00 00              forward, 200 rpm, no time at all
+ *   B64_PROG_ZERO_SPEED  01 00 00 0A              forward at no speed, 10 s
+ *   B64_PROG_FIVE_BYTES  01 14 00 78 02           a step and a quarter
+ *   B64_PROG_TWELVE      twelve steps, one more than a setting value can hold */
+#define B64_PROG_ONE_STEP       "ARQAeA=="
+#define B64_PROG_ZERO_DUR       "ARQAAA=="
+#define B64_PROG_ZERO_SPEED     "AQAACg=="
+#define B64_PROG_FIVE_BYTES     "ARQAeAI="
+#define B64_PROG_ELEVEN         "AQEAAQECAAIBAwADAQQABAEFAAUBBgAGAQcABwEIAAgBCQAJAQoACgELAAs="
+#define B64_PROG_TWELVE         "AQEAAQECAAIBAwADAQQABAEFAAUBBgAGAQcABwEIAAgBCQAJAQoACgELAAsBDAAM"
+
+// Test validate_mqtt_id function
+// This one is the strict one of the three MQTT strings: what it accepts is pasted straight into
+// /devices/<id>/..., so a value carrying a character MQTT reads as structure would either split
+// the id across topic levels or turn this device's own topics into a wildcard.
+void test_validate_mqtt_id(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_mqtt_id function");
+    LOG_MESSAGE();
+
+    // The empty string is the factory default and means "build an id from the model and the MAC"
+    TEST_ASSERT_TRUE_MESSAGE(validate_mqtt_id(""), "An unnamed device should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_mqtt_id("WB-MGE-030405"), "The default-shaped id should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_mqtt_id("mixer_1"), "Underscores and digits should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_mqtt_id("~"), "Tilde (0x7E) is the top of the printable range");
+
+    // The three characters that mean something to a broker
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_id("wb/mge"), "'/' would split the id across topic levels");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_id("/"), "An id that is only a separator should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_id("wb+mge"), "'+' is the single-level subscription wildcard");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_id("+"), "A bare '+' should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_id("wb#mge"), "'#' is the multi-level subscription wildcard");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_id("#"), "A bare '#' would subscribe this device to everything");
+
+    // A space is printable, so it has to be refused by name rather than by the range
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_id("wb mge"), "A space in a topic should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_id(" "), "A single space should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_id("wb-mge "), "A trailing space should be invalid");
+
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_id(NULL), "NULL id should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_id("wb\tmge"), "An id with a tab should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_id("wb\nmge"), "An id with a newline should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_id("wb\x1Fmge"), "An id with a control character should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_id("wb\x7Fmge"), "An id with DEL should be invalid");
+    // UTF-8 Cyrillic: every byte of it is above 0x7E, and a topic is ASCII
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_id("\xD0\xBC\xD0\xB5\xD1\x88\xD0\xB0\xD0\xBB\xD0\xBA\xD0\xB0"),
+                              "A non-ASCII id should be invalid");
+
+    // 63 bytes is the whole room a setting value has
+    char id_63[64];
+    memset(id_63, 'a', 63);
+    id_63[63] = '\0';
+    TEST_ASSERT_TRUE_MESSAGE(validate_mqtt_id(id_63), "A 63-character id should be valid");
+
+    char id_64[65];
+    memset(id_64, 'a', 64);
+    id_64[64] = '\0';
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_id(id_64), "A 64-character id should be invalid");
+}
+
+// Test validate_mqtt_host function
+void test_validate_mqtt_host(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_mqtt_host function");
+    LOG_MESSAGE();
+
+    // The empty string is the factory default: no broker configured, and how a user removes one
+    TEST_ASSERT_TRUE_MESSAGE(validate_mqtt_host(""), "No broker configured should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_mqtt_host("192.168.1.10"), "An IP literal should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_mqtt_host("wirenboard-A1B2.local"), "A host name should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_mqtt_host("broker"), "A bare host name should be valid");
+
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_host(NULL), "NULL host should be invalid");
+    // A host name cannot contain a space, so one is a typo rather than an address
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_host("192.168.1.10 "), "A trailing space should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_host(" broker"), "A leading space should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_host("my broker"), "A space inside the host should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_host(" "), "A single space should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_host("broker\tlocal"), "A host with a tab should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_host("broker\nlocal"), "A host with a newline should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_host("broker\x7F"), "A host with DEL should be invalid");
+
+    char host_63[64];
+    memset(host_63, 'b', 63);
+    host_63[63] = '\0';
+    TEST_ASSERT_TRUE_MESSAGE(validate_mqtt_host(host_63), "A 63-character host should be valid");
+
+    char host_64[65];
+    memset(host_64, 'b', 64);
+    host_64[64] = '\0';
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_host(host_64), "A 64-character host should be invalid");
+}
+
+// Test validate_mqtt_credential function (mqtt_user / mqtt_pass)
+void test_validate_mqtt_credential(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_mqtt_credential function");
+    LOG_MESSAGE();
+
+    // Both may be empty: an anonymous connection is the common case on a controller's own bus
+    TEST_ASSERT_TRUE_MESSAGE(validate_mqtt_credential(""), "An anonymous connection should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_mqtt_credential("wirenboard"), "A plain user name should be valid");
+    // Unlike the id, a credential never reaches a topic, so a space in it is just a character
+    TEST_ASSERT_TRUE_MESSAGE(validate_mqtt_credential("pass word"), "A space should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_mqtt_credential("p@ss:w0rd/+#"), "Punctuation should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_mqtt_credential("~"), "Tilde (0x7E) should be valid");
+
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_credential(NULL), "NULL credential should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_credential("pass\tword"), "A tab should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_credential("pass\nword"), "A newline should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_credential("pass\x1Fword"), "A control character should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_credential("password\x7F"), "DEL should be invalid");
+
+    char credential_63[64];
+    memset(credential_63, 'c', 63);
+    credential_63[63] = '\0';
+    TEST_ASSERT_TRUE_MESSAGE(validate_mqtt_credential(credential_63), "63 characters should be valid");
+
+    char credential_64[65];
+    memset(credential_64, 'c', 64);
+    credential_64[64] = '\0';
+    TEST_ASSERT_FALSE_MESSAGE(validate_mqtt_credential(credential_64), "64 characters should be invalid");
+}
+
+// Test validate_mixer_prog_index function
+// Four programs are stored (mix_p0..mix_p3), so the active one is 0..3 and nothing else.
+void test_validate_mixer_prog_index(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_mixer_prog_index function");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_TRUE_MESSAGE(validate_mixer_prog_index("0"), "Program 0 should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_mixer_prog_index("3"), "Program 3 should be valid");
+
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_prog_index("4"), "There is no fifth program");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_prog_index("-1"), "A negative index should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_prog_index(""), "An empty index should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_prog_index(NULL), "NULL should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_prog_index("abc"), "A non-numeric index should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_prog_index("1.5"), "A fractional index should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_prog_index("2x"), "Trailing rubbish should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_prog_index("99999999999999999999"),
+                              "An index that overflows a long should be invalid");
+}
+
+// Test validate_mixer_prog_name function
+// A program name is a label a human reads and types, so it carries whatever alphabet that human
+// writes in - the length bound is in BYTES and a UTF-8 name simply spends more of them.
+void test_validate_mixer_prog_name(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_mixer_prog_name function");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_TRUE_MESSAGE(validate_mixer_prog_name("Program 1"), "The factory default should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_mixer_prog_name("A"), "A one-character name should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_mixer_prog_name("Slip 50/50 + water"), "Punctuation should be valid");
+    // UTF-8 Cyrillic for a slip mixing program: two bytes per character, and all of them above
+    // the ASCII range that the id and the host are held to
+    TEST_ASSERT_TRUE_MESSAGE(validate_mixer_prog_name("\xD0\xA8\xD0\xBB\xD0\xB8\xD0\xBA\xD0\xB5\xD1\x80"),
+                             "A Cyrillic name should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_mixer_prog_name("\xE5\x9C\x9F"), "A three-byte UTF-8 name should be valid");
+
+    // A nameless program cannot be told from another one in the web UI or in the MQTT selector
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_prog_name(""), "An empty name should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_prog_name(NULL), "NULL should be invalid");
+
+    // Control codes would break the JSON of GET /settings and mean nothing on a button
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_prog_name("Slip\tmix"), "A tab should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_prog_name("Slip\nmix"), "A newline should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_prog_name("Slip\rmix"), "A carriage return should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_prog_name("Slip\x1Fmix"), "A control character should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_prog_name("Slip\x7F"), "DEL should be invalid");
+
+    // 63 bytes is the whole room a setting value has, in either alphabet
+    char name_63[64];
+    memset(name_63, 'n', 63);
+    name_63[63] = '\0';
+    TEST_ASSERT_TRUE_MESSAGE(validate_mixer_prog_name(name_63), "A 63-byte name should be valid");
+
+    char name_64[65];
+    memset(name_64, 'n', 64);
+    name_64[64] = '\0';
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_prog_name(name_64), "A 64-byte name should be invalid");
+
+    // The same bound as the one above, spent on 31 two-byte characters plus one ASCII one
+    char cyrillic_63[64];
+    for (int i = 0; i < 62; i += 2) {
+        cyrillic_63[i] = (char)0xD0;
+        cyrillic_63[i + 1] = (char)0xA8;
+    }
+    cyrillic_63[62] = 'x';
+    cyrillic_63[63] = '\0';
+    TEST_ASSERT_TRUE_MESSAGE(validate_mixer_prog_name(cyrillic_63),
+                             "31 Cyrillic characters and one more byte should still fit");
+}
+
+// Test validate_mixer_rpm_50hz function
+// The gearbox ratio: how many rpm the shaft does at 50 Hz. It is the divisor that turns a step's
+// speed into a frequency, so zero is not a ratio.
+void test_validate_mixer_rpm_50hz(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_mixer_rpm_50hz function");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_TRUE_MESSAGE(validate_mixer_rpm_50hz("1"), "One rpm at 50 Hz is the lower bound");
+    TEST_ASSERT_TRUE_MESSAGE(validate_mixer_rpm_50hz("1500"), "The factory default should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_mixer_rpm_50hz("20000"), "20000 rpm is the upper bound");
+
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_rpm_50hz("0"), "Zero would be a division by zero");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_rpm_50hz("-1500"), "A shaft does not turn backwards here");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_rpm_50hz("20001"), "Above the upper bound should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_rpm_50hz(""), "An empty value should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_rpm_50hz(NULL), "NULL should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_rpm_50hz("fast"), "A non-numeric value should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_rpm_50hz("1500rpm"), "Trailing rubbish should be invalid");
+}
+
+// Test validate_mixer_vfd_port function
+// The setting numbers the RS-485 ports 1..2 the way the case does; the engine subtracts one.
+void test_validate_mixer_vfd_port(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_mixer_vfd_port function");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_TRUE_MESSAGE(validate_mixer_vfd_port("1"), "Port 1 should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_mixer_vfd_port("2"), "Port 2 should be valid");
+
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_vfd_port("0"),
+                              "The ports are numbered from one, so 0 is not a port");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_vfd_port("3"), "The device has two RS-485 ports");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_vfd_port("-1"), "A negative port should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_vfd_port(""), "An empty port should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_vfd_port(NULL), "NULL should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_vfd_port("1a"), "Trailing rubbish should be invalid");
+}
+
+// Test validate_mixer_rev_code function
+// Reverse is command 5 on new drive revisions and 3 on old ones. Nothing else is a reverse, so
+// the range is those two values and NOT 3..5 - 4 is not a command the drive knows.
+void test_validate_mixer_rev_code(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_mixer_rev_code function");
+    LOG_MESSAGE();
+
+    TEST_ASSERT_TRUE_MESSAGE(validate_mixer_rev_code("3"), "Old revisions want 3");
+    TEST_ASSERT_TRUE_MESSAGE(validate_mixer_rev_code("5"), "New ones want 5");
+
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_rev_code("4"), "4 is between the two and is neither");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_rev_code("1"), "1 is the forward command, not reverse");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_rev_code("2"), "2 is the stop command, not reverse");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_rev_code("0"), "Zero is not a command");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_rev_code(""), "An empty code should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_rev_code(NULL), "NULL should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_rev_code("rev"), "A non-numeric code should be invalid");
+}
+
+// Test validate_mixer_program function
+// The whole mixing program travels as one base64 string, which is the largest piece of
+// untrusted input the settings API takes: everything this accepts is decoded by the engine
+// straight into steps the drive is then run through.
+void test_validate_mixer_program(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_mixer_program function");
+    LOG_MESSAGE();
+
+    // The empty string is the factory default and how a user clears a program
+    TEST_ASSERT_TRUE_MESSAGE(validate_mixer_program(""), "An empty program should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_mixer_program(B64_PROG_ONE_STEP), "One step should be valid");
+    TEST_ASSERT_TRUE_MESSAGE(validate_mixer_program(B64_PROG_ELEVEN),
+                             "Eleven steps are what a setting value holds");
+
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_program(NULL), "NULL should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_program("!!!!"),
+                              "Characters outside the base64 alphabet should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_program("ARQAeA="),
+                              "Truncated base64 padding should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_program("ARQAeA"),
+                              "A length that is not a whole base64 quantum should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_program(B64_PROG_FIVE_BYTES),
+                              "Five bytes is not a whole number of four-byte steps");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_program(B64_PROG_TWELVE),
+                              "A twelfth step does not fit a setting value");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_program(B64_PROG_ZERO_DUR),
+                              "A step of zero seconds should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_program(B64_PROG_ZERO_SPEED),
+                              "A motion step at zero rpm should be invalid");
+    TEST_ASSERT_FALSE_MESSAGE(validate_mixer_program("AxQACg=="),
+                              "Step type 3 does not exist and should be invalid");
+}
+
 // Table-wide invariant: every entry of the settings table must be accepted by the real
 // validator bound to it. A key whose own default its own validator rejects is unusable
 // over the settings API — the device writes the value on first boot, exports it via
@@ -583,6 +885,16 @@ int main(void)
     RUN_TEST(test_validate_login);
     RUN_TEST(test_validate_password);
     RUN_TEST(test_validate_wifi_password);
+
+    RUN_TEST(test_validate_mqtt_id);
+    RUN_TEST(test_validate_mqtt_host);
+    RUN_TEST(test_validate_mqtt_credential);
+    RUN_TEST(test_validate_mixer_prog_index);
+    RUN_TEST(test_validate_mixer_prog_name);
+    RUN_TEST(test_validate_mixer_rpm_50hz);
+    RUN_TEST(test_validate_mixer_vfd_port);
+    RUN_TEST(test_validate_mixer_rev_code);
+    RUN_TEST(test_validate_mixer_program);
 
     RUN_TEST(test_setting_defaults_pass_their_validators);
 

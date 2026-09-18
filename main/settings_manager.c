@@ -42,6 +42,31 @@ static const setting_mapping_t top_level_mappings[] = {
     {"io_bus", KEY_IO_BUS_ENABLED},
     {"vout", KEY_485_VOUT},
     {"update_channel", KEY_UPDATE_CHANNEL},
+
+    // Mixer. Flat top-level keys, named after the NVS keys themselves, the way io_bus and
+    // vout are: the web panel and the MQTT side address them individually.
+    {"mix_enabled", KEY_MIX_ENABLED},
+    {"mix_prog", KEY_MIX_PROG},
+    {"mix_rpm_50hz", KEY_MIX_RPM_50HZ},
+    {"mix_vfd_port", KEY_MIX_VFD_PORT},
+    {"mix_vfd_addr", KEY_MIX_VFD_ADDR},
+    {"mix_rev_code", KEY_MIX_REV_CODE},
+    {"mix_p0", KEY_MIX_P0},
+    {"mix_p1", KEY_MIX_P1},
+    {"mix_p2", KEY_MIX_P2},
+    {"mix_p3", KEY_MIX_P3},
+    {"mix_p0_name", KEY_MIX_P0_NAME},
+    {"mix_p1_name", KEY_MIX_P1_NAME},
+    {"mix_p2_name", KEY_MIX_P2_NAME},
+    {"mix_p3_name", KEY_MIX_P3_NAME},
+
+    // MQTT, flat top-level keys named after the NVS keys, exactly like the mixer ones above.
+    {"mqtt_enabled", KEY_MQTT_ENABLED},
+    {"mqtt_host", KEY_MQTT_HOST},
+    {"mqtt_port", KEY_MQTT_PORT},
+    {"mqtt_user", KEY_MQTT_USER},
+    {"mqtt_pass", KEY_MQTT_PASS},
+    {"mqtt_id", KEY_MQTT_ID},
 };
 
 static const setting_mapping_t wifi_mappings[] = {

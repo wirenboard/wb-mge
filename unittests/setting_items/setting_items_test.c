@@ -77,6 +77,29 @@ const mock_setting_item_t expected_items[] = {
     {"485_tx_dis_2", "false", SETTING_ITEM_TYPE_BOOL},
 
     {"upd_channel", "stable", SETTING_ITEM_TYPE_STRING},
+
+    {"mix_enabled", "false", SETTING_ITEM_TYPE_BOOL},
+    {"mix_prog", "0", SETTING_ITEM_TYPE_INT},
+    {"mix_rpm_50hz", "1500", SETTING_ITEM_TYPE_INT},
+    {"mix_vfd_port", "1", SETTING_ITEM_TYPE_INT},
+    {"mix_vfd_addr", "1", SETTING_ITEM_TYPE_INT},
+    {"mix_rev_code", "5", SETTING_ITEM_TYPE_INT},
+
+    {"mix_p0", "", SETTING_ITEM_TYPE_STRING},
+    {"mix_p1", "", SETTING_ITEM_TYPE_STRING},
+    {"mix_p2", "", SETTING_ITEM_TYPE_STRING},
+    {"mix_p3", "", SETTING_ITEM_TYPE_STRING},
+    {"mix_p0_name", "Program 1", SETTING_ITEM_TYPE_STRING},
+    {"mix_p1_name", "Program 2", SETTING_ITEM_TYPE_STRING},
+    {"mix_p2_name", "Program 3", SETTING_ITEM_TYPE_STRING},
+    {"mix_p3_name", "Program 4", SETTING_ITEM_TYPE_STRING},
+
+    {"mqtt_enabled", "false", SETTING_ITEM_TYPE_BOOL},
+    {"mqtt_host", "", SETTING_ITEM_TYPE_STRING},
+    {"mqtt_port", "1883", SETTING_ITEM_TYPE_INT},
+    {"mqtt_user", "", SETTING_ITEM_TYPE_STRING},
+    {"mqtt_pass", "", SETTING_ITEM_TYPE_STRING},
+    {"mqtt_id", "", SETTING_ITEM_TYPE_STRING},
 };
 
 #define SETTING_ITEMS_COUNT         (ARRAY_SIZE(expected_items))

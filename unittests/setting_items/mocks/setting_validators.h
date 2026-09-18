@@ -37,3 +37,14 @@ bool validate_bool(const char *value);
 bool validate_login(const char *value);
 bool validate_password(const char *value);
 bool validate_wifi_password(const char *value);
+
+/* Mixer and MQTT validators, stubbed to accept anything — see the note in the mock's .c file. */
+bool validate_mqtt_host(const char *value);
+bool validate_mqtt_credential(const char *value);
+bool validate_mqtt_id(const char *value);
+bool validate_mixer_program(const char *value);
+bool validate_mixer_prog_index(const char *value);
+bool validate_mixer_prog_name(const char *value);
+bool validate_mixer_rpm_50hz(const char *value);
+bool validate_mixer_vfd_port(const char *value);
+bool validate_mixer_rev_code(const char *value);

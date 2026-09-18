@@ -10,6 +10,7 @@ import type { Settings, WiFiNetwork, WiFiSecuityProtocol } from '@/common/types'
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
+import InputNumber from '@/components/InputNumber.vue';
 import IpInput from '@/components/IpInput.vue';
 import PasswordInput from '@/components/PasswordInput.vue';
 import Switch from '@/components/Switch.vue';
@@ -81,6 +82,19 @@ const updateWifiSettings = async () => {
 const changeWifi = ({ ssid }: WiFiNetwork) => {
   data.value!.wifi!.sta_ssid = ssid;
 };
+
+// Posts the six mqtt_* keys and nothing else, the way every other card on this page posts only
+// its own group.
+const updateMqttSettings = () => updateSettings({
+  mqtt_enabled: data.value!.mqtt_enabled,
+  mqtt_host: data.value!.mqtt_host,
+  mqtt_port: data.value!.mqtt_port,
+  mqtt_user: data.value!.mqtt_user,
+  mqtt_pass: data.value!.mqtt_pass,
+  mqtt_id: data.value!.mqtt_id,
+});
+
+const mqttFields = ['mqtt_enabled', 'mqtt_host', 'mqtt_port', 'mqtt_user', 'mqtt_pass', 'mqtt_id'];
 
 const addNetwork = () => {
   const val = { ssid: searhcValue.value };
@@ -313,6 +327,86 @@ const addNetwork = () => {
           </form>
         </section>
         </template>
+
+        <section class="card">
+          <form @submit.prevent="updateMqttSettings">
+            <div class="card-header">
+              <div class="title">{{ t('mqtt') }}</div>
+              <Button
+                type="submit"
+                :is-loading="isLoading && isChanged(mqttFields)"
+                :disabled="isLoading || !isChanged(mqttFields)"
+              >
+                {{ t('save') }}
+              </Button>
+            </div>
+            <div class="card-body">
+              <div class="field">
+                <label for="mqtt_enabled">{{ t('mqtt_enable') }}</label>
+                <div class="network-switchEnd"><Switch id="mqtt_enabled" v-model="data.mqtt_enabled" /></div>
+              </div>
+              <div class="field">
+                <label for="mqtt_host">{{ t('mqtt_host') }}</label>
+                <input
+                  id="mqtt_host"
+                  v-model="data.mqtt_host"
+                  type="text"
+                  name="mqtt_host"
+                  class="mono"
+                  pattern="^[\x21-\x7E]{0,63}$"
+                  maxlength="63"
+                  :placeholder="t('mqtt_host_placeholder')"
+                  @input="(ev) => onCustomValidation(ev, t('wrong_mqtt_host_pattern'))"
+                />
+              </div>
+              <div class="field">
+                <label for="mqtt_port">{{ t('mqtt_port') }}</label>
+                <InputNumber id="mqtt_port" v-model="data.mqtt_port" name="mqtt_port" class="mono" min="1" max="65535" required />
+              </div>
+              <div class="field">
+                <label for="mqtt_user">{{ t('mqtt_user') }}</label>
+                <input
+                  id="mqtt_user"
+                  v-model="data.mqtt_user"
+                  type="text"
+                  name="mqtt_user"
+                  autocomplete="off"
+                  pattern="^[\x20-\x7E]{0,63}$"
+                  maxlength="63"
+                  @input="(ev) => onCustomValidation(ev, t('wrong_mqtt_credential_pattern'))"
+                />
+              </div>
+              <div class="field">
+                <label for="mqtt_pass">{{ t('mqtt_pass') }}</label>
+                <PasswordInput
+                  id="mqtt_pass"
+                  v-model="data.mqtt_pass"
+                  name="mqtt_pass"
+                  autocomplete="new-password"
+                  pattern="^[\x20-\x7E]{0,63}$"
+                  maxlength="63"
+                  @input="(ev: Event) => onCustomValidation(ev, t('wrong_mqtt_credential_pattern'))"
+                />
+              </div>
+              <!-- The id is pasted straight into /devices/<id>/... , so the characters MQTT
+                   gives a meaning of their own are refused here as well as by the firmware. -->
+              <div class="field">
+                <label for="mqtt_id">{{ t('mqtt_id') }}</label>
+                <input
+                  id="mqtt_id"
+                  v-model="data.mqtt_id"
+                  type="text"
+                  name="mqtt_id"
+                  class="mono"
+                  pattern="^[\x21-\x22\x24-\x2A\x2C-\x2E\x30-\x7E]{0,63}$"
+                  maxlength="63"
+                  :placeholder="t('mqtt_id_placeholder')"
+                  @input="(ev) => onCustomValidation(ev, t('wrong_mqtt_id_pattern'))"
+                />
+              </div>
+            </div>
+          </form>
+        </section>
       </div>
     </div>
   </Layout>
@@ -375,7 +469,20 @@ const addNetwork = () => {
     "add_ssid": "Add ssid",
     "reload_networks": "Reload networks",
     "wrong_ssid_pattern": "Enter a string of 1–31 characters: Latin letters, numbers, spaces, and special characters",
-    "wrong_pass_pattern": "Enter a string of 8–63 characters: Latin letters, numbers, spaces, and special characters"
+    "wrong_pass_pattern": "Enter a string of 8–63 characters: Latin letters, numbers, spaces, and special characters",
+
+    "mqtt": "MQTT",
+    "mqtt_enable": "Enabled",
+    "mqtt_host": "Broker address",
+    "mqtt_host_placeholder": "Host name or IP address",
+    "mqtt_port": "Port",
+    "mqtt_user": "Username",
+    "mqtt_pass": "Password",
+    "mqtt_id": "Device ID",
+    "mqtt_id_placeholder": "Model and MAC",
+    "wrong_mqtt_host_pattern": "Enter up to 63 characters without spaces: Latin letters, numbers and special characters",
+    "wrong_mqtt_credential_pattern": "Enter up to 63 characters: Latin letters, numbers, spaces, and special characters",
+    "wrong_mqtt_id_pattern": "Enter up to 63 characters without spaces, / + and #: the ID becomes part of the topic"
   },
   "ru": {
     "title": "Сеть",
@@ -396,7 +503,20 @@ const addNetwork = () => {
     "add_ssid": "Добавить ssid",
     "reload_networks": "Обновить список сетей",
     "wrong_ssid_pattern": "Введите строку из 1–31 символов: латиница, цифры, пробелы и спецсимволы",
-    "wrong_pass_pattern": "Введите строку из 8–63 символов: латиница, цифры, пробелы и спецсимволы"
+    "wrong_pass_pattern": "Введите строку из 8–63 символов: латиница, цифры, пробелы и спецсимволы",
+
+    "mqtt": "MQTT",
+    "mqtt_enable": "Включить",
+    "mqtt_host": "Адрес брокера",
+    "mqtt_host_placeholder": "Имя хоста или IP-адрес",
+    "mqtt_port": "Порт",
+    "mqtt_user": "Логин",
+    "mqtt_pass": "Пароль",
+    "mqtt_id": "Идентификатор устройства",
+    "mqtt_id_placeholder": "Модель и MAC",
+    "wrong_mqtt_host_pattern": "Введите до 63 символов без пробелов: латиница, цифры и спецсимволы",
+    "wrong_mqtt_credential_pattern": "Введите до 63 символов: латиница, цифры, пробелы и спецсимволы",
+    "wrong_mqtt_id_pattern": "Введите до 63 символов без пробелов, / + и #: идентификатор попадёт в топик"
   },
   "kk": {
     "title": "Желі",
@@ -417,7 +537,20 @@ const addNetwork = () => {
     "add_ssid": "SSID қосу",
     "reload_networks": "Желілер тізімін жаңарту",
     "wrong_ssid_pattern": "1–31 таңба енгізіңіз: латын әріптері, сандар, бос орындар және арнайы таңбалар",
-    "wrong_pass_pattern": "8–63 таңба енгізіңіз: латын әріптері, сандар, бос орындар және арнайы таңбалар"
+    "wrong_pass_pattern": "8–63 таңба енгізіңіз: латын әріптері, сандар, бос орындар және арнайы таңбалар",
+
+    "mqtt": "MQTT",
+    "mqtt_enable": "Қосу",
+    "mqtt_host": "Брокер мекенжайы",
+    "mqtt_host_placeholder": "Хост атауы немесе IP-мекенжай",
+    "mqtt_port": "Порт",
+    "mqtt_user": "Логин",
+    "mqtt_pass": "Құпия сөз",
+    "mqtt_id": "Құрылғы идентификаторы",
+    "mqtt_id_placeholder": "Модель және MAC",
+    "wrong_mqtt_host_pattern": "Бос орынсыз 63 таңбаға дейін енгізіңіз: латын әріптері, сандар және арнайы таңбалар",
+    "wrong_mqtt_credential_pattern": "63 таңбаға дейін енгізіңіз: латын әріптері, сандар, бос орындар және арнайы таңбалар",
+    "wrong_mqtt_id_pattern": "Бос орынсыз, / + және # белгілерінсіз 63 таңбаға дейін енгізіңіз: идентификатор топикке кіреді"
   },
   "it": {
     "title": "Rete",
@@ -438,7 +571,20 @@ const addNetwork = () => {
     "add_ssid": "Aggiungi SSID",
     "reload_networks": "Ricarica reti",
     "wrong_ssid_pattern": "Inserisci una stringa di 1–31 caratteri: lettere latine, numeri, spazi e caratteri speciali",
-    "wrong_pass_pattern": "Inserisci una stringa di 8–63 caratteri: lettere latine, numeri, spazi e caratteri speciali"
+    "wrong_pass_pattern": "Inserisci una stringa di 8–63 caratteri: lettere latine, numeri, spazi e caratteri speciali",
+
+    "mqtt": "MQTT",
+    "mqtt_enable": "Abilitato",
+    "mqtt_host": "Indirizzo del broker",
+    "mqtt_host_placeholder": "Nome host o indirizzo IP",
+    "mqtt_port": "Porta",
+    "mqtt_user": "Nome utente",
+    "mqtt_pass": "Password",
+    "mqtt_id": "ID del dispositivo",
+    "mqtt_id_placeholder": "Modello e MAC",
+    "wrong_mqtt_host_pattern": "Inserisci fino a 63 caratteri senza spazi: lettere latine, numeri e caratteri speciali",
+    "wrong_mqtt_credential_pattern": "Inserisci fino a 63 caratteri: lettere latine, numeri, spazi e caratteri speciali",
+    "wrong_mqtt_id_pattern": "Inserisci fino a 63 caratteri senza spazi, / + e #: l'ID entra a far parte del topic"
   },
   "de": {
     "title": "Netzwerk",
@@ -459,7 +605,20 @@ const addNetwork = () => {
     "add_ssid": "SSID hinzufügen",
     "reload_networks": "Netzwerke neu laden",
     "wrong_ssid_pattern": "Geben Sie eine Zeichenfolge mit 1–31 Zeichen ein: lateinische Buchstaben, Zahlen, Leerzeichen und Sonderzeichen",
-    "wrong_pass_pattern": "Geben Sie eine Zeichenfolge mit 8–63 Zeichen ein: lateinische Buchstaben, Zahlen, Leerzeichen und Sonderzeichen"
+    "wrong_pass_pattern": "Geben Sie eine Zeichenfolge mit 8–63 Zeichen ein: lateinische Buchstaben, Zahlen, Leerzeichen und Sonderzeichen",
+
+    "mqtt": "MQTT",
+    "mqtt_enable": "Aktiviert",
+    "mqtt_host": "Broker-Adresse",
+    "mqtt_host_placeholder": "Hostname oder IP-Adresse",
+    "mqtt_port": "Port",
+    "mqtt_user": "Benutzername",
+    "mqtt_pass": "Passwort",
+    "mqtt_id": "Geräte-ID",
+    "mqtt_id_placeholder": "Modell und MAC",
+    "wrong_mqtt_host_pattern": "Geben Sie bis zu 63 Zeichen ohne Leerzeichen ein: lateinische Buchstaben, Zahlen und Sonderzeichen",
+    "wrong_mqtt_credential_pattern": "Geben Sie bis zu 63 Zeichen ein: lateinische Buchstaben, Zahlen, Leerzeichen und Sonderzeichen",
+    "wrong_mqtt_id_pattern": "Geben Sie bis zu 63 Zeichen ohne Leerzeichen, / + und # ein: die ID wird Teil des Topics"
   }
 }
 </i18n>

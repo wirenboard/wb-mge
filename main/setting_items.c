@@ -234,6 +234,37 @@ static const setting_item_t setting_items[] = {
 
     // Firmware update channel: read by the web UI to pick a version from the release manifest
     {KEY_UPDATE_CHANNEL, DEFAULT_UPDATE_CHANNEL, validate_update_channel, SETTING_ITEM_TYPE_STRING},
+
+    // Mixer: what the engine in main/mixer/ runs, and where the frequency converter is.
+    // mix_enabled is written by the engine itself (mixer_set_enabled), which is what makes a
+    // running mixer come back after a power cut.
+    {KEY_MIX_ENABLED, DEFAULT_MIX_ENABLED, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_MIX_PROG, DEFAULT_MIX_PROG, validate_mixer_prog_index, SETTING_ITEM_TYPE_INT},
+    {KEY_MIX_RPM_50HZ, DEFAULT_MIX_RPM_50HZ, validate_mixer_rpm_50hz, SETTING_ITEM_TYPE_INT},
+    {KEY_MIX_VFD_PORT, DEFAULT_MIX_VFD_PORT, validate_mixer_vfd_port, SETTING_ITEM_TYPE_INT},
+    // The drive's unit id is a Modbus unit id like any other, so it takes the same 1..247.
+    {KEY_MIX_VFD_ADDR, DEFAULT_MIX_VFD_ADDR, validate_slave_id, SETTING_ITEM_TYPE_INT},
+    {KEY_MIX_REV_CODE, DEFAULT_MIX_REV_CODE, validate_mixer_rev_code, SETTING_ITEM_TYPE_INT},
+
+    {KEY_MIX_P0, DEFAULT_MIX_PROGRAM, validate_mixer_program, SETTING_ITEM_TYPE_STRING},
+    {KEY_MIX_P1, DEFAULT_MIX_PROGRAM, validate_mixer_program, SETTING_ITEM_TYPE_STRING},
+    {KEY_MIX_P2, DEFAULT_MIX_PROGRAM, validate_mixer_program, SETTING_ITEM_TYPE_STRING},
+    {KEY_MIX_P3, DEFAULT_MIX_PROGRAM, validate_mixer_program, SETTING_ITEM_TYPE_STRING},
+    {KEY_MIX_P0_NAME, DEFAULT_MIX_P0_NAME, validate_mixer_prog_name, SETTING_ITEM_TYPE_STRING},
+    {KEY_MIX_P1_NAME, DEFAULT_MIX_P1_NAME, validate_mixer_prog_name, SETTING_ITEM_TYPE_STRING},
+    {KEY_MIX_P2_NAME, DEFAULT_MIX_P2_NAME, validate_mixer_prog_name, SETTING_ITEM_TYPE_STRING},
+    {KEY_MIX_P3_NAME, DEFAULT_MIX_P3_NAME, validate_mixer_prog_name, SETTING_ITEM_TYPE_STRING},
+
+    // MQTT: where the broker is and what this device calls itself on it. The client that reads
+    // them lives in main/mqtt/ and, like the mixer engine, exists in the master role only - the
+    // settings themselves are stored in every build, so a configuration exported from one device
+    // imports into another whatever role either was built with.
+    {KEY_MQTT_ENABLED, DEFAULT_MQTT_ENABLED, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_MQTT_HOST, DEFAULT_MQTT_HOST, validate_mqtt_host, SETTING_ITEM_TYPE_STRING},
+    {KEY_MQTT_PORT, DEFAULT_MQTT_PORT, validate_port, SETTING_ITEM_TYPE_INT},
+    {KEY_MQTT_USER, DEFAULT_MQTT_USER, validate_mqtt_credential, SETTING_ITEM_TYPE_STRING},
+    {KEY_MQTT_PASS, DEFAULT_MQTT_PASS, validate_mqtt_credential, SETTING_ITEM_TYPE_STRING},
+    {KEY_MQTT_ID, DEFAULT_MQTT_ID, validate_mqtt_id, SETTING_ITEM_TYPE_STRING},
 };
 
 static const setting_item_t *find_setting_item(const char *key)

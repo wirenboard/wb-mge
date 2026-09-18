@@ -22,6 +22,8 @@
 #elif WB_MB_ROLE_MASTER
     #include "mb_master.h"
     #include "user_app.h"
+    // The MQTT client publishes the mixer engine, which is master-only, so it is too.
+    #include "mqtt_client_wb.h"
 #endif
 
 // Hardware-logic headers: needed by both builds. In QEMU these resolve to the
@@ -214,6 +216,18 @@ void app_main(void)
     #endif
 
     ESP_ERROR_CHECK(network_init());
+
+    // Right after the network and before the web server, and with no wait for a link: esp-mqtt
+    // has its own reconnect loop, so a client started before there is any network simply keeps
+    // trying until there is one. Deliberately NOT ESP_ERROR_CHECK, for the same reason as the
+    // web server below: a broker that cannot be reached must not take the device down with it.
+    #if WB_MB_ROLE_MASTER
+        esp_err_t mqtt_ret = mqtt_client_wb_start();
+        if (mqtt_ret != ESP_OK) {
+            ESP_LOGE(TAG, "mqtt_client_wb_start failed: %s - continuing without MQTT",
+                     esp_err_to_name(mqtt_ret));
+        }
+    #endif
 
     // Deliberately NOT ESP_ERROR_CHECK: a web server that will not start must not abort the boot.
     // An abort() here panics and reboots, and every cause that can make the start fail — too

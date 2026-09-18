@@ -1,5 +1,11 @@
 #include "setting_validators.h"
 #include "setting_items.h"
+#include "config.h"
+// Headers only: the mixer bounds below are the engine's and the drive's, so they are taken
+// from where they are defined rather than copied as bare numbers.
+#include "mixer.h"
+#include "program.h"
+#include "vfd_t13.h"
 
 #include <stddef.h>
 #include <string.h>
@@ -12,6 +18,29 @@
 #define MAX_WIFI_PASS_LEN                   63
 #define BAUDRATE_MIN                        1200
 #define BAUDRATE_MAX                        115200
+// In bytes, and the whole room a setting value has (SETTING_ITEM_MAX_STR_LEN - 1). A name in
+// Cyrillic costs two bytes per character, so this is ~31 characters there and 63 in Latin.
+#define MAX_MIXER_NAME_LEN                  63
+// The whole room a setting value has, as above. The device id is held to the same bound because
+// it IS a setting value, and the topic buffers it goes into are sized for it.
+#define MAX_MQTT_STR_LEN                    63
+#define MAX_MQTT_ID_LEN                     63
+
+// Every mixer setting but the program itself is a small bounded integer, so they share one
+// helper instead of four copies of the same strtol.
+static bool validate_int_range(const char *value, long min, long max)
+{
+    if (!value) {
+        return false;
+    }
+
+    char *endptr;
+    long parsed = strtol(value, &endptr, 10);
+    if (endptr == value) {
+        return false;
+    }
+    return ((*endptr == '\0') && (parsed >= min) && (parsed <= max));
+}
 
 // Validation functions
 bool validate_hostname(const char *value)
@@ -416,4 +445,130 @@ bool validate_wifi_password(const char *value)
         }
     }
     return true;
+}
+
+// Mixer program: the base64 step list itself, checked by the model that will have to decode
+// it (main/mixer/program.c). The empty string is a program with no steps, which is both the
+// factory default and how a user clears one, so it is accepted here.
+bool validate_mixer_program(const char *value)
+{
+    return mixer_program_is_valid(value);
+}
+
+// Which of the four stored programs is the active one.
+bool validate_mixer_prog_index(const char *value)
+{
+    return validate_int_range(value, 0, MIXER_PROGRAM_COUNT - 1);
+}
+
+// Display name of a stored program: any printable text, never empty - a nameless program
+// cannot be told from another one in the web UI. What "printable" excludes is spelled out
+// in the loop below.
+bool validate_mixer_prog_name(const char *value)
+{
+    if (!value) {
+        return false;
+    }
+
+    size_t len = strlen(value);
+    if ((len == 0) || (len > MAX_MIXER_NAME_LEN)) {
+        return false;
+    }
+
+    // A program name is a label a human reads, so it carries whatever alphabet that human
+    // writes in: the length above is in BYTES, and a UTF-8 name simply spends more of them
+    // per character. Only the C0 control codes and DEL are refused - they would break the
+    // JSON of GET /settings and mean nothing on a button.
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)value[i];
+        if ((c < ' ') || (c == 0x7F)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Shaft rpm at 50 Hz: the gearbox ratio, as the number the user can actually measure. It is
+// the divisor that turns a step's speed into a frequency, so zero is not allowed.
+bool validate_mixer_rpm_50hz(const char *value)
+{
+    return validate_int_range(value, 1, 20000);
+}
+
+// Which RS-485 port the drive hangs off, numbered 1..2 the way the case is.
+bool validate_mixer_vfd_port(const char *value)
+{
+    return validate_int_range(value, 1, RS485_PORTS_COUNT);
+}
+
+// The reverse command code, which differs between drive revisions: 5 on new ones, 3 on old
+// ones. Nothing else is a reverse, so the range is these two values and not 3..5.
+bool validate_mixer_rev_code(const char *value)
+{
+    return (validate_int_range(value, VFD_T13_CMD_REVERSE_OLD, VFD_T13_CMD_REVERSE_OLD) ||
+            validate_int_range(value, VFD_T13_CMD_REVERSE_NEW, VFD_T13_CMD_REVERSE_NEW));
+}
+
+// Printable ASCII of a bounded length, the empty string included. Shared by the three MQTT
+// string settings, which differ only in what they additionally refuse.
+static bool validate_printable_or_empty(const char *value, size_t max_len)
+{
+    if (!value) {
+        return false;
+    }
+
+    size_t len = strlen(value);
+    if (len == 0) {
+        return true;
+    }
+    if (len > max_len) {
+        return false;
+    }
+
+    for (size_t i = 0; i < len; i++) {
+        char c = value[i];
+        if ((c < ' ') || (c > '~')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The broker's address: a host name or an IP literal, or nothing at all - "no broker configured"
+// is the factory state and the way a user removes one. Spaces are refused because a host name
+// cannot contain one and an address that does is a typo, not a host.
+bool validate_mqtt_host(const char *value)
+{
+    if (!validate_printable_or_empty(value, MAX_MQTT_STR_LEN)) {
+        return false;
+    }
+    return (strchr(value, ' ') == NULL);
+}
+
+// The user name and the password. Both may be empty: a broker that takes anonymous connections
+// is the common case on a controller's own bus.
+bool validate_mqtt_credential(const char *value)
+{
+    return validate_printable_or_empty(value, MAX_MQTT_STR_LEN);
+}
+
+// The name this device appears under in /devices/<id>/... . It is pasted into a topic, so the
+// characters MQTT gives a meaning of their own are refused rather than escaped: '/' would split
+// the id across topic levels, and '+' and '#' are the wildcards a subscription is built from.
+// The empty string is allowed and means "derive one from the model and the MAC".
+bool validate_mqtt_id(const char *value)
+{
+    if (!validate_printable_or_empty(value, MAX_MQTT_ID_LEN)) {
+        return false;
+    }
+    if (strchr(value, '/') != NULL) {
+        return false;
+    }
+    if (strchr(value, '+') != NULL) {
+        return false;
+    }
+    if (strchr(value, '#') != NULL) {
+        return false;
+    }
+    return (strchr(value, ' ') == NULL);
 }
