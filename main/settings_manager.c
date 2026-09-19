@@ -51,6 +51,7 @@ static const setting_mapping_t top_level_mappings[] = {
     {"mix_vfd_port", KEY_MIX_VFD_PORT},
     {"mix_vfd_addr", KEY_MIX_VFD_ADDR},
     {"mix_rev_code", KEY_MIX_REV_CODE},
+    {"mix_dir_inv", KEY_MIX_DIR_INV},
     {"mix_p0", KEY_MIX_P0},
     {"mix_p1", KEY_MIX_P1},
     {"mix_p2", KEY_MIX_P2},

@@ -66,6 +66,7 @@
 #define KEY_MIX_VFD_PORT            "mix_vfd_port"
 #define KEY_MIX_VFD_ADDR            "mix_vfd_addr"
 #define KEY_MIX_REV_CODE            "mix_rev_code"
+#define KEY_MIX_DIR_INV             "mix_dir_inv"
 
 // MQTT. What the client in main/mqtt/ needs to reach a Wiren Board controller's broker and what
 // to call itself there. An empty mqtt_id means "the model name and the MAC", which is what a

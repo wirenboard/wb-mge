@@ -84,6 +84,7 @@ const mock_setting_item_t expected_items[] = {
     {"mix_vfd_port", "1", SETTING_ITEM_TYPE_INT},
     {"mix_vfd_addr", "1", SETTING_ITEM_TYPE_INT},
     {"mix_rev_code", "5", SETTING_ITEM_TYPE_INT},
+    {"mix_dir_inv", "false", SETTING_ITEM_TYPE_BOOL},
 
     {"mix_p0", "", SETTING_ITEM_TYPE_STRING},
     {"mix_p1", "", SETTING_ITEM_TYPE_STRING},

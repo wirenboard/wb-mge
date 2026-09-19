@@ -57,6 +57,7 @@
 #define DEFAULT_MIX_VFD_PORT        "1"
 #define DEFAULT_MIX_VFD_ADDR        "1"
 #define DEFAULT_MIX_REV_CODE        "5"         // new drive revisions; old ones want 3
+#define DEFAULT_MIX_DIR_INV         "false"     // the motor is wired the usual way round
 #define DEFAULT_MIX_PROGRAM         ""
 #define DEFAULT_MIX_P0_NAME         "Program 1"
 #define DEFAULT_MIX_P1_NAME         "Program 2"

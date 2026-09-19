@@ -146,8 +146,9 @@ export interface Settings {
   rs485_2: RsSettings;
   // Mixer: the master switch, the program the device runs (0..3), the four programs themselves
   // (base64, see common/mixerProgram.ts) with their names, and the VFD wiring — how many shaft
-  // rpm 50 Hz gives, which RS-485 port the drive hangs on, its Modbus address, and the command
-  // code its revision uses for reverse.
+  // rpm 50 Hz gives, which RS-485 port the drive hangs on, its Modbus address, the command
+  // code its revision uses for reverse, and whether the two directions are swapped on the way
+  // out for a motor wired the other way round.
   mix_enabled: boolean;
   mix_prog: number;
   mix_p0: string;
@@ -162,6 +163,7 @@ export interface Settings {
   mix_vfd_port: 1 | 2;
   mix_vfd_addr: number;
   mix_rev_code: 3 | 5;
+  mix_dir_inv: boolean;
   // MQTT: whether the device connects to a broker, where that broker is, what it logs in as, and
   // the identifier it appears under in /devices/<id>/... . An empty mqtt_id means the firmware
   // builds one from the model and the MAC; an empty mqtt_host means no broker is configured and

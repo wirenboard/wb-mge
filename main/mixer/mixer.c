@@ -34,6 +34,7 @@ static mixer_program_t program;
 static uint8_t         program_index;
 static uint16_t        rpm_50hz;
 static bool            enabled;
+static bool            dir_inverted;
 
 // Where in the program we are. step_running says the deadline is meaningful; step_pushed says
 // this step's frequency and command have been SENT to the drive - not that it accepted them,
@@ -100,14 +101,16 @@ static void mixer_reload_settings(void)
     // POST /settings that changes none of it - a new hostname, a new Wi-Fi password, the same
     // MQTT command sent twice - must re-read the settings WITHOUT moving the program: a batch
     // an hour into its cycle does not start again because someone renamed the device.
-    bool      was_enabled  = enabled;
-    uint8_t   was_index    = program_index;
-    uint16_t  was_rpm_50hz = rpm_50hz;
-    vfd_t13_t was_vfd      = vfd;
+    bool      was_enabled      = enabled;
+    uint8_t   was_index        = program_index;
+    uint16_t  was_rpm_50hz     = rpm_50hz;
+    bool      was_dir_inverted = dir_inverted;
+    vfd_t13_t was_vfd          = vfd;
     char      was_program[SETTING_ITEM_MAX_STR_LEN];
     memcpy(was_program, applied_program, sizeof(was_program));
 
     enabled = setting_items_read_bool(KEY_MIX_ENABLED);
+    dir_inverted = setting_items_read_bool(KEY_MIX_DIR_INV);
 
     int index = setting_items_read_int(KEY_MIX_PROG);
     program_index = (uint8_t)((index >= 0) && (index < MIXER_PROGRAM_COUNT) ? index : 0);
@@ -158,24 +161,42 @@ static void mixer_reload_settings(void)
     // A new gearbox ratio changes the frequency the current step converts to, not which step is
     // running: someone who measures the shaft with a tachometer halfway through a three-hour
     // batch must not send the program back to its first step. Re-pushing the step is the whole
-    // of what the new ratio needs, and it leaves the deadline alone.
-    if (rpm_50hz != was_rpm_50hz) {
+    // of what the new ratio needs, and it leaves the deadline alone. Swapping the two directions
+    // is the same kind of change - the step keeps its meaning, only the command it goes out as
+    // changes - so someone who notices the shaft turning the wrong way mid-batch corrects it
+    // without losing the batch.
+    if ((rpm_50hz != was_rpm_50hz) || (dir_inverted != was_dir_inverted)) {
         step_pushed = false;
     }
 
-    ESP_LOGI(TAG, "settings: enabled=%d program=%u steps=%u rpm@50Hz=%u port=%u addr=%u rev=%u",
+    ESP_LOGI(TAG, "settings: enabled=%d program=%u steps=%u rpm@50Hz=%u port=%u addr=%u rev=%u inv=%d",
              (int)enabled, (unsigned)program_index, (unsigned)program.count,
              (unsigned)rpm_50hz, (unsigned)(vfd.port + 1), (unsigned)vfd.slave_id,
-             (unsigned)vfd.rev_code);
+             (unsigned)vfd.rev_code, (int)dir_inverted);
 }
 
-// Which way a step turns the shaft. A pause is the motor standing still, so it is a stop.
-static vfd_t13_dir_t mixer_step_dir(const mixer_step_t *step)
+// Which direction a step goes out to the drive as - which, with mix_dir_inv on, is the opposite
+// of the direction the step is named after. "wire" is in the name so that nobody reaches for this
+// to answer "which way does this step turn the shaft": that is step->type, and it is what the
+// status publishes. A pause is the motor standing still, so it is a stop, and mix_dir_inv cannot
+// make a stop into anything else.
+//
+// The inversion belongs here and nowhere else: this is also what mixer_poll_vfd() compares the
+// drive's register 3 against, so what is written and what is expected back stay the same value
+// by construction. It is deliberately the DIRECTION that is swapped, before
+// vfd_t13_command_code() turns it into a wire code with mix_rev_code - the two settings answer
+// different questions and must not be folded into one another.
+static vfd_t13_dir_t mixer_step_wire_dir(const mixer_step_t *step)
 {
     if (step->type == MIXER_STEP_PAUSE) {
         return VFD_T13_DIR_STOP;
     }
-    return (step->type == MIXER_STEP_REVERSE) ? VFD_T13_DIR_REVERSE : VFD_T13_DIR_FORWARD;
+
+    bool reverse = (step->type == MIXER_STEP_REVERSE);
+    if (dir_inverted) {
+        reverse = !reverse;
+    }
+    return reverse ? VFD_T13_DIR_REVERSE : VFD_T13_DIR_FORWARD;
 }
 
 // Push the current step to the drive: frequency first, then the command, because the drive
@@ -189,7 +210,7 @@ static vfd_t13_dir_t mixer_step_dir(const mixer_step_t *step)
 static void mixer_push_step(void)
 {
     const mixer_step_t *step = &program.steps[step_index];
-    vfd_t13_dir_t dir = mixer_step_dir(step);
+    vfd_t13_dir_t dir = mixer_step_wire_dir(step);
 
     if (dir == VFD_T13_DIR_STOP) {
         // Same contract as the two writes below: sent is sent. Believing the verdict here would
@@ -257,7 +278,7 @@ static void mixer_poll_vfd(bool running)
         // every second of every ramp. The gap this leaves is known and accepted: if the frequency
         // frame is lost while the command frame lands, the step runs at the previous step's speed
         // for its whole duration and nothing notices.
-        uint16_t expected = vfd_t13_command_code(&vfd, mixer_step_dir(&program.steps[step_index]));
+        uint16_t expected = vfd_t13_command_code(&vfd, mixer_step_wire_dir(&program.steps[step_index]));
         if (running && step_running && step_pushed && (feedback.command != expected)) {
             ESP_LOGW(TAG, "the drive is running command %u and not this step's %u, pushing it again",
                      (unsigned)feedback.command, (unsigned)expected);
@@ -505,6 +526,7 @@ void mixer_settings_changed(void)
         program_index = 0;
         rpm_50hz = 1;
         enabled = false;
+        dir_inverted = false;
         step_index = 0;
         step_deadline_us = 0;
         step_running = false;

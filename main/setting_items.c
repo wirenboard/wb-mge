@@ -245,6 +245,10 @@ static const setting_item_t setting_items[] = {
     // The drive's unit id is a Modbus unit id like any other, so it takes the same 1..247.
     {KEY_MIX_VFD_ADDR, DEFAULT_MIX_VFD_ADDR, validate_slave_id, SETTING_ITEM_TYPE_INT},
     {KEY_MIX_REV_CODE, DEFAULT_MIX_REV_CODE, validate_mixer_rev_code, SETTING_ITEM_TYPE_INT},
+    // Not the same thing as mix_rev_code: that one is WHICH code means reverse on this drive
+    // revision, this one is WHETHER the two directions are swapped on the way out - which is how
+    // a motor wired the other way round is compensated for without moving a wire.
+    {KEY_MIX_DIR_INV, DEFAULT_MIX_DIR_INV, validate_bool, SETTING_ITEM_TYPE_BOOL},
 
     {KEY_MIX_P0, DEFAULT_MIX_PROGRAM, validate_mixer_program, SETTING_ITEM_TYPE_STRING},
     {KEY_MIX_P1, DEFAULT_MIX_PROGRAM, validate_mixer_program, SETTING_ITEM_TYPE_STRING},

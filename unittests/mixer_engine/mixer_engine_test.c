@@ -62,6 +62,10 @@ static void start_engine(const char *program_b64, int rpm_50hz, bool enabled)
     mock_setting_items_set(KEY_MIX_VFD_PORT, "1");
     mock_setting_items_set(KEY_MIX_VFD_ADDR, "7");
     mock_setting_items_set(KEY_MIX_REV_CODE, "5");
+    /* The motor is wired the usual way round, so a step goes out as what it says it is. Named
+     * here rather than left to the mock's default, because every expectation below is written
+     * for a device that does NOT swap the two directions. */
+    mock_setting_items_set(KEY_MIX_DIR_INV, "false");
     mock_setting_items_set(KEY_MIX_P0, program_b64);
 
     mixer_start();
@@ -598,6 +602,106 @@ void test_a_switched_off_mixer_stops_the_drive_once(void)
     assert_write(2, VFD_T13_REG_COMMAND, VFD_T13_CMD_STOP, "again a stop command");
 }
 
+/* A motor can be wired so that the drive's "forward" turns the shaft backwards, and moving a
+ * wire is not always an option. mix_dir_inv swaps the two directions on the way out, so a step
+ * the program calls forward really turns the shaft forward - the program keeps its own names,
+ * only what goes on the bus changes. The feedback check must follow the same swap, or every
+ * second of every step would look like a drive running the wrong command. */
+void test_inverted_direction_swaps_the_commands(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test a motor wired the other way round");
+    LOG_MESSAGE();
+
+    set_time_s(0);
+    start_engine(PROG_TWO_STEPS, 1500, true);
+
+    // start_engine brings the device up wired the usual way; this is the installer noticing the
+    // shaft turns the wrong way and ticking the box. Nothing has been written yet - the first
+    // tick below is what re-reads the settings and pushes the first step.
+    mock_setting_items_set(KEY_MIX_DIR_INV, "true");
+    mixer_settings_changed();
+
+    // The drive obeys what it is written, and the mock does not mirror a write back into the
+    // register it was written to, so it has to be said out loud here.
+    set_drive_command(TEST_REV_CODE);
+
+    mixer_test_tick();
+
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_mb_master_write_called,
+                              "The forward step is still two writes");
+    assert_write(0, VFD_T13_REG_FREQ, 66, "at the speed the step asks for");
+    assert_write(1, VFD_T13_REG_COMMAND, TEST_REV_CODE,
+                 "but it goes out as the drive's REVERSE command");
+
+    mixer_status_t status;
+    mixer_get_status(&status);
+    TEST_ASSERT_EQUAL_MESSAGE(MIXER_STEP_FORWARD, status.step_type,
+                              "while the status keeps the program's own name for the step");
+
+    // The whole point of inverting inside mixer_step_dir(): register 3 answers with the command
+    // that was written, and the check expects exactly that, so nothing is pushed again.
+    set_time_s(1);
+    mixer_test_tick();
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_mb_master_write_called,
+                              "The feedback check accepts the swapped command");
+
+    // The second step, reverse at 100 rpm, goes out the other way about.
+    set_drive_command(VFD_T13_CMD_FORWARD);
+    set_time_s(2);
+    mixer_test_tick();
+
+    TEST_ASSERT_EQUAL_MESSAGE(4, mock_mb_master_write_called, "The second step is two writes");
+    assert_write(2, VFD_T13_REG_FREQ, 33, "at its own speed");
+    assert_write(3, VFD_T13_REG_COMMAND, VFD_T13_CMD_FORWARD,
+                 "and it goes out as the drive's FORWARD command");
+
+    mixer_get_status(&status);
+    TEST_ASSERT_EQUAL_MESSAGE(MIXER_STEP_REVERSE, status.step_type,
+                              "with the status again naming the step as the program does");
+
+    set_time_s(3);
+    mixer_test_tick();
+    TEST_ASSERT_EQUAL_MESSAGE(4, mock_mb_master_write_called,
+                              "and this one is accepted by the feedback check too");
+}
+
+/* And the way it will actually be used: the batch is already running when someone sees the shaft
+ * turning the wrong way and ticks the box. Swapping the directions is not a reason to start the
+ * program again - the step keeps its place and its clock, and only the command it goes out as
+ * changes. The same guarantee mix_rpm_50hz has, for the same reason. */
+void test_inverting_mid_program_keeps_the_position(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test that swapping the directions mid-batch does not restart the program");
+    LOG_MESSAGE();
+
+    set_time_s(0);
+    start_engine(PROG_FWD_200RPM, 1500, true);      // forward 200 rpm, 100 s
+    set_drive_command(VFD_T13_CMD_FORWARD);
+
+    mixer_test_tick();
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_mb_master_write_called, "The step goes out forward");
+    assert_write(1, VFD_T13_REG_COMMAND, VFD_T13_CMD_FORWARD, "as the drive's forward command");
+
+    // Ninety seconds still to run when the box is ticked.
+    mock_setting_items_set(KEY_MIX_DIR_INV, "true");
+    mixer_settings_changed();
+    set_time_s(10);
+    mixer_test_tick();
+
+    mixer_status_t status;
+    mixer_get_status(&status);
+    TEST_ASSERT_EQUAL_MESSAGE(0, status.step, "The same step is running");
+    TEST_ASSERT_EQUAL_MESSAGE(90, status.step_left_s, "against the deadline it already had");
+    TEST_ASSERT_EQUAL_MESSAGE(MIXER_RUNNING, status.state, "and the mixer never stopped");
+    TEST_ASSERT_EQUAL_MESSAGE(MIXER_STEP_FORWARD, status.step_type,
+                              "still called forward, because that is what the program says");
+
+    TEST_ASSERT_EQUAL_MESSAGE(4, mock_mb_master_write_called, "The step is pushed again");
+    assert_write(3, VFD_T13_REG_COMMAND, TEST_REV_CODE, "now as the drive's reverse command");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -614,6 +718,8 @@ int main(void)
     RUN_TEST(test_a_failing_write_still_sends_the_command);
     RUN_TEST(test_a_failing_stop_write_is_not_repeated_every_tick);
     RUN_TEST(test_a_switched_off_mixer_stops_the_drive_once);
+    RUN_TEST(test_inverted_direction_swaps_the_commands);
+    RUN_TEST(test_inverting_mid_program_keeps_the_position);
 
     return UNITY_END();
 }

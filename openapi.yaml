@@ -1221,6 +1221,15 @@ components:
           description: >-
             The value register 3 takes for "reverse": 5 on new drive revisions, 3 on old
             ones. Forward and stop are the same on every revision and are not configurable.
+        mix_dir_inv:
+          type: boolean
+          default: false
+          description: >-
+            Swaps forward and reverse on the wire, for a motor wired the other way round:
+            a step the program calls "forward" is sent to the drive as reverse and the other
+            way about, so a program's step names match the way the shaft really turns.
+            A pause stays a stop. Unrelated to mix_rev_code, which is only which code this
+            drive revision uses for reverse.
         mix_p0:
           $ref: '#/components/schemas/MixerProgram'
         mix_p1:

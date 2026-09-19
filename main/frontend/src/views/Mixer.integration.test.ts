@@ -70,6 +70,7 @@ const makeSettings = (): Partial<Settings> => ({
   mix_vfd_port: 2,
   mix_vfd_addr: 12,
   mix_rev_code: 3,
+  mix_dir_inv: false,
 });
 
 const makeMixer = (): MixerInfo => ({
@@ -284,7 +285,7 @@ describe('MIX-I-004: the other two cards', () => {
 
     expect(payloads().map((payload) => Object.keys(payload))).toEqual([
       ['mix_enabled', 'mix_prog'],
-      ['mix_rpm_50hz', 'mix_vfd_port', 'mix_vfd_addr', 'mix_rev_code'],
+      ['mix_rpm_50hz', 'mix_vfd_port', 'mix_vfd_addr', 'mix_rev_code', 'mix_dir_inv'],
     ]);
     payloads().forEach((payload) => {
       expect(Object.keys(payload).every((key) => key.startsWith('mix_'))).toBe(true);

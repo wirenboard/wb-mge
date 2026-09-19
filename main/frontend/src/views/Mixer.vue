@@ -34,7 +34,7 @@ import Switch from '@/components/Switch.vue';
 const INFO_POLL_MS = 1000;
 const PROGRAM_INDEXES = [0, 1, 2, 3];
 const CONTROL_KEYS = ['mix_enabled', 'mix_prog'];
-const HARDWARE_KEYS = ['mix_rpm_50hz', 'mix_vfd_port', 'mix_vfd_addr', 'mix_rev_code'];
+const HARDWARE_KEYS = ['mix_rpm_50hz', 'mix_vfd_port', 'mix_vfd_addr', 'mix_rev_code', 'mix_dir_inv'];
 const VFD_PORTS = [1, 2];
 const REVERSE_CODES = [3, 5];
 const MAX_DURATION_MINUTES = Math.floor(MIXER_MAX_DURATION_S / 60);
@@ -194,6 +194,7 @@ const saveHardware = () => {
     mix_vfd_port: data.value!.mix_vfd_port,
     mix_vfd_addr: data.value!.mix_vfd_addr,
     mix_rev_code: data.value!.mix_rev_code,
+    mix_dir_inv: data.value!.mix_dir_inv,
   });
 };
 
@@ -389,6 +390,11 @@ const runningStepText = computed(() => {
                     <option v-for="code in REVERSE_CODES" :key="`rev_${code}`" :value="code">{{ code }}</option>
                   </select>
                   <div class="field-hint">{{ t('mix_rev_code_hint') }}</div>
+                </div>
+                <div class="field">
+                  <label for="mix_dir_inv">{{ t('mix_dir_inv') }}</label>
+                  <div class="field-switch"><Switch id="mix_dir_inv" v-model="data!.mix_dir_inv" /></div>
+                  <div class="field-hint">{{ t('mix_dir_inv_hint') }}</div>
                 </div>
               </div>
             </form>
@@ -653,6 +659,8 @@ const runningStepText = computed(() => {
     "mix_vfd_addr": "Modbus address of the drive",
     "mix_rev_code": "Reverse command code",
     "mix_rev_code_hint": "Command the drive expects for reverse: it depends on the drive revision.",
+    "mix_dir_inv": "Invert direction",
+    "mix_dir_inv_hint": "Swaps forward and reverse on the wire, so a program's step names match the way the shaft turns — for a motor wired the other way round.",
     "port_n": "Port {n}",
     "editor": "Program editor",
     "editor_sub": "Up to {max} steps: a pause, or a run forward or in reverse for a set time.",
@@ -718,6 +726,8 @@ const runningStepText = computed(() => {
     "mix_vfd_addr": "Modbus-адрес частотника",
     "mix_rev_code": "Код команды реверса",
     "mix_rev_code_hint": "Какую команду частотник ждёт для реверса: зависит от его ревизии.",
+    "mix_dir_inv": "Инвертировать направление",
+    "mix_dir_inv_hint": "Меняет местами «вперёд» и «реверс» на шине: чтобы названия шагов в программе совпадали с тем, куда реально крутится вал, если двигатель подключён наоборот.",
     "port_n": "Порт {n}",
     "editor": "Редактор программы",
     "editor_sub": "До {max} шагов: пауза либо вращение вперёд или в реверсе заданное время.",
@@ -783,6 +793,8 @@ const runningStepText = computed(() => {
     "mix_vfd_addr": "Түрлендіргіштің Modbus мекенжайы",
     "mix_rev_code": "Реверс команда коды",
     "mix_rev_code_hint": "Реверс үшін түрлендіргіш күтетін команда: оның ревизиясына байланысты.",
+    "mix_dir_inv": "Бағытты инверттеу",
+    "mix_dir_inv_hint": "Шинадағы «алға» мен «кері» орындарын ауыстырады: қозғалтқыш кері қосылған болса, бағдарламадағы қадам атаулары біліктің шын айналу бағытына сәйкес келеді.",
     "port_n": "Порт {n}",
     "editor": "Бағдарлама редакторы",
     "editor_sub": "{max} қадамға дейін: үзіліс немесе белгіленген уақыт бойы алға не кері айналу.",
@@ -848,6 +860,8 @@ const runningStepText = computed(() => {
     "mix_vfd_addr": "Indirizzo Modbus dell'inverter",
     "mix_rev_code": "Codice comando di inversione",
     "mix_rev_code_hint": "Comando che l'inverter attende per l'inversione: dipende dalla sua revisione.",
+    "mix_dir_inv": "Inverti il senso di rotazione",
+    "mix_dir_inv_hint": "Scambia avanti e inversione sul bus: così i nomi dei passi del programma corrispondono al verso in cui gira davvero l'albero, se il motore è collegato al contrario.",
     "port_n": "Porta {n}",
     "editor": "Editor del programma",
     "editor_sub": "Fino a {max} passi: una pausa oppure la rotazione avanti o indietro per un tempo definito.",
@@ -913,6 +927,8 @@ const runningStepText = computed(() => {
     "mix_vfd_addr": "Modbus-Adresse des Umrichters",
     "mix_rev_code": "Befehlscode für Reversierung",
     "mix_rev_code_hint": "Befehl, den der Umrichter für die Reversierung erwartet: abhängig von seiner Revision.",
+    "mix_dir_inv": "Drehrichtung umkehren",
+    "mix_dir_inv_hint": "Vertauscht vorwärts und rückwärts auf dem Bus: so passen die Schrittnamen im Programm zu der Richtung, in die sich die Welle wirklich dreht, wenn der Motor andersherum angeschlossen ist.",
     "port_n": "Port {n}",
     "editor": "Programmeditor",
     "editor_sub": "Bis zu {max} Schritte: eine Pause oder Drehen vorwärts bzw. rückwärts für eine feste Zeit.",
