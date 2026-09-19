@@ -439,7 +439,7 @@ const runningStepText = computed(() => {
               <div v-if="!draft.steps.length" class="mixer-empty muted">{{ t('no_steps') }}</div>
               <div v-for="(step, index) in draft.steps" :key="`step_${index}`" class="mixer-step">
                 <div class="mixer-step-number mono">{{ index + 1 }}</div>
-                <div class="mixer-step-field">
+                <div class="mixer-step-field mixer-step-field--type">
                   <label :for="`mix_step_${index}_type`">{{ t('step_type') }}</label>
                   <!-- Switching to a step that moves the shaft snaps its speed onto the storable
                        grid at once, so the field never shows a value the device would not take. -->
@@ -577,18 +577,37 @@ const runningStepText = computed(() => {
 
 .mixer-step-number {
   min-width: 18px;
-  padding-bottom: 7px;
+  padding-bottom: 25px;
   color: var(--text-muted);
 }
 
+/* A fixed width rather than a content-driven one: the effective-value line below the speed is
+   wider than the number above it and differs from step to step, so a column that sized itself to
+   its contents put every row's inputs at a different x. */
 .mixer-step-field {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 3px;
-  min-width: 96px;
+  width: 118px;
+  flex: 0 0 auto;
+  /* The band the effective-value line hangs in. Reserved by EVERY field, including the ones that
+     never show such a line, because the row is bottom-aligned: a band on the speed field alone
+     would lift its input above the others, and a row without one would be shorter than the rest. */
+  margin-bottom: 18px;
 }
 
+.mixer-step-field--type {
+  width: 132px;
+}
+
+/* Out of the flow, so it changes neither the width of its column nor the height of its row. */
 .mixer-step-effect {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 3px;
+  white-space: nowrap;
   font-size: 10.5px;
   color: var(--text-muted);
 }
@@ -604,6 +623,8 @@ const runningStepText = computed(() => {
   display: flex;
   gap: 6px;
   margin-left: auto;
+  /* The same reserved band, so the buttons stay on the line of the inputs and not below it. */
+  margin-bottom: 18px;
 }
 
 .mixer-editor-footer {
