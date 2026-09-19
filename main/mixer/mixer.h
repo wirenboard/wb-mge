@@ -36,6 +36,12 @@ typedef struct {
     uint16_t bus_voltage_dv;    // 0.1 V
     uint16_t current_ca;        // 0.01 A
     int16_t  temp_c;
+    // Diagnostics, for telling "the drive refuses the command" apart from "the command never
+    // went out". cmd_raw is register 3 exactly as the drive last reported it - the command it
+    // believes it is running; last_write_err is what the master made of the last FC06's answer,
+    // which on this drive is not proof either way (it answers a write several times over).
+    uint16_t  cmd_raw;
+    esp_err_t last_write_err;
 } mixer_status_t;
 
 // Read the settings and start the engine task. Called once, from user_app_start().

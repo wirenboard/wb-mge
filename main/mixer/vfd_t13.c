@@ -70,6 +70,7 @@ esp_err_t vfd_t13_set_frequency(vfd_t13_t *vfd, uint16_t freq_dhz)
                                             freq_dhz);
     VFD_T13_DELAY_MS(VFD_T13_WRITE_SETTLE_MS);
 
+    vfd->last_write_err = err;
     vfd_t13_account(vfd, err);
     if (err != ESP_OK) {
         ESP_LOGD(TAG, "frequency write failed: %s", esp_err_to_name(err));
@@ -106,6 +107,7 @@ esp_err_t vfd_t13_send_command(vfd_t13_t *vfd, vfd_t13_dir_t dir)
                                             code);
     VFD_T13_DELAY_MS(VFD_T13_WRITE_SETTLE_MS);
 
+    vfd->last_write_err = err;
     vfd_t13_account(vfd, err);
     if (err != ESP_OK) {
         ESP_LOGD(TAG, "command write failed: %s", esp_err_to_name(err));

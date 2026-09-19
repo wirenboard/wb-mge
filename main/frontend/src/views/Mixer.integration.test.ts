@@ -84,6 +84,8 @@ const makeMixer = (): MixerInfo => ({
   voltage: 311,
   current: 3.25,
   temperature: 47,
+  cmd_raw: 5,
+  write_err: 'ESP_ERR_INVALID_RESPONSE',
 });
 
 const makeInfo = (): Partial<Info> => ({

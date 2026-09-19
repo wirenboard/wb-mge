@@ -998,6 +998,20 @@ components:
         temperature:
           type: integer
           description: "Heatsink temperature in degrees Celsius. 0 on drives with no sensor"
+        cmd_raw:
+          type: integer
+          description: >-
+            Register 3 exactly as the drive last reported it — the command it believes it is
+            running (1 forward, 2 stop, 5 or 3 reverse). Diagnostic: it is what tells "the
+            drive refuses the command" apart from "the command never went out".
+        write_err:
+          type: string
+          example: "ESP_ERR_INVALID_RESPONSE"
+          description: >-
+            The esp_err name of what the master made of the last write to the drive. NOT proof
+            of what the drive did: this drive answers a single write several times over and the
+            extra frames land in the master's response window, so a write that took effect is
+            routinely reported as ESP_ERR_INVALID_RESPONSE. Read it together with cmd_raw.
 
     RS485Settings:
       type: object

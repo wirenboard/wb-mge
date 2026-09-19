@@ -75,6 +75,8 @@ export interface MixerInfo {
   voltage: number; // V on the DC bus
   current: number; // A drawn by the motor
   temperature: number; // °C on the VFD heatsink
+  cmd_raw: number; // register 3 as the drive reports it: the command it believes it is running
+  write_err: string; // esp_err name of the last write to the drive; see the note in openapi.yaml
 }
 
 export type WiFiSecuityProtocol = 'open' | 'wpa2_psk' | 'wpa3_psk';

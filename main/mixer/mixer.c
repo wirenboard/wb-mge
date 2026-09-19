@@ -35,9 +35,12 @@ static uint8_t         program_index;
 static uint16_t        rpm_50hz;
 static bool            enabled;
 
-// Where in the program we are. step_running says the deadline is meaningful; step_pushed
-// says the drive has actually accepted this step's frequency and command. They are separate
-// because a step whose writes failed must be retried WITHOUT restarting its clock.
+// Where in the program we are. step_running says the deadline is meaningful; step_pushed says
+// this step's frequency and command have been SENT to the drive - not that it accepted them,
+// which is not knowable from a write answer on this drive and is decided by the comparison
+// against register 3 in mixer_poll_vfd(). They are separate because clearing step_pushed - on a
+// mismatch, or when the drive returns to the bus - must re-send the step WITHOUT restarting its
+// clock.
 static uint8_t  step_index;
 static int64_t  step_deadline_us;
 static bool     step_running;
@@ -48,6 +51,7 @@ static int64_t  next_poll_us;
 
 // Last values read back from the drive, kept between polls so the status does not blink
 // between two one-second reads.
+static uint16_t last_cmd_raw;
 static uint16_t last_freq_dhz;
 static vfd_t13_telemetry_t last_telemetry;
 
@@ -177,21 +181,49 @@ static vfd_t13_dir_t mixer_step_dir(const mixer_step_t *step)
 // Push the current step to the drive: frequency first, then the command, because the drive
 // must not be told to run before it knows how fast. A pause step has no speed of its own -
 // it is the motor standing still - so it writes the stop command and nothing else.
-static bool mixer_push_step(void)
+//
+// Nothing is returned, and that is the point: what a write answered says nothing about whether
+// this drive took it. The caller marks the step pushed because the frames went out, and the
+// once-a-second comparison against register 3 in mixer_poll_vfd() is what decides whether it
+// really took and sends it again when it did not.
+static void mixer_push_step(void)
 {
     const mixer_step_t *step = &program.steps[step_index];
     vfd_t13_dir_t dir = mixer_step_dir(step);
 
     if (dir == VFD_T13_DIR_STOP) {
-        return (vfd_t13_send_command(&vfd, VFD_T13_DIR_STOP) == ESP_OK);
+        // Same contract as the two writes below: sent is sent. Believing the verdict here would
+        // leave step_pushed false for the whole pause and write a stop frame five times a second
+        // until it ended.
+        esp_err_t stop_err = vfd_t13_send_command(&vfd, VFD_T13_DIR_STOP);
+        if (stop_err != ESP_OK) {
+            // Debug, not a warning: on this drive a badly answered write is the ordinary case,
+            // not an event. The last one is published as write_err in /info for when it matters.
+            ESP_LOGD(TAG, "the pause's stop write answered %s, the feedback check will confirm it",
+                     esp_err_to_name(stop_err));
+        }
+        return;
     }
 
     uint16_t dhz = mixer_rpm_to_dhz((uint16_t)(step->speed * 10u));
-    if (vfd_t13_set_frequency(&vfd, dhz) != ESP_OK) {
-        return false;
+
+    // The frequency write's verdict must NOT abort the sequence. This drive answers a single
+    // FC06 several times over, and the extra frames land inside the master's response window,
+    // so a write that reached the drive comes back as an error. Believing that verdict is
+    // exactly what left the motor standing on the bench: the sequence returned here, the start
+    // command was never written at all, and the drive sat in RS-485 control mode waiting for
+    // it - visibly taking the frequency all the while.
+    esp_err_t freq_err = vfd_t13_set_frequency(&vfd, dhz);
+    if (freq_err != ESP_OK) {
+        ESP_LOGD(TAG, "the frequency write answered %s, sending the command anyway",
+                 esp_err_to_name(freq_err));
     }
 
-    return (vfd_t13_send_command(&vfd, dir) == ESP_OK);
+    esp_err_t cmd_err = vfd_t13_send_command(&vfd, dir);
+    if (cmd_err != ESP_OK) {
+        ESP_LOGD(TAG, "the command write answered %s, the feedback check will confirm it",
+                 esp_err_to_name(cmd_err));
+    }
 }
 
 static void mixer_begin_step(int64_t now)
@@ -206,6 +238,7 @@ static void mixer_poll_vfd(bool running)
     vfd_t13_feedback_t feedback;
     if (vfd_t13_read_feedback(&vfd, &feedback) == ESP_OK) {
         last_freq_dhz = feedback.freq_dhz;
+        last_cmd_raw = feedback.command;
 
         // Register 3 answers with the command the drive believes it is running, and that is the
         // only way to notice one that restarted in the middle of a step: an acknowledged fault
@@ -217,19 +250,36 @@ static void mixer_poll_vfd(bool running)
         // again. The deadline it is running against is deliberately left alone: the step still
         // ends when it was going to, and a drive that keeps dropping the command cannot stretch
         // the program by being re-written.
-        // Deliberately NOT done for a mixer that is switched off, though the asymmetry looks odd.
-        // What register 3 answers with when the drive is idle is not documented anywhere - the
-        // manufacturer's table names the three codes it accepts and calls the register "running
-        // status feedback" without saying what it reads back - so a drive that answers 0 there
-        // would fail this comparison forever. While a step is running that costs one extra write
-        // per poll and ends with the step; while the mixer is OFF, which is where a device spends
-        // most of its life, it would be a stop command on the bus every second for as long as the
-        // mixer stays off. A running step is the bounded case, so it is the only one checked.
+        // Only the command is compared, never the frequency, although register 2 is read right
+        // here. Measured on the drive: register 2 answers with the frequency it is CURRENTLY
+        // putting out, ramping through 6.6, 11.1, 25.2, 35.0 Hz on its way to a setpoint - not
+        // with the setpoint itself. An equality check against it would therefore re-push the step
+        // every second of every ramp. The gap this leaves is known and accepted: if the frequency
+        // frame is lost while the command frame lands, the step runs at the previous step's speed
+        // for its whole duration and nothing notices.
         uint16_t expected = vfd_t13_command_code(&vfd, mixer_step_dir(&program.steps[step_index]));
         if (running && step_running && step_pushed && (feedback.command != expected)) {
             ESP_LOGW(TAG, "the drive is running command %u and not this step's %u, pushing it again",
                      (unsigned)feedback.command, (unsigned)expected);
             step_pushed = false;
+        }
+
+        // The same check for a mixer that is switched off, and the reason it is written as "is the
+        // drive reporting a RUN code" rather than "does it differ from stop": what register 3 holds
+        // on an idle drive is not in the manufacturer's table. Measured on the drive instead - it
+        // answers with the stop code itself, steadily - so in the normal case this costs no traffic
+        // at all. Anything the register might hold that is neither of the two run codes, 0 included,
+        // is deliberately read as "not running": a stop frame every second for as long as the mixer
+        // is off is worse than the case this guards against. Without it a single lost stop frame -
+        // ordinary traffic on an RS-485 bus, as VFD_T13_OFFLINE_THRESHOLD itself says - would leave
+        // the motor turning for as long as the mixer stayed off, with /info reporting it stopped.
+        uint16_t run_fwd = vfd_t13_command_code(&vfd, VFD_T13_DIR_FORWARD);
+        uint16_t run_rev = vfd_t13_command_code(&vfd, VFD_T13_DIR_REVERSE);
+        if (!running && stop_pushed &&
+            ((feedback.command == run_fwd) || (feedback.command == run_rev))) {
+            ESP_LOGW(TAG, "the mixer is off but the drive reports command %u, stopping it again",
+                     (unsigned)feedback.command);
+            stop_pushed = false;
         }
     }
 
@@ -272,6 +322,8 @@ static void mixer_publish_status(int64_t now, bool running)
     snapshot.bus_voltage_dv = last_telemetry.bus_voltage_dv;
     snapshot.current_ca = last_telemetry.current_ca;
     snapshot.temp_c = last_telemetry.temp_c;
+    snapshot.cmd_raw = last_cmd_raw;
+    snapshot.last_write_err = vfd.last_write_err;
 
     if ((status_mutex != NULL) && (xSemaphoreTake(status_mutex, portMAX_DELAY) == pdTRUE)) {
         status = snapshot;
@@ -307,7 +359,8 @@ static void mixer_tick(void)
         // Retried on the next tick when the drive did not take it, without touching the
         // deadline the step is already running against.
         if (!step_pushed) {
-            step_pushed = mixer_push_step();
+            mixer_push_step();
+            step_pushed = true;     // sent; whether it was taken is the feedback check's answer
         }
     } else {
         if (step_running) {
@@ -315,7 +368,17 @@ static void mixer_tick(void)
             stop_pushed = false;
         }
         if (!stop_pushed) {
-            stop_pushed = (vfd_t13_send_command(&vfd, VFD_T13_DIR_STOP) == ESP_OK);
+            esp_err_t stop_err = vfd_t13_send_command(&vfd, VFD_T13_DIR_STOP);
+            if (stop_err != ESP_OK) {
+                ESP_LOGD(TAG, "the stop write answered %s, not repeating it every tick",
+                         esp_err_to_name(stop_err));
+            }
+            // Sent is sent here too, and this is the case where it matters most: a switched-off
+            // mixer is where a device spends most of its life, and trusting this drive's write
+            // answers would put a stop frame on the bus five times a second for all of it. What
+            // makes that safe is the poll below, which clears this flag again if the drive turns
+            // out to be running after all.
+            stop_pushed = true;
         }
     }
 
@@ -449,6 +512,7 @@ void mixer_settings_changed(void)
         stop_pushed = false;
         next_poll_us = 0;
         last_freq_dhz = 0;
+        last_cmd_raw = 0;
         status_mutex = NULL;
         settings_dirty = false;
     }

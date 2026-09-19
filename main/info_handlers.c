@@ -185,6 +185,9 @@ static esp_err_t info_build_mixer_json(cJSON **mixer_json)
     cJSON_AddNumberToObject(*mixer_json, "voltage", (double)status.bus_voltage_dv / 10.0);
     cJSON_AddNumberToObject(*mixer_json, "current", (double)status.current_ca / 100.0);
     cJSON_AddNumberToObject(*mixer_json, "temperature", status.temp_c);
+    // Diagnostics: what the drive says it is doing, and what the master made of the last write.
+    cJSON_AddNumberToObject(*mixer_json, "cmd_raw", status.cmd_raw);
+    cJSON_AddStringToObject(*mixer_json, "write_err", esp_err_to_name(status.last_write_err));
 
     return ESP_OK;
 }

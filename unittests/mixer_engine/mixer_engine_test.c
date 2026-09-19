@@ -30,6 +30,7 @@ void mixer_test_reset(void);
 #define PROG_FWD_200RPM     "ARQAZA=="
 #define PROG_FWD_10RPM      "AQEAZA=="
 #define PROG_FWD_2500RPM    "AfoAZA=="
+#define PROG_PAUSE_100S     "AAAAZA=="
 
 #define TEST_VFD_PORT       1       /* the case's numbering; mb_master counts from 0 */
 #define TEST_VFD_ADDR       7
@@ -391,7 +392,9 @@ void test_unrelated_settings_change_keeps_the_position(void)
 /* A drive that drops off the bus and comes back may have been reset, and a reset drive was told
  * nothing at all - including the stop it was holding. A switched-off mixer therefore repeats its
  * stop once when the drive returns, the same way a running one repeats its step. Once, on the
- * edge: the stop is NOT re-verified against register 3 on every poll, see mixer_poll_vfd(). */
+ * edge - and quiet afterwards not because nothing looks, but because what looks finds nothing:
+ * mixer_poll_vfd() does check register 3 every poll while the mixer is off, and a drive that is
+ * standing still answers it with the stop code (measured), which is not a run code. */
 void test_stop_is_repeated_when_the_drive_comes_back(void)
 {
     LOG_MESSAGE();
@@ -432,7 +435,7 @@ void test_stop_is_repeated_when_the_drive_comes_back(void)
     set_time_s(8);
     mixer_test_tick();
     TEST_ASSERT_EQUAL_MESSAGE(2, mock_mb_master_write_called,
-                              "and then the bus is left quiet, however register 3 reads back");
+                              "and then the bus is left quiet, because register 3 reads back a stop");
 }
 
 /* Measuring the shaft with a tachometer mid-batch changes the frequency every step converts to,
@@ -467,6 +470,134 @@ void test_new_gearbox_ratio_keeps_the_position(void)
     assert_write(3, VFD_T13_REG_COMMAND, VFD_T13_CMD_FORWARD, "with the step's own command");
 }
 
+/* Found on the bench, and the reason this test exists: the drive answers a single FC06 several
+ * times over, the extra frames land in the master's response window, and a write that DID reach
+ * the drive comes back as an error. The engine used to believe that verdict and return before
+ * writing the command at all - so the frequency visibly changed on the drive's display while the
+ * motor never started, with the drive sitting in RS-485 control mode waiting for a command that
+ * was never sent. A write that answers badly must not swallow the command. */
+void test_a_failing_write_still_sends_the_command(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test that a badly answered write does not swallow the start command");
+    LOG_MESSAGE();
+
+    set_time_s(0);
+    start_engine(PROG_FWD_200RPM, 1500, true);
+    set_drive_command(VFD_T13_CMD_FORWARD);
+
+    // Every write comes back as "the answer made no sense", which is what this drive does to a
+    // write it has in fact carried out.
+    mock_mb_master_write_result = ESP_ERR_INVALID_RESPONSE;
+
+    mixer_test_tick();
+
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_mb_master_write_called,
+                              "Both frames go out, the frequency and the command");
+    assert_write(0, VFD_T13_REG_FREQ, 66, "The frequency is still written first");
+    assert_write(1, VFD_T13_REG_COMMAND, VFD_T13_CMD_FORWARD,
+                 "and the start command goes out after it, whatever the first write answered");
+
+    // And the bus is not hammered: the step counts as pushed, so the next tick writes nothing.
+    // What decides whether it really took is the feedback check, once a second.
+    set_time_s(1);
+    mixer_test_tick();
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_mb_master_write_called,
+                              "A pushed step is not rewritten on every tick");
+}
+
+/* The same distrust of a write answer, on the two paths that write a stop and nothing else. Both
+ * used to take the verdict as the truth, and on this drive the verdict is always an error - so
+ * neither would ever count as pushed, and both would put a stop frame on the bus every 200 ms
+ * tick. For a pause that lasts as long as the pause; for a mixer that is switched off, which is
+ * most of a device's life, forever. */
+void test_a_failing_stop_write_is_not_repeated_every_tick(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test that a badly answered stop write is sent once, not every tick");
+    LOG_MESSAGE();
+
+    set_time_s(0);
+    start_engine(PROG_PAUSE_100S, 1500, true);
+    // What a standing drive answers in register 3 was measured on the bench: the stop code
+    // itself, steadily. That is what makes the pause quiet rather than a stop write per poll.
+    set_drive_command(VFD_T13_CMD_STOP);
+    mock_mb_master_write_result = ESP_ERR_INVALID_RESPONSE;
+
+    mixer_test_tick();
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_mb_master_write_called,
+                              "A pause step writes its stop once");
+    assert_write(0, VFD_T13_REG_COMMAND, VFD_T13_CMD_STOP, "and what it writes is a stop");
+
+    for (unsigned s = 1; s <= 5; s++) {
+        set_time_s(s);
+        mixer_test_tick();
+    }
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_mb_master_write_called,
+                              "and does not write it again for the rest of the pause");
+}
+
+/* A switched-off mixer writes one stop and then keeps quiet - but "quiet" must not mean "never
+ * looks again". A stop frame can be lost like any other, and nothing else would ever notice: the
+ * off branch has no step to re-push and the drive stays online, so the come-back-online path never
+ * fires either. The motor would turn for as long as the mixer stayed off while /info reported it
+ * stopped. So the poll watches register 3 here too, and only a RUN code there brings the stop
+ * back - never a 0 or an unknown answer, which would be a stop frame a second, forever. */
+void test_a_switched_off_mixer_stops_the_drive_once(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test that a switched-off mixer stops the drive once, then only if it is running");
+    LOG_MESSAGE();
+
+    set_time_s(0);
+    start_engine(PROG_FWD_200RPM, 1500, false);
+    mock_mb_master_write_result = ESP_ERR_INVALID_RESPONSE;
+
+    mixer_test_tick();
+
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_mb_master_write_called,
+                              "The drive is told to stop once");
+    assert_write(0, VFD_T13_REG_COMMAND, VFD_T13_CMD_STOP, "and that is the stop command");
+
+    // Register 3 answers 0 here - the value the mocks reset to, standing in for an answer this
+    // build does not recognise. Nothing may be written on the strength of that.
+    for (unsigned s = 1; s <= 5; s++) {
+        set_time_s(s);
+        mixer_test_tick();
+    }
+    TEST_ASSERT_EQUAL_MESSAGE(1, mock_mb_master_write_called,
+                              "and an answer that is not a run code leaves the bus alone");
+
+    // Now the drive says it is running forward: the stop was lost, or something else started it.
+    // The mock does not mirror a write back into the register it was written to, so the drive
+    // obeying the stop that follows has to be said out loud - which is also what keeps the write
+    // count here exact rather than "one per second until it obeys".
+    set_drive_command(VFD_T13_CMD_FORWARD);
+    set_time_s(6);
+    mixer_test_tick();                      // this tick's poll is what notices
+    set_drive_command(VFD_T13_CMD_STOP);    // and the drive obeys the stop this one writes
+    set_time_s(7);
+    mixer_test_tick();
+
+    TEST_ASSERT_EQUAL_MESSAGE(2, mock_mb_master_write_called,
+                              "A drive that reports running while the mixer is off is stopped again");
+    assert_write(1, VFD_T13_REG_COMMAND, VFD_T13_CMD_STOP, "with a stop command");
+
+    // The other half of the check, and the half that depends on configuration rather than on a
+    // constant: reverse is whichever code mix_rev_code holds for this drive revision.
+    set_drive_command(TEST_REV_CODE);
+    set_time_s(8);
+    mixer_test_tick();
+    set_drive_command(VFD_T13_CMD_STOP);
+    set_time_s(9);
+    mixer_test_tick();
+
+    TEST_ASSERT_EQUAL_MESSAGE(3, mock_mb_master_write_called,
+                              "and the same for the configured reverse code");
+    assert_write(2, VFD_T13_REG_COMMAND, VFD_T13_CMD_STOP, "again a stop command");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -480,6 +611,9 @@ int main(void)
     RUN_TEST(test_unrelated_settings_change_keeps_the_position);
     RUN_TEST(test_stop_is_repeated_when_the_drive_comes_back);
     RUN_TEST(test_new_gearbox_ratio_keeps_the_position);
+    RUN_TEST(test_a_failing_write_still_sends_the_command);
+    RUN_TEST(test_a_failing_stop_write_is_not_repeated_every_tick);
+    RUN_TEST(test_a_switched_off_mixer_stops_the_drive_once);
 
     return UNITY_END();
 }

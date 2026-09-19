@@ -7,7 +7,9 @@
  *
  *   - only FC03 (read holding) and FC06 (write single holding). No FC16, no input
  *     registers, no coils. Register addresses are 0-based, exactly as they go on the wire;
- *   - register 2  - frequency setpoint, 0.1 Hz per count, 10..990 (1.0 .. 99.0 Hz);
+ *   - register 2  - the frequency, 0.1 Hz per count, 10..990 (1.0 .. 99.0 Hz) when written.
+ *     A READ of it does not give that setpoint back: it answers with the frequency the drive is
+ *     putting out right now, climbing through the ramp on its way there (measured);
  *   - register 3  - the command, and the feedback for it in the same place: 1 forward,
  *     2 stop, and reverse is 5 on new revisions and 3 on old ones. Which one this drive
  *     wants is not discoverable, so it is configuration (see vfd_t13_configure);
@@ -64,10 +66,14 @@ typedef enum {
 } vfd_t13_dir_t;
 
 typedef struct {
-    uint8_t  port;          // 0 = RS-485-1, 1 = RS-485-2, as mb_master.h numbers them
-    uint8_t  slave_id;
-    uint16_t rev_code;      // VFD_T13_CMD_REVERSE_NEW or ..._OLD
-    uint8_t  fail_count;    // consecutive failed exchanges, capped at the threshold
+    uint8_t   port;         // 0 = RS-485-1, 1 = RS-485-2, as mb_master.h numbers them
+    uint8_t   slave_id;
+    uint16_t  rev_code;     // VFD_T13_CMD_REVERSE_NEW or ..._OLD
+    uint8_t   fail_count;   // consecutive failed exchanges, capped at the threshold
+    // What the last FC06 returned. Reported through GET /info because this drive answers a
+    // write several times over and a write that DID land can come back as an error: the value
+    // here is what the master made of the answer, not proof of what the drive did.
+    esp_err_t last_write_err;
 } vfd_t13_t;
 
 typedef struct {
@@ -77,7 +83,9 @@ typedef struct {
 } vfd_t13_telemetry_t;
 
 typedef struct {
-    uint16_t freq_dhz;          // register 2, the setpoint the drive is holding
+    // Register 2. NOT the setpoint: measured on the drive, a read answers with the frequency it
+    // is currently putting out, so it climbs through the ramp on its way to what was written.
+    uint16_t freq_dhz;
     uint16_t command;           // register 3, the command it believes it is running
 } vfd_t13_feedback_t;
 
