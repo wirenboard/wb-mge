@@ -33,7 +33,6 @@ import Switch from '@/components/Switch.vue';
 // often than the application-wide poller in App.vue, and only while this page is open.
 const INFO_POLL_MS = 1000;
 const PROGRAM_INDEXES = [0, 1, 2, 3];
-const CONTROL_KEYS = ['mix_enabled', 'mix_prog'];
 const HARDWARE_KEYS = ['mix_rpm_50hz', 'mix_vfd_port', 'mix_vfd_addr', 'mix_rev_code', 'mix_dir_inv'];
 const VFD_PORTS = [1, 2];
 const REVERSE_CODES = [3, 5];
@@ -184,8 +183,20 @@ const setDurationSeconds = (step: MixerStep, value?: number) => {
   step.duration = combineDuration(splitDuration(step.duration).minutes, value ?? 0);
 };
 
-const saveControl = () => {
-  updateSettings({ mix_enabled: data.value!.mix_enabled, mix_prog: data.value!.mix_prog });
+// The master switch and the program selector are acted on at once rather than collected for a
+// Save: they are the two controls that mean "do it now", and a mixer left running because a
+// button was never pressed is the failure worth avoiding. Each posts only its own key, so the
+// two cannot overwrite one another when both are touched in quick succession.
+// Switch models a `boolean | undefined`, which the checkbox it wraps can never actually emit;
+// the fallback is what keeps the posted value a boolean rather than a missing key.
+const applyEnabled = (value?: boolean) => {
+  const enabled = value ?? false;
+  data.value!.mix_enabled = enabled;
+  updateSettings({ mix_enabled: enabled });
+};
+
+const applyProgram = () => {
+  updateSettings({ mix_prog: data.value!.mix_prog });
 };
 
 const saveHardware = () => {
@@ -274,30 +285,31 @@ const runningStepText = computed(() => {
         </div>
       </section>
 
-      <div v-if="!mixerUnavailable" class="grid-2">
-        <section class="card">
-          <form @submit.prevent="saveControl">
+      <div v-if="!mixerUnavailable" class="grid-2 mixer-grid">
+        <div class="stack">
+          <section class="card">
             <div class="card-header">
               <div class="card-title-wrap">
                 <div class="title">{{ t('control') }}</div>
                 <div class="sub">{{ t('control_sub') }}</div>
               </div>
-              <Button
-                type="submit"
-                :is-loading="isLoading && isChanged(CONTROL_KEYS)"
-                :disabled="isLoading || !isChanged(CONTROL_KEYS)"
-              >
-                {{ t('save') }}
-              </Button>
             </div>
             <div class="card-body">
               <div class="field">
                 <label for="mix_enabled">{{ t('mix_enabled') }}</label>
-                <div class="field-switch"><Switch id="mix_enabled" v-model="data!.mix_enabled" /></div>
+                <div class="field-switch">
+                  <Switch
+                    id="mix_enabled"
+                    :model-value="data!.mix_enabled"
+                    @update:model-value="applyEnabled"
+                  />
+                </div>
               </div>
               <div class="field">
                 <label for="mix_prog">{{ t('mix_prog') }}</label>
-                <select id="mix_prog" v-model="data!.mix_prog" name="mix_prog">
+                <!-- v-model assigns before this listener runs, which is what lets the handler read
+                     the new value off the settings object rather than off the event. -->
+                <select id="mix_prog" v-model="data!.mix_prog" name="mix_prog" @change="applyProgram">
                   <option v-for="index in PROGRAM_INDEXES" :key="`run_${index}`" :value="index">{{ programLabel(index) }}</option>
                 </select>
               </div>
@@ -324,10 +336,8 @@ const runningStepText = computed(() => {
                   : '—' }}</span>
               </InfoRow>
             </div>
-          </form>
-        </section>
+          </section>
 
-        <div class="stack">
           <section class="card">
             <div class="card-header">
               <div class="card-title-wrap">
@@ -400,131 +410,147 @@ const runningStepText = computed(() => {
             </form>
           </section>
         </div>
-      </div>
 
-      <section v-if="!mixerUnavailable" class="card">
-        <form @submit.prevent="saveProgram">
-          <div class="card-header">
-            <div class="card-title-wrap">
-              <div class="title">{{ t('editor') }}</div>
-              <div class="sub">{{ t('editor_sub', { max: MIXER_MAX_STEPS }) }}</div>
+        <section class="card">
+          <form @submit.prevent="saveProgram">
+            <div class="card-header">
+              <div class="card-title-wrap">
+                <div class="title">{{ t('editor') }}</div>
+                <div class="sub">{{ t('editor_sub', { max: MIXER_MAX_STEPS }) }}</div>
+              </div>
+              <Button
+                id="mix_save_program"
+                type="submit"
+                :is-loading="isLoading && isDraftChanged"
+                :disabled="isLoading || !isDraftChanged"
+              >
+                {{ t('save') }}
+              </Button>
             </div>
-            <Button
-              id="mix_save_program"
-              type="submit"
-              :is-loading="isLoading && isDraftChanged"
-              :disabled="isLoading || !isDraftChanged"
-            >
-              {{ t('save') }}
-            </Button>
-          </div>
-          <div class="card-body">
-            <div class="field">
-              <label for="mix_edited">{{ t('edited_program') }}</label>
-              <select id="mix_edited" v-model="editedIndex" name="mix_edited">
-                <option v-for="index in PROGRAM_INDEXES" :key="`edit_${index}`" :value="index">{{ programLabel(index) }}</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="mix_name">{{ t('program_name') }}</label>
-              <!-- The device refuses a nameless program. Its setting value holds 63 BYTES; the
-                   31 here is the room that leaves for a name written in two-byte Cyrillic, which
-                   is the shortest a name of 31 characters can be stored in. -->
-              <input id="mix_name" v-model="draft.name" type="text" name="mix_name" maxlength="31" required>
-            </div>
+            <div class="card-body">
+              <div class="field">
+                <label for="mix_edited">{{ t('edited_program') }}</label>
+                <select id="mix_edited" v-model="editedIndex" name="mix_edited">
+                  <option v-for="index in PROGRAM_INDEXES" :key="`edit_${index}`" :value="index">{{ programLabel(index) }}</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="mix_name">{{ t('program_name') }}</label>
+                <!-- The device refuses a nameless program. Its setting value holds 63 BYTES; the
+                     31 here is the room that leaves for a name written in two-byte Cyrillic, which
+                     is the shortest a name of 31 characters can be stored in. -->
+                <input id="mix_name" v-model="draft.name" type="text" name="mix_name" maxlength="31" required>
+              </div>
 
-            <div v-if="draft.corrupt" id="mix_corrupt" class="mixer-warning">{{ t('program_corrupt') }}</div>
+              <div v-if="draft.corrupt" id="mix_corrupt" class="mixer-warning">{{ t('program_corrupt') }}</div>
 
-            <div class="mixer-steps">
-              <div v-if="!draft.steps.length" class="mixer-empty muted">{{ t('no_steps') }}</div>
-              <div v-for="(step, index) in draft.steps" :key="`step_${index}`" class="mixer-step">
-                <div class="mixer-step-number mono">{{ index + 1 }}</div>
-                <div class="mixer-step-field mixer-step-field--type">
-                  <label :for="`mix_step_${index}_type`">{{ t('step_type') }}</label>
-                  <!-- Switching to a step that moves the shaft snaps its speed onto the storable
-                       grid at once, so the field never shows a value the device would not take. -->
-                  <select
-                    :id="`mix_step_${index}_type`"
-                    v-model="step.type"
-                    :name="`mix_step_${index}_type`"
-                    @change="normalizeInPlace(step)"
-                  >
-                    <option :value="MIXER_STEP_PAUSE">{{ t('step_type_pause') }}</option>
-                    <option :value="MIXER_STEP_FORWARD">{{ t('step_type_forward') }}</option>
-                    <option :value="MIXER_STEP_REVERSE">{{ t('step_type_reverse') }}</option>
-                  </select>
-                </div>
-                <div class="mixer-step-field">
-                  <label :for="`mix_step_${index}_speed`">{{ t('step_speed') }}</label>
-                  <!-- A step that turns the shaft may not ask for zero: the device would raise it
-                       to the drive's slowest frequency and turn the motor. A pause is what
-                       standing still is for, so only a pause starts at zero. -->
-                  <InputNumber
-                    :id="`mix_step_${index}_speed`"
-                    v-model="step.speed"
-                    class="mono"
-                    :disabled="step.type === MIXER_STEP_PAUSE"
-                    :min="step.type === MIXER_STEP_PAUSE ? 0 : MIXER_MIN_MOTION_SPEED_RPM"
-                    :max="MIXER_MAX_SPEED_RPM"
-                    :step="MIXER_SPEED_STEP_RPM"
-                    @change="normalizeInPlace(step)"
-                  />
-                  <!-- What that speed actually becomes after the conversion through mix_rpm_50hz
-                       and the drive's own 1.0 .. 99.0 Hz limits. -->
-                  <div v-if="step.type !== MIXER_STEP_PAUSE" :id="`mix_step_${index}_effect`" class="mixer-step-effect mono">
-                    {{ t('step_effective', { hz: stepFrequencyText(step), rpm: stepEffectiveRpm(step) }) }}
+              <div class="mixer-steps">
+                <div v-if="!draft.steps.length" class="mixer-empty muted">{{ t('no_steps') }}</div>
+                <div v-for="(step, index) in draft.steps" :key="`step_${index}`" class="mixer-step">
+                  <div class="mixer-step-number mono">{{ index + 1 }}</div>
+                  <div class="mixer-step-field mixer-step-field--type">
+                    <label :for="`mix_step_${index}_type`">{{ t('step_type') }}</label>
+                    <!-- Switching to a step that moves the shaft snaps its speed onto the storable
+                         grid at once, so the field never shows a value the device would not take. -->
+                    <select
+                      :id="`mix_step_${index}_type`"
+                      v-model="step.type"
+                      :name="`mix_step_${index}_type`"
+                      @change="normalizeInPlace(step)"
+                    >
+                      <option :value="MIXER_STEP_PAUSE">{{ t('step_type_pause') }}</option>
+                      <option :value="MIXER_STEP_FORWARD">{{ t('step_type_forward') }}</option>
+                      <option :value="MIXER_STEP_REVERSE">{{ t('step_type_reverse') }}</option>
+                    </select>
+                  </div>
+                  <div class="mixer-step-field">
+                    <label :for="`mix_step_${index}_speed`">{{ t('step_speed') }}</label>
+                    <!-- A step that turns the shaft may not ask for zero: the device would raise it
+                         to the drive's slowest frequency and turn the motor. A pause is what
+                         standing still is for, so only a pause starts at zero. -->
+                    <InputNumber
+                      :id="`mix_step_${index}_speed`"
+                      v-model="step.speed"
+                      class="mono"
+                      :disabled="step.type === MIXER_STEP_PAUSE"
+                      :min="step.type === MIXER_STEP_PAUSE ? 0 : MIXER_MIN_MOTION_SPEED_RPM"
+                      :max="MIXER_MAX_SPEED_RPM"
+                      :step="MIXER_SPEED_STEP_RPM"
+                      @change="normalizeInPlace(step)"
+                    />
+                    <!-- What that speed actually becomes after the conversion through mix_rpm_50hz
+                         and the drive's own 1.0 .. 99.0 Hz limits. -->
+                    <div v-if="step.type !== MIXER_STEP_PAUSE" :id="`mix_step_${index}_effect`" class="mixer-step-effect mono">
+                      {{ t('step_effective', { hz: stepFrequencyText(step), rpm: stepEffectiveRpm(step) }) }}
+                    </div>
+                  </div>
+                  <div class="mixer-step-field">
+                    <label :for="`mix_step_${index}_min`">{{ t('step_minutes') }}</label>
+                    <InputNumber
+                      :id="`mix_step_${index}_min`"
+                      class="mono"
+                      :model-value="splitDuration(step.duration).minutes"
+                      min="0"
+                      :max="MAX_DURATION_MINUTES"
+                      @update:model-value="(value?: number) => setDurationMinutes(step, value)"
+                    />
+                  </div>
+                  <div class="mixer-step-field">
+                    <label :for="`mix_step_${index}_sec`">{{ t('step_seconds') }}</label>
+                    <InputNumber
+                      :id="`mix_step_${index}_sec`"
+                      class="mono"
+                      :model-value="splitDuration(step.duration).seconds"
+                      min="0"
+                      max="59"
+                      @update:model-value="(value?: number) => setDurationSeconds(step, value)"
+                    />
+                  </div>
+                  <div class="mixer-step-actions">
+                    <Button :id="`mix_step_${index}_up`" type="button" variant="outline" :disabled="index === 0" @click="moveStep(index, -1)">
+                      {{ t('step_up') }}
+                    </Button>
+                    <Button :id="`mix_step_${index}_down`" type="button" variant="outline" :disabled="index === draft.steps.length - 1" @click="moveStep(index, 1)">
+                      {{ t('step_down') }}
+                    </Button>
+                    <Button :id="`mix_step_${index}_remove`" type="button" variant="danger" @click="removeStep(index)">
+                      {{ t('step_remove') }}
+                    </Button>
                   </div>
                 </div>
-                <div class="mixer-step-field">
-                  <label :for="`mix_step_${index}_min`">{{ t('step_minutes') }}</label>
-                  <InputNumber
-                    :id="`mix_step_${index}_min`"
-                    class="mono"
-                    :model-value="splitDuration(step.duration).minutes"
-                    min="0"
-                    :max="MAX_DURATION_MINUTES"
-                    @update:model-value="(value?: number) => setDurationMinutes(step, value)"
-                  />
-                </div>
-                <div class="mixer-step-field">
-                  <label :for="`mix_step_${index}_sec`">{{ t('step_seconds') }}</label>
-                  <InputNumber
-                    :id="`mix_step_${index}_sec`"
-                    class="mono"
-                    :model-value="splitDuration(step.duration).seconds"
-                    min="0"
-                    max="59"
-                    @update:model-value="(value?: number) => setDurationSeconds(step, value)"
-                  />
-                </div>
-                <div class="mixer-step-actions">
-                  <Button :id="`mix_step_${index}_up`" type="button" variant="outline" :disabled="index === 0" @click="moveStep(index, -1)">
-                    {{ t('step_up') }}
-                  </Button>
-                  <Button :id="`mix_step_${index}_down`" type="button" variant="outline" :disabled="index === draft.steps.length - 1" @click="moveStep(index, 1)">
-                    {{ t('step_down') }}
-                  </Button>
-                  <Button :id="`mix_step_${index}_remove`" type="button" variant="danger" @click="removeStep(index)">
-                    {{ t('step_remove') }}
-                  </Button>
-                </div>
+              </div>
+
+              <div class="mixer-editor-footer">
+                <Button id="mix_step_add" type="button" variant="gray" :disabled="draft.steps.length >= MIXER_MAX_STEPS" @click="addStep">
+                  {{ t('add_step') }}
+                </Button>
+                <span class="muted">{{ t('steps_count', { n: draft.steps.length, max: MIXER_MAX_STEPS }) }}</span>
               </div>
             </div>
-
-            <div class="mixer-editor-footer">
-              <Button id="mix_step_add" type="button" variant="gray" :disabled="draft.steps.length >= MIXER_MAX_STEPS" @click="addStep">
-                {{ t('add_step') }}
-              </Button>
-              <span class="muted">{{ t('steps_count', { n: draft.steps.length, max: MIXER_MAX_STEPS }) }}</span>
-            </div>
-          </div>
-        </form>
-      </section>
+          </form>
+        </section>
+      </div>
     </div>
   </Layout>
 </template>
 
 <style scoped>
+/* Not the even halves .grid-2 gives by default: a step row of the editor needs about 840px before
+   its fields wrap, so the editor is given everything the left column does not need. What the left
+   column needs is 394px and not a pixel less - a .field is minmax(140px, 1fr) + 200px with a 16px
+   gap, plus the card's padding and border - and a narrower track does not push the cards wider,
+   it pushes their controls out through the right-hand edge. The one-column breakpoint is repeated
+   from .grid-2 because this rule would otherwise outlive it. */
+.mixer-grid {
+  grid-template-columns: minmax(400px, 440px) 1fr;
+}
+
+@media (max-width: 1024px) {
+  .mixer-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .field-switch {
   justify-self: end;
 }

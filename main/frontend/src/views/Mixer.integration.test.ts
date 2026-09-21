@@ -7,8 +7,9 @@
  *              posts that program's two keys only, and they carry the edited steps.
  * MIX-I-003 — the editor's Save is dead until something actually changes, and a removed step
  *              wakes it up.
- * MIX-I-004 — the control and connection cards each post their own mix_* keys and nothing else:
- *              the whole settings document does not fit the firmware's 4 KB request body.
+ * MIX-I-004 — the master switch and the program selector post one key each the moment they are
+ *              touched; the drive card still waits for its Save. Every post carries its own keys
+ *              only — the whole settings document does not fit the firmware's 4 KB request body.
  * MIX-I-005 — /info is polled once a second while the page is open and not once after it is left.
  * MIX-I-006 — the editor shows what a typed speed becomes after the conversion and the drive's
  *              own limits, and refuses a zero speed on anything but a pause.
@@ -157,7 +158,8 @@ const mountMixer = async () => {
   return wrapper;
 };
 
-// The page carries three forms; each test names the one it submits by a control only that form has.
+// The page carries two forms — the drive card and the editor; each test names the one it submits
+// by a control only that form has. The mixer card has none: its two controls apply on the spot.
 const formWith = (wrapper: VueWrapper, selector: string) =>
   wrapper.findAll('form').find((form) => form.find(selector).exists())!;
 
@@ -275,21 +277,42 @@ describe('MIX-I-003: the editor Save button', () => {
   });
 });
 
-describe('MIX-I-004: the other two cards', () => {
-  it('post their own mix_ keys and nothing else', async () => {
+describe('MIX-I-004: what each card posts', () => {
+  it('applies the switch and the program at once, and the drive card only on Save', async () => {
     const wrapper = await mountMixer();
 
-    await formWith(wrapper, '#mix_enabled').trigger('submit');
+    await wrapper.find('#mix_enabled').setValue(false);
+    // setSelected() rather than setValue(1): the option values are numbers, so Vue keeps them on
+    // the element rather than in its DOM value, and matching by value would select nothing.
+    await wrapper.find('#mix_prog').findAll('option')[1].setSelected();
     await formWith(wrapper, '#mix_vfd_addr').trigger('submit');
     await flushPromises();
 
-    expect(payloads().map((payload) => Object.keys(payload))).toEqual([
-      ['mix_enabled', 'mix_prog'],
-      ['mix_rpm_50hz', 'mix_vfd_port', 'mix_vfd_addr', 'mix_rev_code', 'mix_dir_inv'],
+    // One key per post, so touching both controls in quick succession cannot send the older
+    // value of one alongside the newer value of the other.
+    expect(payloads()).toEqual([
+      { mix_enabled: false },
+      { mix_prog: 1 },
+      {
+        mix_rpm_50hz: 1400,
+        mix_vfd_port: 2,
+        mix_vfd_addr: 12,
+        mix_rev_code: 3,
+        mix_dir_inv: false,
+      },
     ]);
     payloads().forEach((payload) => {
       expect(Object.keys(payload).every((key) => key.startsWith('mix_'))).toBe(true);
     });
+
+    wrapper.unmount();
+  });
+
+  it('leaves the mixer card with no form and no Save of its own', async () => {
+    const wrapper = await mountMixer();
+
+    expect(wrapper.find('#mix_enabled').element.closest('form')).toBeNull();
+    expect(wrapper.find('#mix_prog').element.closest('form')).toBeNull();
 
     wrapper.unmount();
   });
