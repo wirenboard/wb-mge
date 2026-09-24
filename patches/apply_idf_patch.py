@@ -357,18 +357,31 @@ def main():
         "patch_filename",
         help="Patch filename (basename only, resolved relative to this script's directory).",
     )
+    parser.add_argument(
+        "--root",
+        default=None,
+        help="Directory the patch paths are relative to. Defaults to $IDF_PATH; pass the project "
+             "root to patch a file under managed_components/.",
+    )
     args = parser.parse_args()
 
-    # Read IDF_PATH from environment — set by EIM_ACTIVATE when called from make.
-    idf_path_env = os.environ.get("IDF_PATH")
-    if not idf_path_env:
-        print("ERROR: IDF_PATH is not set in the environment.", file=sys.stderr)
-        sys.exit(1)
+    if args.root:
+        idf_path = Path(args.root).resolve()
+        if not idf_path.is_dir():
+            print("ERROR: --root does not exist or is not a directory: {}".format(idf_path),
+                  file=sys.stderr)
+            sys.exit(1)
+    else:
+        # Read IDF_PATH from environment — set by EIM_ACTIVATE when called from make.
+        idf_path_env = os.environ.get("IDF_PATH")
+        if not idf_path_env:
+            print("ERROR: IDF_PATH is not set in the environment.", file=sys.stderr)
+            sys.exit(1)
 
-    idf_path = Path(idf_path_env).resolve()
-    if not idf_path.is_dir():
-        print("ERROR: IDF_PATH does not exist or is not a directory: {}".format(idf_path), file=sys.stderr)
-        sys.exit(1)
+        idf_path = Path(idf_path_env).resolve()
+        if not idf_path.is_dir():
+            print("ERROR: IDF_PATH does not exist or is not a directory: {}".format(idf_path), file=sys.stderr)
+            sys.exit(1)
 
     # Resolve patch file relative to this script's directory (patches/).
     patches_dir = Path(__file__).parent

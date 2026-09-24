@@ -134,6 +134,15 @@ qemu-apply-idf-patches: check-idf-pins
 	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug04-openeth-isr-dram-log.patch
 	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug05-lact-timer-null-isr-guard.patch
 	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug06-uart-install-rxfifo-storm.patch
+	@# A MANAGED component, not the IDF, hence --root; see the same block in Makefile's
+	@# apply-idf-patches. The QEMU firmware runs the same RS-485 Modbus slave, and
+	@# api_tests/19_test_rs485_oversize_burst.py is what proves the patch is in.
+	@$(EIM_ACTIVATE) && \
+	    if [ ! -d managed_components/espressif__esp-modbus ]; then \
+	        echo "Resolving components before patching esp-modbus..."; \
+	        CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=$(QEMU_SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra;$(MB_ROLE_SDKCONFIG_DEFAULTS)" reconfigure >/dev/null; \
+	    fi; \
+	    python3 patches/apply_idf_patch.py --root . bug07-modbus-rtu-oversize-frame-abort.patch
 
 # check-idf-pins is listed explicitly, not left to qemu-apply-idf-patches: this is
 # the entry point of the QEMU build (qemu-build, qemu-test, the Jenkins e2e stage),

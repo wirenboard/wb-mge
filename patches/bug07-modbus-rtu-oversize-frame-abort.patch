@@ -1,0 +1,41 @@
+Drop an oversize RS-485 burst instead of aborting the firmware.
+
+esp-modbus clamps the byte count of a received burst INCLUSIVELY:
+
+    port_obj->recv_length = (event.size < MB_BUFFER_SIZE) ? event.size : MB_BUFFER_SIZE;
+
+so a burst that fills the whole UART RX ring makes recv_length exactly
+MB_BUFFER_SIZE (CONFIG_FMB_BUFFER_SIZE, 260 here). mbs_rtu_transp_receive()
+then reads that many bytes and runs
+
+    assert(length < MB_RTU_SER_PDU_SIZE_MAX);   // MB_RTU_SER_PDU_SIZE_MAX == MB_BUFFER_SIZE
+
+which fails, calls abort() and reboots the device. Any line noise on an idle
+RS-485 pair reaches that size sooner or later, so an unterminated bus turns
+into a reboot loop — observed on WB-MGU as a panic every 15-110 s, with the
+backtrace mbs_rtu_transp_receive -> mbs_poll -> mbc_ser_slave_task.
+
+A valid Modbus RTU ADU is at most 256 bytes, so a burst at or above the buffer
+size cannot be a frame worth parsing. Drop it the same way the file already
+drops a too-short one. Reported upstream behaviour, not a wb-mge bug — remove
+this patch once esp-modbus fixes it.
+
+--- a/managed_components/espressif__esp-modbus/modbus/mb_ports/serial/port_serial.c
++++ b/managed_components/espressif__esp-modbus/modbus/mb_ports/serial/port_serial.c
+@@ -165,6 +165,16 @@
+                         (void)mb_port_ser_rx_flush(&port_obj->base);
+                         break;
+                     }
++                    // wb-mge: drop an oversize burst instead of handing it up. The clamp above is
++                    // inclusive, so a burst that fills the whole RX ring makes recv_length exactly
++                    // MB_BUFFER_SIZE, and mbs_rtu_transp_receive() then fails its
++                    // assert(length < MB_RTU_SER_PDU_SIZE_MAX) and aborts the firmware. A valid RTU
++                    // ADU is at most 256 bytes, so nothing legitimate is lost here.
++                    if (event.size >= MB_BUFFER_SIZE) {
++                        ESP_LOGD(TAG, "%s, drop oversize packet %d byte(s)", port_obj->base.descr.parent_name, (int)event.size);
++                        (void)mb_port_ser_rx_flush(&port_obj->base);
++                        break;
++                    }
+                     // New frame is received, send an event to main FSM to read it into receiver buffer
+                     mb_port_event_post(&port_obj->base, EVENT(EV_FRAME_RECEIVED, port_obj->recv_length, NULL, 0));
+                     ESP_LOGD(TAG, "%s, frame %d bytes is ready.", port_obj->base.descr.parent_name, (int)port_obj->recv_length);

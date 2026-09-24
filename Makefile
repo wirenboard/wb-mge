@@ -468,6 +468,16 @@ check-idf-pins:
 apply-idf-patches: check-idf-pins
 	@echo "Applying IDF patches..."
 	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug01-uart-driver-delete-intr-order.patch
+	@# Patches a MANAGED component, not the IDF, hence --root. managed_components/ is
+	@# gitignored and materialised by the component manager during the first CMake
+	@# configure, so a fresh checkout has nothing to patch yet: resolve the dependencies
+	@# once before patching. Later builds find the tree in place and only pay the [skip].
+	@$(EIM_ACTIVATE) && \
+	    if [ ! -d managed_components/espressif__esp-modbus ]; then \
+	        echo "Resolving components before patching esp-modbus..."; \
+	        $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET);$(MB_ROLE_SDKCONFIG_DEFAULTS)" reconfigure >/dev/null; \
+	    fi; \
+	    python3 patches/apply_idf_patch.py --root . bug07-modbus-rtu-oversize-frame-abort.patch
 
 # NOTE: the build/ dir is shared across signatures. When switching TARGET from
 # one signature to another run `make clean` first to avoid a stale/mixed artifact.
