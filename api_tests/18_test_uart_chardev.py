@@ -6,18 +6,17 @@ RS-485 port 1 is the Modbus slave answering a request addressed to it — so the
 stimulus is an RTU request written INTO the chardev, and the bytes this test looks
 for are the slave's reply. That exercises the chardev in both directions.
 
-With the gateway, bridge and sniffer files gone, this is the only test left that
-opens a UART chardev — so it is also the only thing that would notice the QEMU
--serial wiring breaking, which conftest's _uart_leak_guard assumes is real.
+With the gateway, bridge and sniffer files gone, this and 19_test_rs485_oversize_burst
+are the only tests left that open a UART chardev — so between them they are the only
+thing that would notice the QEMU -serial wiring breaking, which conftest's
+_uart_leak_guard assumes is real. The RTU helpers both use live in rtu_helpers.py.
 """
 
 import qemu_ports
-import socket
-import struct
-import time
 import pytest
 
 from conftest import require_uart_chardev
+from rtu_helpers import MB_DEFAULT_UNIT_ID, build_rtu_request, drain, read_reply
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -31,55 +30,6 @@ def _baseline(api):
 
 
 UART1_TCP_PORT = qemu_ports.UART1_TCP_PORT  # UART1 chardev TCP socket (QEMU -serial tcp::<slot UART1 port>,server,nowait)
-
-# The Modbus slave answers this unit id by default (mb_slave_id, 1..247, default 1) and
-# holding register 0 ("scratch_0") is in its descriptor table. A wrong address would still
-# produce bytes — an exception frame is a frame — but asking for a real register keeps the
-# stimulus honest.
-MB_DEFAULT_UNIT_ID = 1
-
-
-def _crc16(data: bytes) -> int:
-    """Modbus RTU CRC16."""
-    crc = 0xFFFF
-    for byte in data:
-        crc ^= byte
-        for _ in range(8):
-            crc = (crc >> 1) ^ 0xA001 if (crc & 1) else crc >> 1
-    return crc
-
-
-def _build_rtu_request(unit_id, fc, addr, count):
-    """A Modbus RTU request frame: address + PDU + CRC16."""
-    body = bytes([unit_id, fc]) + struct.pack('>HH', addr, count)
-    crc = _crc16(body)
-    return body + bytes([crc & 0xFF, crc >> 8])
-
-
-def _drain(sock, window_s=0.2):
-    """Discard whatever is already buffered on the chardev."""
-    sock.settimeout(window_s)
-    try:
-        while sock.recv(256):
-            pass
-    except socket.timeout:
-        pass
-
-
-def _read_reply(sock, window_s):
-    """Read from the chardev until something arrives or the window expires."""
-    sock.settimeout(0.5)
-    received = b''
-    deadline = time.monotonic() + window_s
-    while time.monotonic() < deadline:
-        try:
-            chunk = sock.recv(64)
-        except socket.timeout:
-            continue
-        if chunk:
-            received += chunk
-            break
-    return received
 
 
 @pytest.mark.qemu
@@ -97,11 +47,11 @@ def test_uart1_chardev_receives_bytes(api, is_qemu):
     uart1_sock = require_uart_chardev(UART1_TCP_PORT, is_qemu, timeout=3.0)
 
     try:
-        _drain(uart1_sock)
+        drain(uart1_sock)
 
         # Read holding register 0 from the RS-485 slave on port 1.
-        uart1_sock.sendall(_build_rtu_request(MB_DEFAULT_UNIT_ID, 3, 0, 1))
-        received = _read_reply(uart1_sock, window_s=5.0)
+        uart1_sock.sendall(build_rtu_request(MB_DEFAULT_UNIT_ID, 3, 0, 1))
+        received = read_reply(uart1_sock, window_s=5.0)
 
         assert len(received) > 0, (
             f"No bytes received on UART1 TCP port {UART1_TCP_PORT} within 5 s of writing a "
