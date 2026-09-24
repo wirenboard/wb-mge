@@ -13,6 +13,12 @@ PYTEST_PYTHON ?= $(shell [ -f "$(CURDIR)/api_tests/.venv/bin/python" ] && echo "
 # whichever role wrote sdkconfig.qemu_build first. The default role keeps the plain name.
 QEMU_SDKCONFIG_FILE := sdkconfig.qemu_build$(MB_ROLE_SUFFIX)
 
+# The QEMU twin of IDF_HW_PROJECT_ARGS (Makefile): the project arguments every QEMU
+# idf.py invocation needs, so the build and the dependency-resolving reconfigure in
+# qemu-apply-idf-patches cannot drift apart. The DEFS are load-bearing — they carry
+# TARGET_PROJECT_NAME, which CMakeLists.txt hands to project().
+IDF_QEMU_PROJECT_ARGS = -DSDKCONFIG=$(QEMU_SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra;$(MB_ROLE_SDKCONFIG_DEFAULTS)" $(addprefix -D, $(DEFS))
+
 # Host ports for the QEMU launchers below, taken from api_tests/qemu_ports.py — the SAME
 # module conftest.py builds its hostfwd/-serial arguments and its --ip default from.
 #
@@ -128,7 +134,23 @@ qemu-build: build-frontend build-idf-project-qemu
 # check-idf-pins comes first (as for the hardware apply-idf-patches): under
 # `make -j` an unordered prerequisite would let the patches land while the pin
 # check is still running.
-qemu-apply-idf-patches: check-idf-pins
+# Switching from a hardware build to a QEMU one needs a fullclean so CMake reconfigures
+# with the right source selection. It runs HERE, ahead of the patches, rather than inside
+# build-idf-project-qemu: fullclean deletes managed_components/, so a fullclean after
+# qemu-apply-idf-patches would throw the bug07 patch away and leave the build compiling an
+# unpatched esp-modbus. COMPONENT_MANAGER_ALLOW_MODIFIED is what lets it delete a
+# component the patch has modified — see the block in Makefile's apply-idf-patches.
+# check-idf-pins first, for the same reason the patch targets list it: no destructive step
+# may run ahead of a check that is about to reject the build.
+qemu-fullclean-if-stale: check-idf-pins
+	@if [ -f "build/CMakeCache.txt" ]; then \
+	    if ! grep -q "qemu_mge" "build/CMakeCache.txt"; then \
+	        echo "Detected hardware build cache — running fullclean before QEMU build..."; \
+	        $(EIM_ACTIVATE) && $(COMPONENT_MANAGER_ALLOW_MODIFIED) $(IDF_PY) -DSDKCONFIG=$(QEMU_SDKCONFIG_FILE) fullclean; \
+	    fi; \
+	fi
+
+qemu-apply-idf-patches: check-idf-pins qemu-fullclean-if-stale
 	@echo "Applying IDF patches for QEMU build..."
 	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug01-uart-driver-delete-intr-order.patch
 	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug04-openeth-isr-dram-log.patch
@@ -140,7 +162,7 @@ qemu-apply-idf-patches: check-idf-pins
 	@$(EIM_ACTIVATE) && \
 	    if [ ! -d managed_components/espressif__esp-modbus ]; then \
 	        echo "Resolving components before patching esp-modbus..."; \
-	        CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=$(QEMU_SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra;$(MB_ROLE_SDKCONFIG_DEFAULTS)" reconfigure >/dev/null; \
+	        CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) $(IDF_QEMU_PROJECT_ARGS) reconfigure >/dev/null; \
 	    fi; \
 	    python3 patches/apply_idf_patch.py --root . bug07-modbus-rtu-oversize-frame-abort.patch
 
@@ -149,16 +171,11 @@ qemu-apply-idf-patches: check-idf-pins
 # and it must verify the IDF pins just like the hardware build-idf-project does.
 build-idf-project-qemu: check-idf-pins qemu-apply-idf-patches
 	@echo "Building for QEMU with OpenEth ethernet driver"
-	@# Detect stale hardware build cache: if CMakeCache exists but was not a QEMU build,
-	@# run fullclean to force CMake reconfiguration with correct source file selection.
-	@# No need to rm sdkconfig — each build type uses its own sdkconfig file.
-	@if [ -f "build/CMakeCache.txt" ]; then \
-	    if ! grep -q "qemu_mge" "build/CMakeCache.txt"; then \
-	        echo "Detected hardware build cache — running fullclean before QEMU build..."; \
-	        $(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(QEMU_SDKCONFIG_FILE) fullclean; \
-	    fi; \
-	fi
-	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) -DSDKCONFIG=$(QEMU_SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra;$(MB_ROLE_SDKCONFIG_DEFAULTS)" $(addprefix -D, $(DEFS)) build
+	@# The stale-hardware-cache fullclean lives in qemu-fullclean-if-stale, ahead of the
+	@# patches rather than here; see the comment on that target.
+	@$(EIM_ACTIVATE) && CONFIG_ETH_USE_OPENETH=1 $(IDF_PY) $(IDF_QEMU_PROJECT_ARGS) build
+	@# Same post-build assertion as the hardware build-idf-project; see the comment there.
+	@python3 patches/apply_idf_patch.py --root . --verify bug07-modbus-rtu-oversize-frame-abort.patch
 
 qemu-create-flash-image: build-idf-project-qemu
 	@echo "Generating QEMU flash image..."
@@ -381,8 +398,8 @@ qemu-help:
 	@echo "List tests:  make qemu-collect-only"
 
 qemu-clean:
-	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(QEMU_SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra;$(MB_ROLE_SDKCONFIG_DEFAULTS)" fullclean
+	@$(EIM_ACTIVATE) && $(COMPONENT_MANAGER_ALLOW_MODIFIED) $(IDF_PY) -DSDKCONFIG=$(QEMU_SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.qemu.minimal;sdkconfig.qemu.extra;$(MB_ROLE_SDKCONFIG_DEFAULTS)" fullclean
 	@rm -rf build
 	@rm -f $(QEMU_SDKCONFIG_FILE) $(QEMU_SDKCONFIG_FILE).old
 
-.PHONY: qemu-build qemu-apply-idf-patches build-idf-project-qemu qemu-create-flash-image qemu-create-efuse-image qemu-monitor qemu-run qemu-run-locked qemu-web qemu-web-locked qemu-ports qemu-bin-path qemu-test qemu-test-locked qemu-coverage qemu-coverage-report qemu-collect-only qemu-help qemu-clean
+.PHONY: qemu-build qemu-apply-idf-patches qemu-fullclean-if-stale build-idf-project-qemu qemu-create-flash-image qemu-create-efuse-image qemu-monitor qemu-run qemu-run-locked qemu-web qemu-web-locked qemu-ports qemu-bin-path qemu-test qemu-test-locked qemu-coverage qemu-coverage-report qemu-collect-only qemu-help qemu-clean

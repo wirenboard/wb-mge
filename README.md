@@ -519,6 +519,7 @@ graph TD
     qemu-create-flash-image --> build-idf-project-qemu
     build-idf-project-qemu --> qemu-apply-idf-patches
     qemu-apply-idf-patches --> check-idf-pins
+    qemu-apply-idf-patches --> qemu-fullclean-if-stale
 ```
 
 ## Building with Docker

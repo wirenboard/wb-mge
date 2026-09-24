@@ -80,11 +80,13 @@ graph TD
     qemu-test-locked --> qemu-create-efuse-image
     qemu-create-flash-image --> build-idf-project-qemu
     build-idf-project-qemu --> qemu-apply-idf-patches
+    qemu-apply-idf-patches --> qemu-fullclean-if-stale
 ```
 
 - `qemu-build` — full build target (frontend + firmware)
 - `qemu-create-flash-image` — depends on `build-idf-project-qemu`: compiles QEMU firmware (incremental) then merges into a single .bin
-- `qemu-apply-idf-patches` — called automatically by `build-idf-project-qemu`: applies idempotent patches to IDF source files required for QEMU builds (UART teardown fix bug01, OpenEth ISR DRAM log fix bug04, LACT timer NULL ISR guard bug05) via patches/apply_idf_patch.py
+- `qemu-apply-idf-patches` — called automatically by `build-idf-project-qemu`: applies idempotent patches to IDF source files required for QEMU builds (UART teardown fix bug01, OpenEth ISR DRAM log fix bug04, LACT timer NULL ISR guard bug05, UART install RX FIFO storm fix bug06) via patches/apply_idf_patch.py. It also applies bug07, which unlike the others patches a **managed component** (esp-modbus) rather than the IDF and therefore runs with `--root .`; `build-idf-project-qemu` re-checks it with `--verify` after the build, because a component the manager decides to re-fetch comes back unpatched.
+- `qemu-fullclean-if-stale` — prerequisite of `qemu-apply-idf-patches`: runs `idf.py fullclean` when `build/` holds a hardware CMake cache. It sits ahead of the patches on purpose — `fullclean` deletes `managed_components/`, so running it afterwards would discard the bug07 patch and build an unpatched esp-modbus
 - `qemu-create-efuse-image` — no dependencies: creates the eFuse image once
 - `qemu-web`, `qemu-run`, `qemu-test` — always compile QEMU firmware (incremental, fast if nothing changed) before running,
   and hold the working-tree lock across that build and the run

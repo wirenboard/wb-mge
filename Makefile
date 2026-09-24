@@ -465,6 +465,37 @@ check-idf-pins:
 # apply-idf-patches` let the patches land while the pin check was still running,
 # so a build that the check was about to reject had already modified the IDF
 # sources. The prerequisite here makes the order a hard one.
+#
+# bug07 patches a MANAGED component (see apply-idf-patches below), which leaves
+# managed_components/espressif__esp-modbus differing from the checksums the component
+# manager recorded when it unpacked it. Two of its checks notice that, and only one of
+# them is a problem:
+#
+#   * BUILD: dependency_local_changed() compares the directory against the recorded
+#     per-file checksums, but only when IDF_COMPONENT_STRICT_CHECKSUM is set — and it
+#     defaults to 0. Off the strict path the manager compares the component's
+#     .component_hash FILE against the hash in dependencies.lock, and the patch does not
+#     touch that file, so the component stays "up to date", is never re-fetched, and the
+#     patch survives every build. Nothing to do here.
+#   * CLEAN: remove_managed_components() validates the directory unconditionally before
+#     deleting it and refuses on a mismatch, which made `make clean` fail outright with
+#     "Some components in the managed_components directory were modified on the disk".
+#
+# OVERWRITE_MANAGED_COMPONENTS is the documented opt-out for exactly that check
+# (idf_component_tools/environment.py: "Overwrite files in the managed_components
+# directory, even if they have been modified by the user"). It is set ONLY on the
+# fullclean invocations, where "delete it even though we patched it" is precisely what
+# is wanted — the component is re-fetched and re-patched on the next build. Exporting it
+# for the build itself would instead let a re-fetch silently overwrite the patch, which
+# is the one failure mode worth keeping loud.
+COMPONENT_MANAGER_ALLOW_MODIFIED := IDF_COMPONENT_OVERWRITE_MANAGED_COMPONENTS=1
+
+# The project arguments every hardware idf.py invocation needs, in one place. Both the
+# build and the dependency-resolving reconfigure in apply-idf-patches expand this: the
+# DEFS carry TARGET_PROJECT_NAME, which CMakeLists.txt passes straight to project(), so an
+# invocation that omits them dies with "project Macro invoked with incorrect arguments".
+IDF_HW_PROJECT_ARGS = -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET);$(MB_ROLE_SDKCONFIG_DEFAULTS)" $(addprefix -D, $(DEFS))
+
 apply-idf-patches: check-idf-pins
 	@echo "Applying IDF patches..."
 	@$(EIM_ACTIVATE) && python3 patches/apply_idf_patch.py bug01-uart-driver-delete-intr-order.patch
@@ -475,7 +506,7 @@ apply-idf-patches: check-idf-pins
 	@$(EIM_ACTIVATE) && \
 	    if [ ! -d managed_components/espressif__esp-modbus ]; then \
 	        echo "Resolving components before patching esp-modbus..."; \
-	        $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET);$(MB_ROLE_SDKCONFIG_DEFAULTS)" reconfigure >/dev/null; \
+	        $(IDF_PY) $(IDF_HW_PROJECT_ARGS) reconfigure >/dev/null; \
 	    fi; \
 	    python3 patches/apply_idf_patch.py --root . bug07-modbus-rtu-oversize-frame-abort.patch
 
@@ -483,7 +514,12 @@ apply-idf-patches: check-idf-pins
 # one signature to another run `make clean` first to avoid a stale/mixed artifact.
 build-idf-project: check-idf-pins apply-idf-patches
 	@echo 'Building ESP-IDF project'
-	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET);$(MB_ROLE_SDKCONFIG_DEFAULTS)" $(addprefix -D, $(DEFS)) build
+	@$(EIM_ACTIVATE) && $(IDF_PY) $(IDF_HW_PROJECT_ARGS) build
+	@# The build's own CMake pass runs the component manager, which re-fetches a managed
+	@# component whose .component_hash stopped matching dependencies.lock — over the patch
+	@# apply-idf-patches applied a moment ago. That would compile unpatched sources without
+	@# a word, so assert the patch is still in afterwards rather than trust the ordering.
+	@python3 patches/apply_idf_patch.py --root . --verify bug07-modbus-rtu-oversize-frame-abort.patch
 	@$(MAKE) prepare_release
 
 prepare_release:
@@ -495,7 +531,7 @@ prepare_release:
 clean:
 	@echo 'Cleaning project'
 	@rm -rf $(BUILD_DIR)
-	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) fullclean
+	@$(EIM_ACTIVATE) && $(COMPONENT_MANAGER_ALLOW_MODIFIED) $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) fullclean
 	@rm -rf $(RELEASE_DIR)
 	@rm -rf $(COVERAGE_REPORT_DIR)
 	@rm -rf main/frontend/dist

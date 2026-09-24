@@ -38,6 +38,14 @@ Limitations:
 
 Usage:
     python3 patches/apply_idf_patch.py bug01-uart-driver-delete-intr-order.patch
+    python3 patches/apply_idf_patch.py --root . bug07-modbus-rtu-oversize-frame-abort.patch
+    python3 patches/apply_idf_patch.py --root . --verify bug07-modbus-rtu-oversize-frame-abort.patch
+
+--root replaces IDF_PATH as the directory the `a/<path>` headers are relative to, which
+is how a patch reaches a component under managed_components/ instead of the IDF itself.
+--verify only reports: it exits 0 when the patch is in and 1 when it is not, and is meant
+to run AFTER a build, where the component manager may have re-fetched the component over
+an applied patch.
 """
 
 import argparse
@@ -363,6 +371,12 @@ def main():
         help="Directory the patch paths are relative to. Defaults to $IDF_PATH; pass the project "
              "root to patch a file under managed_components/.",
     )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="Do not patch anything: exit 0 if the patch is applied, 1 if it is not. Used after a "
+             "build to catch a managed component that was re-fetched over an applied patch.",
+    )
     args = parser.parse_args()
 
     if args.root:
@@ -392,6 +406,16 @@ def main():
         sys.exit(1)
 
     patch_name = patch_file.name
+
+    if args.verify:
+        if is_applied(idf_path, patch_file):
+            print("[verified] {}".format(patch_name))
+            sys.exit(0)
+        print("ERROR: {} is NOT applied under {}.".format(patch_name, idf_path), file=sys.stderr)
+        print("       A managed component is re-fetched whenever its .component_hash stops "
+              "matching dependencies.lock, which silently replaces the patched sources.",
+              file=sys.stderr)
+        sys.exit(1)
 
     # Check if the patch is already applied (marker lookup, dry-run fallback).
     if is_applied(idf_path, patch_file):
