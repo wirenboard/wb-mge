@@ -6,10 +6,11 @@ RS-485 port 1 is the Modbus slave answering a request addressed to it — so the
 stimulus is an RTU request written INTO the chardev, and the bytes this test looks
 for are the slave's reply. That exercises the chardev in both directions.
 
-With the gateway, bridge and sniffer files gone, this and 19_test_rs485_oversize_burst
-are the only tests left that open a UART chardev — so between them they are the only
-thing that would notice the QEMU -serial wiring breaking, which conftest's
-_uart_leak_guard assumes is real. The RTU helpers both use live in rtu_helpers.py.
+With the gateway, bridge and sniffer files gone, the tests that still open a UART
+chardev are this one, 19_test_rs485_oversize_burst and 05_test_modbus_tcp_restart —
+between them they are what would notice the QEMU -serial wiring breaking, which
+conftest's _uart_leak_guard assumes is real. The RTU helpers this file and 19 share
+live in rtu_helpers.py.
 """
 
 import qemu_ports

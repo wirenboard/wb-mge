@@ -123,8 +123,9 @@ endef
 # qemu-build: full build including frontend (use for initial/explicit QEMU builds).
 # qemu-create-flash-image depends on build-idf-project-qemu so that qemu-test always
 # compiles QEMU firmware (incremental, fast when nothing changed) before packaging.
-# If the last build was hardware, build-idf-project-qemu detects the stale cache and
-# runs fullclean automatically, then rebuilds with the correct QEMU config.
+# If the last build was hardware, qemu-fullclean-if-stale — a prerequisite of
+# qemu-apply-idf-patches, so it cannot run after the patches it would wipe — detects the
+# stale cache and runs fullclean, and the build then proceeds with the correct QEMU config.
 qemu-build: build-frontend build-idf-project-qemu
 
 # Apply patches to ESP-IDF sources required for QEMU builds.

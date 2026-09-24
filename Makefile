@@ -548,12 +548,15 @@ clean:
 # Flash and monitor
 #######################################
 
-# check-idf-pins is a prerequisite because `idf.py flash` builds the project
-# before flashing it: without it `make flash` would compile firmware on an
-# unverified set of pins. flash-all, monitor and ota-flash need no such guard —
-# they only push or read back artefacts that an earlier build produced.
-flash: check-idf-pins
-	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET);$(MB_ROLE_SDKCONFIG_DEFAULTS)" flash
+# check-idf-pins and apply-idf-patches are prerequisites because `idf.py flash` builds
+# the project before flashing it: without them `make flash` would compile firmware on
+# an unverified set of pins, or without the patches every other build path guarantees.
+# The argument list comes from IDF_HW_PROJECT_ARGS for the same reason build-idf-project
+# uses it: a hand-written copy here silently dropped TARGET_PROJECT_NAME, and a build
+# from a clean tree then died inside project(). flash-all, monitor and ota-flash need
+# no such guard — they only push or read back artefacts that an earlier build produced.
+flash: check-idf-pins apply-idf-patches
+	@$(EIM_ACTIVATE) && $(IDF_PY) $(IDF_HW_PROJECT_ARGS) flash
 
 # Flash all partitions (bootloader + partition table + OTA data + app) via esptool directly.
 # Useful when idf.py flash cannot detect the port automatically.
@@ -567,7 +570,7 @@ flash-all:
 		0x90000 build/$(TARGET).bin
 
 monitor:
-	@$(EIM_ACTIVATE) && $(IDF_PY) -DSDKCONFIG=$(SDKCONFIG_FILE) -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.defaults.$(TARGET);$(MB_ROLE_SDKCONFIG_DEFAULTS)" monitor
+	@$(EIM_ACTIVATE) && $(IDF_PY) $(IDF_HW_PROJECT_ARGS) monitor
 
 #######################################
 # OTA flash
