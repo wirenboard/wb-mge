@@ -350,15 +350,98 @@ docker run --rm -v $(pwd):/root/esp/project wb-mge-builder make
 
 ## Flashing the Device
 
+Three routes out of this repository; they differ mainly in what they require on the host:
+
+| Route | Command | Local ESP-IDF | What is written |
+| ----- | ------- | ------------- | --------------- |
+| OTA over HTTP | `make ota-flash` | not needed | application only, into the inactive OTA slot |
+| Serial, via `idf.py` | `make flash` | required | bootloader, partition table, OTA data, application |
+| Serial, via `esptool` | `make flash-all` | required | the same four images, straight from `build/` |
+
+The two serial routes write the same set at the same offsets; they differ in how they get there, not
+in what lands on the device. Neither of them touches `nvs` (all device settings) or `phy_init`, and
+neither erases the flash — settings survive every route in this table.
+
+All three take the model from `TARGET` — `mge_v3` by default, `mgu_v1` the other value.
+
+The device flashes without this repository at all: the System page of its own web interface installs
+a `.bin` by hand, and — when the browser can reach `fw-releases.wirenboard.com` — offers the
+published `stable` / `testing` build for this board. Both paths end in the same `POST /update` as
+`make ota-flash` below, which is usually the shortest way to put a CI artifact on a device.
+
+### OTA over HTTP — `make ota-flash`
+
+The only route that does not need the ESP-IDF toolchain on the host: it is plain `curl` against the
+web interface of the firmware already running on the device — `POST /auth` for a session cookie,
+then `POST /update` with the image. `python3` reads both answers, so it has to be on the host too;
+without it the target stops at `ERROR: Authentication failed`, which names the wrong culprit. A
+firmware built in Docker or downloaded from CI can be flashed from a machine where ESP-IDF was never
+installed.
+
+```bash
+make ota-flash OTA_HOST=192.168.1.1 OTA_USER=admin OTA_PASS=admin
+```
+
+| Variable | Default | Meaning |
+| -------- | ------- | ------- |
+| `OTA_HOST` | `192.168.1.1` | address of the device's web interface |
+| `OTA_USER` | `admin` | web-interface login |
+| `OTA_PASS` | `admin` | web-interface password |
+
+The target uploads `release/<RELEASE_FILE_NAME>` and builds nothing itself — run `make` first; its
+`prepare_release` step is what puts the image into `release/`. The directory is hard-coded in the
+recipe, so an image downloaded from CI has to be moved into `release/` before it can be sent.
+
+**The expected file name is recomputed from the current checkout**, not discovered in `release/`:
+
+```
+<TARGET>__<VERSION>_<GIT_BRANCH>_<GIT_HASH>.bin      # e.g. mge_v3__1.3.2_main_d8efef1.bin
+```
+
+`VERSION` comes from the first `version:` line of `ChangeLog`, `GIT_BRANCH` and `GIT_HASH` from
+git — with `/` in the branch name replaced by `_`, so `docs/flashing` gives `docs_flashing`.
+Switching branches or committing after the build changes the name `make ota-flash` looks for, and it
+then fails on an image that is sitting right there in `release/`. Either rebuild, or take the real
+name from `ls release/` and pass it explicitly:
+
+```bash
+make ota-flash RELEASE_FILE_NAME=mge_v3__1.3.2_main_d8efef1.bin OTA_HOST=192.168.1.1
+```
+
+`release/` holds the application image alone. OTA writes it into whichever of `ota_0` / `ota_1` is
+not currently running and, once the upload is verified, points `otadata` at it; the device then
+reboots into the new image. The bootloader, the partition table and `nvs` (all device settings) stay
+untouched, so settings survive the update. A changed partition layout cannot be delivered this way —
+that needs a serial flash, either target, both of which rewrite the partition table.
+
+The upload runs under a fixed `curl --max-time 60` with no variable to raise it. On a weak link a
+~1.2 MB image does not fit into that, and the failure reads `ERROR: Firmware upload failed` without
+mentioning the timeout.
+
+### Serial — `make flash` and `make flash-all`
+
 ```bash
 make flash
 ```
 
-To flash all partitions explicitly (bootloader, partition table, OTA data, app):
+To drive `esptool` directly instead — the same four images at the same offsets, useful when
+`idf.py flash` cannot detect the port automatically:
 
 ```bash
 make flash-all
 ```
+
+Both run the ESP-IDF toolchain from the host — `idf.py flash` and `python -m esptool` respectively,
+both under `scripts/idf_env.sh` — so both need ESP-IDF of the pinned version installed locally (see
+"Manual Build Instructions" above). What separates them is the preparation, not the result:
+`make flash` first verifies the pin set and rebuilds the ESP-IDF project when it is out of date,
+`make flash-all` writes what is already lying in `build/`. Neither rebuilds the frontend — that is a
+separate `make build-frontend`, so an edited web interface reaches the device only after a full
+`make`.
+
+Having built in Docker does not lift that requirement: the serial adapter would have to be handed to
+the container (`--device /dev/ttyUSB0`), which Docker Desktop does not support on macOS and offers
+on Windows only through the WSL2 + `usbipd` detour.
 
 ## Connecting to Device Console
 
