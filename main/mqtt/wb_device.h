@@ -26,7 +26,9 @@
  *                                          name; the value is "enabled", and a write sets it
  *
  * The user controls follow the store: a new user gets one, a rename republishes its meta, and a
- * deleted user's retained topics are cleared with empty payloads.
+ * deleted user's retained topics are cleared with empty payloads. The first session after
+ * wb_device_init() clears them for every id the store does not have, so a user deleted while
+ * there was no session is cleared too, even across a reboot or a restart of the client.
  */
 
 #include <stdbool.h>
@@ -68,13 +70,15 @@ void wb_device_build_default_id(char *buf, size_t len);
 esp_err_t wb_device_topic_error(const char *device_id, char *buf, size_t len);
 
 // Bind this layer to a connection. device_id is copied; transport is copied too, so the caller
-// may keep it on the stack. Forgets everything, including which user controls this device has
-// on the broker.
+// may keep it on the stack. Forgets everything; since which user controls this device has on the
+// broker is then unknown, every user id counts as possibly there, and the first session clears
+// the retained topics of each one the store does not have.
 void wb_device_init(const char *device_id, const wb_device_transport_t *transport);
 
 // Everything a fresh session needs: the device meta, its empty error, the meta and value of
-// every control, the clearing of the user controls whose user was deleted meanwhile, and last
-// the subscription to /devices/<id>/controls/+/on. Called on every CONNACK, because a broker
+// every control, the clearing of the user controls whose user was deleted meanwhile (in the
+// first session after wb_device_init(), of every id the store does not have), and last the
+// subscription to /devices/<id>/controls/+/on. Called on every CONNACK, because a broker
 // that lost its retained state must be told again.
 void wb_device_publish_all(void);
 

@@ -12,6 +12,7 @@
 
 #include "cJSON.h"
 #include "config.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "fp_store.h"
@@ -378,7 +379,13 @@ static bool wb_device_clear_user(uint8_t id)
     ok = (wb_device_publish_control_topic(control, WB_TOPIC_META_ERROR, WB_PAYLOAD_EMPTY) == ESP_OK) && ok;
     ok = (wb_device_publish_control_topic(control, WB_TOPIC_META, WB_PAYLOAD_EMPTY) == ESP_OK) && ok;
     if (ok) {
-        ESP_LOGI(TAG, "User %u is gone, its control is cleared", (unsigned)id);
+        // A name is set only once this client has published the control, so an empty one is an id
+        // swept by the first session after a start rather than a user deleted just now.
+        if (users[id - 1].name[0] != '\0') {
+            ESP_LOGI(TAG, "User %u is gone, its control is cleared", (unsigned)id);
+        } else {
+            ESP_LOGD(TAG, "User id %u is unused, its control is cleared", (unsigned)id);
+        }
         memset(&users[id - 1], 0, sizeof(users[id - 1]));
     }
     return ok;
@@ -391,8 +398,10 @@ static void wb_device_sync_users(bool all)
         return;
     }
 
-    // Too big for the stack of the publishing task, and needed only when something changed.
-    fp_store_user_t *snapshot = malloc(FP_STORE_USERS_MAX * sizeof(*snapshot));
+    // Too big for the stack of the publishing task, and needed only when something changed. PSRAM
+    // first: internal RAM is what the TLS session needs, and PSRAM may be absent.
+    fp_store_user_t *snapshot = heap_caps_malloc_prefer(FP_STORE_USERS_MAX * sizeof(*snapshot), 2,
+                                                        MALLOC_CAP_SPIRAM, MALLOC_CAP_DEFAULT);
     if (snapshot == NULL) {
         ESP_LOGE(TAG, "No memory for the user list, the user controls wait for the next pass");
         return;
@@ -410,7 +419,7 @@ static void wb_device_sync_users(bool all)
         present[user->id - 1] = true;
         ok = wb_device_sync_user(user, all) && ok;
     }
-    free(snapshot);
+    heap_caps_free(snapshot);
 
     for (int i = 0; i < FP_STORE_USERS_MAX; i++) {
         if ((!present[i]) && users[i].on_broker) {
@@ -436,8 +445,15 @@ void wb_device_init(const char *device_id_str, const wb_device_transport_t *ifac
     device_id[sizeof(device_id) - 1] = '\0';
     transport = *iface;
 
-    // A new binding may be a new device id or a new broker, where none of the old user controls is.
+    // Which user controls the broker holds is not known here: an earlier boot or client may have
+    // left the retained topics of a user deleted while there was no session. So every id counts
+    // as possibly on the broker, and the first session clears each one the store does not have;
+    // from then on on_broker again tracks what this client has published, and later sessions clear
+    // only that.
     memset(users, 0, sizeof(users));
+    for (int i = 0; i < FP_STORE_USERS_MAX; i++) {
+        users[i].on_broker = true;
+    }
     wb_device_reset();
 }
 

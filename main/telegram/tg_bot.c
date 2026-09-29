@@ -13,6 +13,7 @@
 
 #include "cJSON.h"
 #include "esp_crt_bundle.h"
+#include "esp_heap_caps.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -569,14 +570,15 @@ static void tg_bot_task(void *arg)
 
 void tg_bot_start(void)
 {
-    tg_bot_response = malloc(TG_BOT_RESPONSE_MAX);
+    // PSRAM first: internal RAM is what the TLS session needs, and PSRAM may be absent.
+    tg_bot_response = heap_caps_malloc_prefer(TG_BOT_RESPONSE_MAX, 2, MALLOC_CAP_SPIRAM, MALLOC_CAP_DEFAULT);
     if (tg_bot_response == NULL) {
         ESP_LOGE(TAG, "No memory for the response buffer: the Telegram bot is off");
         return;
     }
     if (xTaskCreate(tg_bot_task, "tg_bot", TG_BOT_TASK_STACK_SIZE, NULL, TG_BOT_TASK_PRIORITY, NULL) != pdPASS) {
         ESP_LOGE(TAG, "Failed to create the bot task: the Telegram bot is off");
-        free(tg_bot_response);
+        heap_caps_free(tg_bot_response);
         tg_bot_response = NULL;
     }
 }
