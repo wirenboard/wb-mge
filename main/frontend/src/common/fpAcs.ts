@@ -18,6 +18,40 @@ const ENROLL_POLL_INTERVAL_MS = 500;
 const IMAGE_TIMEOUT_MS = 5500;
 const HTTP_NOT_FOUND = 404;
 
+const FP_ERROR_BAD_REQUEST = 'fp_error_bad_request';
+
+// Device error string -> i18n key: the fixed strings of main/fp_acs (fp_http.c, fp_acs_req_str(),
+// the enrollment errors), the same way ERROR_MESSAGES in settings.ts maps the settings refusals.
+// Unlike there, a string with no entry is shown as the device sent it: the rest carry sensor codes
+// and esp_err names ("RegModel: ...", "ESP_ERR_NVS_...") that say more than a generic sentence.
+const FP_ERROR_MESSAGES: Record<string, string> = {
+  'unknown user': 'fp_error_unknown_user',
+  'unknown finger slot': 'fp_error_unknown_slot',
+  'sensor offline': 'fp_error_sensor_offline',
+  'busy': 'fp_error_busy',
+  'no room for another finger': 'fp_error_no_room',
+  'error': 'fp_error_unexpected',
+  'telegram username taken': 'fp_error_tg_username_taken',
+  'timeout': 'fp_error_timeout',
+  'no free slot on the sensor': 'fp_error_sensor_full',
+  'user storage unavailable': 'fp_error_storage',
+  'out of memory': 'fp_error_no_memory',
+  'not found': 'fp_error_not_found',
+  'full': 'fp_error_full',
+  'no image': 'fp_error_no_image',
+  'invalid user: name is 1..48 bytes of UTF-8, tg_username up to 32 of A-Z a-z 0-9 _': 'fp_error_invalid_user',
+  'invalid chat: id is a decimal chat id, name up to 48 bytes of UTF-8': 'fp_error_invalid_chat',
+  'invalid JSON object': FP_ERROR_BAD_REQUEST,
+  'expected {"id"?, "name", "enabled"?, "allow_fp"?, "allow_tg"?, "tg_username"?}': FP_ERROR_BAD_REQUEST,
+  'expected {"id"}': FP_ERROR_BAD_REQUEST,
+  'expected {"slot"}': FP_ERROR_BAD_REQUEST,
+  'expected {"action": "start", "user_id"} or {"action": "cancel"}': FP_ERROR_BAD_REQUEST,
+  'expected {"action": "add", "id", "name"}, {"action": "remove", "id"} or {"action": "clear"}': FP_ERROR_BAD_REQUEST,
+};
+
+// An i18n key, or the device's own string when there is none: either way a t() argument.
+export const fpErrorMessage = (deviceError: string): string => FP_ERROR_MESSAGES[deviceError] ?? deviceError;
+
 // Page-scoped: every call owns its own state, and the page starts it on mount and stops it on unmount.
 // `fast` switches the period from 1 s to the 500 ms an enrollment is followed at.
 export const useFpStatus = (fast: Ref<boolean>) => {
@@ -96,18 +130,20 @@ export const fetchFpImage = async (): Promise<Uint8Array | null> => {
 };
 
 // A refusal arrives either as an ApiError (HTTP 200 with success: false) or as ky's HTTPError that
-// carries the same envelope with a 4xx status; both name the reason in "error". Anything else is a
-// transport failure, whose message api() has already set ('timeout', 'connection_error', ...).
+// carries the same envelope with a 4xx status; both name the reason in "error", which is mapped
+// through fpErrorMessage(). Anything else is a transport failure, whose message api() has already
+// set ('timeout', 'connection_error', ...) and which is left alone: the device's "timeout" is an
+// enrollment that saw no finger, not a request that got no answer.
 export const fpErrorReason = async (err: unknown): Promise<string> => {
   if (err instanceof ApiError && err.deviceError) {
-    return err.deviceError;
+    return fpErrorMessage(err.deviceError);
   }
   const response = (err as { response?: Response }).response;
   if (response) {
     try {
       const body = await response.json();
       if (typeof body?.error === 'string') {
-        return body.error;
+        return fpErrorMessage(body.error);
       }
     } catch {
       // Not a JSON body: fall back to the error's own message.

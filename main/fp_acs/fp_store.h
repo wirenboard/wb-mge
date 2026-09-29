@@ -18,6 +18,8 @@
  *   ESP_ERR_NO_MEM           no room: FP_STORE_USERS_MAX users, FP_STORE_FINGERS_MAX fingers of
  *                            one user, or FP_STORE_TG_CHATS_MAX chats
  *   ESP_ERR_INVALID_STATE    the store is not available (fp_store_init() failed or was not run)
+ *   ESP_ERR_NOT_ALLOWED      the tg_username a create or an update sets is another user's
+ *                            (matched as fp_store_find_by_tg_username() does)
  *   anything else            the NVS write itself failed
  */
 

@@ -893,8 +893,11 @@ paths:
 
   # ── Fingerprint access control ──────────────────────────────────────────────────────
   # Present only in a WB-MGU master build (main/fp_acs/fp_acs.h: FP_ACS_ENABLED). Errors use
-  # ErrorResponse: 400 malformed request, 404 unknown user/slot/chat, 409 busy/full/sensor offline,
-  # 500 storage unavailable.
+  # ErrorResponse: 400 malformed request or unknown user/finger slot ("unknown user", "unknown
+  # finger slot", "not found"), 404 unknown chat, 409 busy/full/sensor offline/telegram username
+  # taken/user storage unavailable/NVS write failure, 500 out of memory. The mutations answer an
+  # unknown user or slot and a storage failure with 400 and 409 rather than 404 and 500, which the
+  # web UI cannot tell from a lost connection.
   /fp/status:
     get:
       summary: Sensor, enrollment, last event and last image state
@@ -923,7 +926,7 @@ paths:
                       step: { type: integer, description: "1..steps, 0 when idle" }
                       steps: { type: integer, enum: [5] }
                       slot: { type: [integer, 'null'], description: "The slot the new finger was stored in, once done" }
-                      error: { type: [string, 'null'] }
+                      error: { type: [string, 'null'], description: "Set in state error; \"timeout\" when no finger was placed within 30 s at a take" }
                   last_event:
                     oneOf:
                       - type: 'null'
@@ -982,7 +985,7 @@ paths:
   /fp/user:
     post:
       summary: Create a user (no id) or update the fields given (id)
-      description: "Created users default to enabled, allow_fp, not allow_tg, empty tg_username."
+      description: "Created users default to enabled, allow_fp, not allow_tg, empty tg_username. A non-empty tg_username another user already has (case-insensitive, '@' ignored) is refused with 409 \"telegram username taken\"."
       requestBody:
         required: true
         content:
@@ -1009,7 +1012,6 @@ paths:
                   user:
                     $ref: '#/components/schemas/FpUser'
         '400': { $ref: '#/components/responses/FpError' }
-        '404': { $ref: '#/components/responses/FpError' }
         '409': { $ref: '#/components/responses/FpError' }
         '401':
           $ref: '#/components/responses/UnauthorizedError'
@@ -1030,7 +1032,6 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/SuccessResponse' }
         '400': { $ref: '#/components/responses/FpError' }
-        '404': { $ref: '#/components/responses/FpError' }
         '409': { $ref: '#/components/responses/FpError' }
         '401':
           $ref: '#/components/responses/UnauthorizedError'
@@ -1051,7 +1052,6 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/SuccessResponse' }
         '400': { $ref: '#/components/responses/FpError' }
-        '404': { $ref: '#/components/responses/FpError' }
         '409': { $ref: '#/components/responses/FpError' }
         '401':
           $ref: '#/components/responses/UnauthorizedError'
@@ -1078,7 +1078,6 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/SuccessResponse' }
         '400': { $ref: '#/components/responses/FpError' }
-        '404': { $ref: '#/components/responses/FpError' }
         '409':
           description: "An enrollment is running, the user or the sensor is full, or the sensor is offline"
           content:

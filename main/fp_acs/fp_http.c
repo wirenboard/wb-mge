@@ -16,6 +16,7 @@
 
 static const char *TAG = "fp_http";
 
+#define FP_HTTP_STATUS_BAD_REQUEST  "400 Bad Request"
 #define FP_HTTP_STATUS_NOT_FOUND    "404 Not Found"
 #define FP_HTTP_STATUS_CONFLICT     "409 Conflict"
 #define FP_HTTP_STATUS_ERROR        "500 Internal Server Error"
@@ -30,6 +31,8 @@ static const char *TAG = "fp_http";
 #define FP_HTTP_ERROR_JSON          "invalid JSON object"
 #define FP_HTTP_ERROR_MEMORY        "out of memory"
 #define FP_HTTP_ERROR_STORAGE       "user storage unavailable"
+#define FP_HTTP_ERROR_NOT_FOUND     "not found"
+#define FP_HTTP_ERROR_TG_TAKEN      "telegram username taken"
 #define FP_HTTP_ERROR_USER_FIELDS   "invalid user: name is 1..48 bytes of UTF-8, tg_username up to 32 of A-Z a-z 0-9 _"
 #define FP_HTTP_ERROR_CHAT_FIELDS   "invalid chat: id is a decimal chat id, name up to 48 bytes of UTF-8"
 
@@ -53,6 +56,8 @@ static esp_err_t fp_http_send_success(httpd_req_t *req)
     return fp_http_send_json(req, root, ok);
 }
 
+// An unknown user or slot is a 400 rather than a 404: the web UI reports a 404 or a 500 as a lost
+// connection, without the reason given here.
 static esp_err_t fp_http_send_req(httpd_req_t *req, fp_acs_req_t result)
 {
     switch (result) {
@@ -60,26 +65,31 @@ static esp_err_t fp_http_send_req(httpd_req_t *req, fp_acs_req_t result)
         return fp_http_send_success(req);
     case FP_ACS_REQ_UNKNOWN_USER:
     case FP_ACS_REQ_UNKNOWN_SLOT:
-        return json_utils_send_error_status(req, FP_HTTP_STATUS_NOT_FOUND, fp_acs_req_str(result));
+        return json_utils_send_error(req, fp_acs_req_str(result));
     default:
         return json_utils_send_error_status(req, FP_HTTP_STATUS_CONFLICT, fp_acs_req_str(result));
     }
 }
 
-// The store's errors (fp_store.h) as HTTP statuses. invalid is the message for a bad field.
-static esp_err_t fp_http_send_store_error(httpd_req_t *req, esp_err_t err, const char *invalid)
+// The store's errors (fp_store.h) as HTTP statuses. invalid is the message for a bad field,
+// not_found_status the status for an unknown user (400) or chat (404). A store that cannot be
+// used or written is a 409 rather than a 500, for the reason given at fp_http_send_req().
+static esp_err_t fp_http_send_store_error(httpd_req_t *req, esp_err_t err, const char *invalid,
+                                          const char *not_found_status)
 {
     switch (err) {
     case ESP_ERR_INVALID_ARG:
         return json_utils_send_error(req, invalid);
     case ESP_ERR_NOT_FOUND:
-        return json_utils_send_error_status(req, FP_HTTP_STATUS_NOT_FOUND, "not found");
+        return json_utils_send_error_status(req, not_found_status, FP_HTTP_ERROR_NOT_FOUND);
     case ESP_ERR_NO_MEM:
         return json_utils_send_error_status(req, FP_HTTP_STATUS_CONFLICT, "full");
+    case ESP_ERR_NOT_ALLOWED:
+        return json_utils_send_error_status(req, FP_HTTP_STATUS_CONFLICT, FP_HTTP_ERROR_TG_TAKEN);
     case ESP_ERR_INVALID_STATE:
-        return json_utils_send_error_status(req, FP_HTTP_STATUS_ERROR, FP_HTTP_ERROR_STORAGE);
+        return json_utils_send_error_status(req, FP_HTTP_STATUS_CONFLICT, FP_HTTP_ERROR_STORAGE);
     default:
-        return json_utils_send_error_status(req, FP_HTTP_STATUS_ERROR, esp_err_to_name(err));
+        return json_utils_send_error_status(req, FP_HTTP_STATUS_CONFLICT, esp_err_to_name(err));
     }
 }
 
@@ -353,7 +363,7 @@ static esp_err_t fp_http_user_post(httpd_req_t *req)
     esp_err_t err = has_id ? fp_store_update_user((uint8_t)id, &patch, &user) : fp_store_create_user(&patch, &user);
     cJSON_Delete(body);
     if (err != ESP_OK) {
-        return fp_http_send_store_error(req, err, FP_HTTP_ERROR_USER_FIELDS);
+        return fp_http_send_store_error(req, err, FP_HTTP_ERROR_USER_FIELDS, FP_HTTP_STATUS_BAD_REQUEST);
     }
 
     cJSON *root = cJSON_CreateObject();
@@ -486,7 +496,7 @@ static esp_err_t fp_http_tg_chats_post(httpd_req_t *req)
                                           "{\"action\": \"remove\", \"id\"} or {\"action\": \"clear\"}");
     }
     if (err != ESP_OK) {
-        return fp_http_send_store_error(req, err, FP_HTTP_ERROR_CHAT_FIELDS);
+        return fp_http_send_store_error(req, err, FP_HTTP_ERROR_CHAT_FIELDS, FP_HTTP_STATUS_NOT_FOUND);
     }
     return fp_http_send_success(req);
 }

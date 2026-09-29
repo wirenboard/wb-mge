@@ -34,6 +34,7 @@ static const char *TAG = "tg_bot";
 
 #define TG_BOT_POLL_TIMEOUT_S       25      // how long Telegram holds a getUpdates open
 #define TG_BOT_HTTP_TIMEOUT_MS      ((TG_BOT_POLL_TIMEOUT_S + 10) * 1000)
+#define TG_BOT_OFFSET_LAST          (-1)    // getUpdates offset: only the newest update, the rest are forgotten
 // One update per poll: an update too big for the response buffer is then known to be that one,
 // and is skipped by its update_id without losing any other.
 #define TG_BOT_POLL_LIMIT           1
@@ -84,6 +85,7 @@ static bool    tg_bot_response_overflow;
 static char    tg_bot_token[SETTING_ITEM_MAX_STR_LEN];  // the token the polls use - never logged
 static bool    tg_bot_token_usable;
 static int64_t tg_bot_offset;                           // the next update_id to ask for
+static bool    tg_bot_backlog_dropped;                  // false until the first poll with this token
 static bool    tg_bot_booted;                           // the boot message has been sent
 static char    tg_bot_admins[SETTING_ITEM_MAX_STR_LEN];
 static char    tg_bot_reply[TG_BOT_REPLY_MAX];
@@ -197,11 +199,12 @@ static bool tg_bot_token_valid(const char *token)
 }
 
 // Switches the polls to another token. Update ids belong to one bot, so the offset reached with
-// the old token means nothing to the new one.
+// the old token means nothing to the new one, and the new bot's backlog is dropped as at boot.
 static void tg_bot_use_token(const char *token)
 {
     snprintf(tg_bot_token, sizeof(tg_bot_token), "%s", token);
     tg_bot_offset = 0;
+    tg_bot_backlog_dropped = false;
     tg_bot_token_usable = tg_bot_token_valid(token);
     // A connection left open while the bot was idle may have been closed by the server since.
     if (tg_bot_http != NULL) {
@@ -476,11 +479,17 @@ static void tg_bot_send_boot_message(void)
 
 static esp_err_t tg_bot_poll(void)
 {
-    // The first poll returns at once, so the boot message does not wait out a long poll.
-    int timeout_s = tg_bot_booted ? TG_BOT_POLL_TIMEOUT_S : 0;
+    // The first poll after boot or a token change drops the backlog: Telegram keeps updates for a
+    // day, and an "open" sent while the device was off, or handled just before a reboot that came
+    // ahead of the poll confirming it, must not open the door now. It asks for the newest update
+    // only, which also makes Telegram forget the older ones, and takes that one as handled. It
+    // returns at once, so the boot message does not wait out a long poll either.
+    bool drop = (!tg_bot_backlog_dropped);
+    int timeout_s = drop ? 0 : TG_BOT_POLL_TIMEOUT_S;
+    int64_t offset = drop ? TG_BOT_OFFSET_LAST : tg_bot_offset;
     char url[TG_BOT_URL_MAX];
     snprintf(url, sizeof(url), TG_BOT_API_URL "%s/getUpdates?offset=%" PRId64 "&limit=%d&timeout=%d", tg_bot_token,
-             tg_bot_offset, TG_BOT_POLL_LIMIT, timeout_s);
+             offset, TG_BOT_POLL_LIMIT, timeout_s);
 
     int status = 0;
     esp_err_t err = tg_bot_request(url, NULL, &status);
@@ -522,9 +531,14 @@ static esp_err_t tg_bot_poll(void)
         }
         // Confirmed by the next poll whatever happens to it here, as FastBot2 does in pp-lock.
         tg_bot_offset = ((int64_t)update_id->valuedouble) + 1;
-        tg_bot_handle_update(update);
+        if (drop) {
+            ESP_LOGI(TAG, "Update %" PRId64 " dropped with the backlog", tg_bot_offset - 1);
+        } else {
+            tg_bot_handle_update(update);
+        }
     }
     cJSON_Delete(root);
+    tg_bot_backlog_dropped = true;
     return ESP_OK;
 }
 

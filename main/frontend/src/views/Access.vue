@@ -9,6 +9,7 @@ import {
   deleteFpUser,
   fetchFpImage,
   fetchFpUsers,
+  fpErrorMessage,
   saveFpUser,
   startFpEnroll,
   useFpStatus,
@@ -290,7 +291,7 @@ const enrollMessage = computed(() => {
     return t('enroll_done', { slot: value.slot ?? DASH });
   }
   if (value.state === 'error') {
-    return t('enroll_error', { error: value.error ?? DASH });
+    return t('enroll_error', { error: value.error ? t(fpErrorMessage(value.error)) : DASH });
   }
   return enumLabel(ENROLL_STATE_KEYS, value.state);
 });

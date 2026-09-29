@@ -365,6 +365,24 @@ static fp_store_user_t *fp_store_user_by_id(uint8_t id)
     return (user->id == id) ? user : NULL;
 }
 
+// The user other than except_id (FP_STORE_NO_USER: nobody is excepted) whose Telegram username is
+// the normalized one given, ignoring case. An empty name matches nobody.
+static const fp_store_user_t *fp_store_tg_username_owner(const char *username, uint8_t except_id)
+{
+    if (username[0] == '\0') {
+        return NULL;
+    }
+    for (size_t i = 0; i < FP_STORE_USERS_MAX; i++) {
+        const fp_store_user_t *user = &fp_store_users[i];
+        if ((user->id != FP_STORE_NO_USER) && (user->id != except_id) &&
+            (strcasecmp(user->tg_username, username) == 0))
+        {
+            return user;
+        }
+    }
+    return NULL;
+}
+
 // Applies and validates a patch; the user is left untouched when it returns false.
 static bool fp_store_apply_patch(fp_store_user_t *user, const fp_store_user_patch_t *patch)
 {
@@ -475,13 +493,7 @@ bool fp_store_find_by_tg_username(const char *username, fp_store_user_t *out)
     if (!fp_store_lock()) {
         return false;
     }
-    const fp_store_user_t *found = NULL;
-    for (size_t i = 0; (i < FP_STORE_USERS_MAX) && (found == NULL); i++) {
-        const fp_store_user_t *user = &fp_store_users[i];
-        if ((user->id != FP_STORE_NO_USER) && (strcasecmp(user->tg_username, wanted) == 0)) {
-            found = user;
-        }
-    }
+    const fp_store_user_t *found = fp_store_tg_username_owner(wanted, FP_STORE_NO_USER);
     if ((found != NULL) && (out != NULL)) {
         *out = *found;
     }
@@ -539,11 +551,15 @@ esp_err_t fp_store_create_user(const fp_store_user_patch_t *patch, fp_store_user
         return ESP_ERR_INVALID_STATE;
     }
     esp_err_t err = ESP_ERR_NO_MEM;
-    for (size_t i = 0; i < FP_STORE_USERS_MAX; i++) {
-        if (fp_store_users[i].id == FP_STORE_NO_USER) {
-            user.id = (uint8_t)(i + 1);
-            err = fp_store_commit_user(&user, out);
-            break;
+    if (fp_store_tg_username_owner(user.tg_username, FP_STORE_NO_USER) != NULL) {
+        err = ESP_ERR_NOT_ALLOWED;
+    } else {
+        for (size_t i = 0; i < FP_STORE_USERS_MAX; i++) {
+            if (fp_store_users[i].id == FP_STORE_NO_USER) {
+                user.id = (uint8_t)(i + 1);
+                err = fp_store_commit_user(&user, out);
+                break;
+            }
         }
     }
     fp_store_unlock();
@@ -567,7 +583,15 @@ esp_err_t fp_store_update_user(uint8_t id, const fp_store_user_patch_t *patch, f
     const fp_store_user_t *current = fp_store_user_by_id(id);
     if (current != NULL) {
         fp_store_user_t user = *current;
-        err = fp_store_apply_patch(&user, patch) ? fp_store_commit_user(&user, out) : ESP_ERR_INVALID_ARG;
+        if (!fp_store_apply_patch(&user, patch)) {
+            err = ESP_ERR_INVALID_ARG;
+        } else if ((patch->tg_username != NULL) && (fp_store_tg_username_owner(user.tg_username, id) != NULL)) {
+            // Checked only when the patch sets the name, so that a patch of other fields never
+            // fails on a duplicate stored before names had to be unique.
+            err = ESP_ERR_NOT_ALLOWED;
+        } else {
+            err = fp_store_commit_user(&user, out);
+        }
     }
     fp_store_unlock();
     return err;

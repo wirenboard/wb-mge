@@ -30,6 +30,9 @@ static const char *TAG = "fp_acs";
 #define FP_ACS_BOOT_RETRY_MS            1000
 #define FP_ACS_OFFLINE_ERRORS           3       // transport failures in a row that take the sensor offline
 #define FP_ACS_ERROR_LED_MS             2000    // how long a failed enrollment shows solid red
+#define FP_ACS_ENROLL_PLACE_TIMEOUT_MS  30000   // an enrollment take with no finger for this long fails
+#define FP_ACS_ENROLL_ERROR_TIMEOUT     "timeout"
+#define FP_ACS_SCAN_PASSES              5       // image-and-search passes before a finger counts as unknown
 
 #define FP_ACS_SCAN_BUFFER              1       // feature buffer a scan is converted into and searched from
 #define FP_ACS_TEMPLATE_BUFFER          1       // RegModel leaves the template here, Store reads it
@@ -57,6 +60,7 @@ typedef enum {
     FP_ACS_WAIT_DONE,
     FP_ACS_WAIT_CANCELLED,
     FP_ACS_WAIT_OFFLINE,
+    FP_ACS_WAIT_TIMEOUT,
 } fp_acs_wait_t;
 
 static QueueHandle_t     fp_acs_queue;
@@ -234,6 +238,33 @@ static void fp_acs_upload_image(void)
 
 // ── Scanning ─────────────────────────────────────────────────────────────────────────────
 
+// Img2Tz and Search on the image GenImg has just taken. False when it could not be searched: a
+// transport error, an unreadable image, a Search failure. True otherwise, with *code either
+// R503_CODE_OK (a match in *page, with *score) or R503_CODE_NOT_FOUND.
+static bool fp_acs_identify(uint16_t *page, uint16_t *score, uint8_t *code)
+{
+    if (!fp_acs_io_ok(r503_img2tz(FP_ACS_SCAN_BUFFER, code), "Img2Tz")) {
+        return false;
+    }
+    if (*code != R503_CODE_OK) {
+        ESP_LOGD(TAG, "Img2Tz: %s", r503_code_str(*code));
+        return false;
+    }
+
+    fp_acs_lock();
+    uint16_t capacity = fp_acs_capacity;
+    fp_acs_unlock();
+
+    if (!fp_acs_io_ok(r503_search(FP_ACS_SCAN_BUFFER, FP_ACS_SEARCH_START, capacity, page, score, code), "Search")) {
+        return false;
+    }
+    if ((*code != R503_CODE_OK) && (*code != R503_CODE_NOT_FOUND)) {
+        ESP_LOGW(TAG, "Search: %s", r503_code_str(*code));
+        return false;
+    }
+    return true;
+}
+
 // One GenImg poll of the idle loop.
 static void fp_acs_scan(void)
 {
@@ -255,39 +286,34 @@ static void fp_acs_scan(void)
         return;
     }
 
-    if (!fp_acs_io_ok(r503_img2tz(FP_ACS_SCAN_BUFFER, &code), "Img2Tz")) {
-        return;
-    }
-    if (code != R503_CODE_OK) {
-        // An unreadable image; while the finger stays, the next poll captures a fresh one.
-        ESP_LOGD(TAG, "Img2Tz: %s", r503_code_str(code));
-        return;
-    }
-
-    fp_acs_lock();
-    uint16_t capacity = fp_acs_capacity;
-    fp_acs_unlock();
-
     uint16_t page = 0;
     uint16_t score = 0;
-    if (!fp_acs_io_ok(r503_search(FP_ACS_SCAN_BUFFER, FP_ACS_SEARCH_START, capacity, &page, &score, &code),
-                      "Search")) {
+    if (!fp_acs_identify(&page, &score, &code)) {
+        // While the finger stays, the next poll captures a fresh image.
         return;
+    }
+
+    // No match: fresh images of the same finger are searched while it stays on the sensor, as
+    // FingerprintDoorbell does. A lifted finger or a pass that fails ends the attempt as unknown.
+    for (unsigned pass = 2; (code == R503_CODE_NOT_FOUND) && (pass <= FP_ACS_SCAN_PASSES); pass++) {
+        ESP_LOGD(TAG, "No match, pass %u of %d", pass, FP_ACS_SCAN_PASSES);
+        uint8_t image_code = R503_CODE_OK;
+        if ((!fp_acs_io_ok(r503_gen_img(&image_code), "GenImg")) || (image_code != R503_CODE_OK) ||
+            (!fp_acs_identify(&page, &score, &code)))
+        {
+            code = R503_CODE_NOT_FOUND;
+            break;
+        }
     }
 
     fp_store_user_t user;
     const fp_store_user_t *who = NULL;
     fp_acs_result_t result = FP_ACS_RESULT_UNKNOWN;
-    if (code == R503_CODE_OK) {
-        // A matched template no user owns is one a deletion could not remove from the sensor: it
-        // belongs to nobody, and is reported as such.
-        if (fp_store_find_by_slot(page, &user)) {
-            who = &user;
-            result = (user.enabled && user.allow_fp) ? FP_ACS_RESULT_GRANTED : FP_ACS_RESULT_DENIED;
-        }
-    } else if (code != R503_CODE_NOT_FOUND) {
-        ESP_LOGW(TAG, "Search: %s", r503_code_str(code));
-        return;
+    // A matched template no user owns is one a deletion could not remove from the sensor: it
+    // belongs to nobody, and is reported as such.
+    if ((code == R503_CODE_OK) && fp_store_find_by_slot(page, &user)) {
+        who = &user;
+        result = (user.enabled && user.allow_fp) ? FP_ACS_RESULT_GRANTED : FP_ACS_RESULT_DENIED;
     }
 
     if (result == FP_ACS_RESULT_GRANTED) {
@@ -356,14 +382,19 @@ static void fp_acs_enroll_stopped(fp_acs_wait_t wait)
 {
     if (wait == FP_ACS_WAIT_CANCELLED) {
         fp_acs_enroll_end(FP_ACS_ENROLL_STATE_CANCELLED, NULL);
+    } else if (wait == FP_ACS_WAIT_TIMEOUT) {
+        fp_acs_enroll_end(FP_ACS_ENROLL_STATE_ERROR, FP_ACS_ENROLL_ERROR_TIMEOUT);
     } else {
         fp_acs_enroll_end(FP_ACS_ENROLL_STATE_ERROR, fp_acs_req_str(FP_ACS_REQ_OFFLINE));
     }
 }
 
-// Polls GenImg until a finger is on the sensor (want_finger) or off it.
+// Polls GenImg until a finger is on the sensor (want_finger) or off it. Scanning is suspended
+// meanwhile, so a finger that does not come within FP_ACS_ENROLL_PLACE_TIMEOUT_MS ends the wait:
+// an abandoned enrollment must not keep the door shut.
 static fp_acs_wait_t fp_acs_enroll_wait(bool want_finger)
 {
+    TickType_t started = xTaskGetTickCount();
     for (;;) {
         if (fp_acs_cancel_pending()) {
             return FP_ACS_WAIT_CANCELLED;
@@ -375,6 +406,9 @@ static fp_acs_wait_t fp_acs_enroll_wait(bool want_finger)
             }
         } else if (!fp_acs_sensor_online()) {
             return FP_ACS_WAIT_OFFLINE;
+        }
+        if (want_finger && ((xTaskGetTickCount() - started) >= pdMS_TO_TICKS(FP_ACS_ENROLL_PLACE_TIMEOUT_MS))) {
+            return FP_ACS_WAIT_TIMEOUT;
         }
         vTaskDelay(pdMS_TO_TICKS(FP_ACS_POLL_MS));
     }
