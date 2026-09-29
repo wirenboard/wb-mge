@@ -15,10 +15,13 @@
  * mb_* mock headers on their include path. The files that actually call into the stack
  * include the role's own header themselves, guarded the same way.
  *
- * CONFIG_WB_MODBUS_ROLE_* reach here through sdkconfig.h, which ESP-IDF force-includes
- * into every translation unit. The host unit-test build has no sdkconfig.h at all, so
- * none of them is defined there and the role resolves to slave - the role every existing
- * unit test is written against.
+ * CONFIG_WB_MODBUS_ROLE_* reach here through sdkconfig.h, which ESP-IDF does NOT
+ * force-include: it arrives only through an IDF header (esp_log.h, driver/gpio.h, ...)
+ * included earlier in the same translation unit. Every file that includes this header today
+ * gets it that way, but a file that includes this header before any IDF header silently
+ * resolves to the slave role, whatever the build - include sdkconfig.h first there. The host
+ * unit-test build has no sdkconfig.h at all, so none of them is defined there and the role
+ * resolves to slave - the role every existing unit test is written against.
  */
 
 #if defined(CONFIG_WB_MODBUS_ROLE_MASTER)
