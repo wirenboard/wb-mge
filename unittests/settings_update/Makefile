@@ -22,6 +22,8 @@ INC += $(UNITTEST_DIR)
 INC += $(UNITTEST_DIR)/mocks
 INC += mocks
 INC += $(PROJ_DIR)/main
+# fp_acs.h (FP_ACS_ENABLED, which is 0 on the host) decides whether the MQTT client is restarted.
+INC += $(PROJ_DIR)/main/fp_acs
 INC += $(IDF_PATH)/components/esp_common/include
 
 # List of tests

@@ -44,7 +44,13 @@ if(CONFIG_WB_MODBUS_ROLE_MASTER)
         "fp_acs/fp_http.c"
         "fp_acs/fp_lock.c"
         "fp_acs/fp_store.c"
-        "fp_acs/r503.c")
+        "fp_acs/r503.c"
+        # Its MQTT side and its Telegram bot, gated the same way. esp-mqtt, esp_http_client and
+        # the certificate bundle come with ESP-IDF and need no REQUIRES of their own: main
+        # depends on every component in the build.
+        "mqtt/mqtt_client_wb.c"
+        "mqtt/wb_device.c"
+        "telegram/tg_bot.c")
     if(NOT CMAKE_BUILD_EARLY_EXPANSION)
         message(STATUS "Modbus role: master — RTU master on both RS-485 ports, no TCP, no slave")
     endif()
@@ -129,6 +135,8 @@ idf_component_register(SRCS ${COMPONENT_SRCS}
                             "voltage_monitor"
                             "qemu"
                             "fp_acs"
+                            "mqtt"
+                            "telegram"
                         EMBED_TXTFILES
                             # Compressible text shell assets served with Content-Encoding: gzip.
                             frontend/dist/index.css.gz

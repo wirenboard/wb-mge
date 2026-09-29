@@ -34,6 +34,13 @@
     #define MB_STACK_CHECK_CHANGED()    false
 #endif
 
+// The MQTT client publishes the fingerprint access control, so it exists where that does and
+// only there (see main/fp_acs/fp_acs.h).
+#include "fp_acs.h"
+#if FP_ACS_ENABLED
+    #include "mqtt_client_wb.h"
+#endif
+
 
 #define SETTINGS_UPDATE_TASK_STACK_SIZE     (6 * 1024)
 #define SETTINGS_UPDATE_TASK_PRIORITY       5
@@ -43,6 +50,7 @@
 #define ETHERNET_FLAG                       BIT10
 #define WIFI_FLAG                           BIT11
 #define MODBUS_STACK_FLAG                   BIT12
+#define MQTT_FLAG                           BIT13
 
 #define HTTP_NETWORK_UPDATE_DELAY_MS        1000            // Delay before updating HTTP / Ethernet / WiFi settings
 
@@ -246,6 +254,17 @@ static void settings_update_task(void *arg)
         network_update_mdns_settings();
     }
 
+    // The MQTT client owns a socket of its own, but nothing else contends for it - a broker's
+    // port is on another host - so it is neither part of the release/acquire pass above nor
+    // ordered against it. A restart drops the connection and builds a new one from the settings
+    // that have just been written; esp-mqtt takes it from there.
+#if FP_ACS_ENABLED
+    if (flags & MQTT_FLAG) {
+        ESP_LOGD(TAG, "Applying new settings to the MQTT client");
+        mqtt_client_wb_restart();
+    }
+#endif
+
     if (flags & ETHERNET_FLAG) {
         ESP_LOGD(TAG, "Applying new settings to Ethernet");
         network_update_eth_settings();
@@ -355,6 +374,13 @@ esp_err_t settings_update(void)
         ESP_LOGD(TAG, "WiFi settings were changed");
         flags |= WIFI_FLAG;
     }
+
+#if FP_ACS_ENABLED
+    if (mqtt_client_wb_check_settings_changed()) {
+        ESP_LOGD(TAG, "MQTT settings were changed");
+        flags |= MQTT_FLAG;
+    }
+#endif
 
     // In the "none" role this collapses to `if (false)`, so the flag is never raised and
     // the apply above compiles out with nothing left to call.

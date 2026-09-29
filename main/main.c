@@ -28,6 +28,8 @@
 #include "fp_acs.h"
 #if FP_ACS_ENABLED
     #include "fp_lock.h"
+    #include "mqtt_client_wb.h"
+    #include "tg_bot.h"
 #endif
 
 // Hardware-logic headers: needed by both builds. In QEMU these resolve to the
@@ -103,8 +105,8 @@ static inline void print_setting_items(void)
     for (size_t i = 0; i < count; i++) {
         const char *key = setting_items_get_key_at(i);
         if (key) {
-            // Skip printing any setting that contains 'pass' for security
-            if ((key != NULL) && (strstr(key, "pass") != NULL)) {
+            // Skip printing any setting that contains 'pass', and the Telegram bot token, for security
+            if ((key != NULL) && ((strstr(key, "pass") != NULL) || (strcmp(key, KEY_TG_TOKEN) == 0))) {
                 ESP_LOGI(TAG, "%s: [HIDDEN]", key);
                 continue;
             }
@@ -228,6 +230,19 @@ void app_main(void)
     #endif
 
     ESP_ERROR_CHECK(network_init());
+
+    // Right after the network and before the web server, and with no wait for a link: esp-mqtt
+    // has its own reconnect loop, and the bot task retries its polls, so both simply keep trying
+    // until there is a network. Deliberately NOT ESP_ERROR_CHECK, for the same reason as the web
+    // server below: a broker that cannot be reached must not take the door down with it.
+    #if FP_ACS_ENABLED
+        esp_err_t mqtt_ret = mqtt_client_wb_start();
+        if (mqtt_ret != ESP_OK) {
+            ESP_LOGE(TAG, "mqtt_client_wb_start failed: %s - continuing without MQTT",
+                     esp_err_to_name(mqtt_ret));
+        }
+        tg_bot_start();
+    #endif
 
     // Deliberately NOT ESP_ERROR_CHECK: a web server that will not start must not abort the boot.
     // An abort() here panics and reboots, and every cause that can make the start fail — too
