@@ -208,6 +208,7 @@ static const mock_type_entry_t type_table[] = {
     { "lock_addr",          SETTING_ITEM_TYPE_INT,    "1"                 },
     { "lock_channel",       SETTING_ITEM_TYPE_INT,    "1"                 },
     { "lock_pulse_ms",      SETTING_ITEM_TYPE_INT,    "1000"              },
+    { "lock_mode",          SETTING_ITEM_TYPE_STRING, "strike"            },
     { "tg_token",           SETTING_ITEM_TYPE_STRING, ""                  },
     { "tg_admins",          SETTING_ITEM_TYPE_STRING, ""                  },
     { "mqtt_enabled",       SETTING_ITEM_TYPE_BOOL,   "false"             },

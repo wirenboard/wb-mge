@@ -235,13 +235,14 @@ static const setting_item_t setting_items[] = {
     // Firmware update channel: read by the web UI to pick a version from the release manifest
     {KEY_UPDATE_CHANNEL, DEFAULT_UPDATE_CHANNEL, validate_update_channel, SETTING_ITEM_TYPE_STRING},
 
-    // Fingerprint access control: the relay that opens the lock and the Telegram bot. Stored in
+    // Fingerprint access control: the relay that drives the lock (see lock_mode) and the Telegram bot. Stored in
     // every build, like the MQTT settings below, so a configuration exported from one device
     // imports into another whatever it was built as; only the WB-MGU master build reads them.
     // The relay's unit id is a Modbus unit id like any other, so it takes the same 1..247.
     {KEY_LOCK_ADDR, DEFAULT_LOCK_ADDR, validate_slave_id, SETTING_ITEM_TYPE_INT},
     {KEY_LOCK_CHANNEL, DEFAULT_LOCK_CHANNEL, validate_lock_channel, SETTING_ITEM_TYPE_INT},
     {KEY_LOCK_PULSE_MS, DEFAULT_LOCK_PULSE_MS, validate_lock_pulse_ms, SETTING_ITEM_TYPE_INT},
+    {KEY_LOCK_MODE, DEFAULT_LOCK_MODE, validate_lock_mode, SETTING_ITEM_TYPE_STRING},
     {KEY_TG_TOKEN, DEFAULT_TG_TOKEN, validate_tg_token, SETTING_ITEM_TYPE_STRING},
     {KEY_TG_ADMINS, DEFAULT_TG_ADMINS, validate_tg_admins, SETTING_ITEM_TYPE_STRING},
 

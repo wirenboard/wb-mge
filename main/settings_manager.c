@@ -48,6 +48,7 @@ static const setting_mapping_t top_level_mappings[] = {
     {"lock_addr", KEY_LOCK_ADDR},
     {"lock_channel", KEY_LOCK_CHANNEL},
     {"lock_pulse_ms", KEY_LOCK_PULSE_MS},
+    {"lock_mode", KEY_LOCK_MODE},
     {"tg_token", KEY_TG_TOKEN},
     {"tg_admins", KEY_TG_ADMINS},
     {"mqtt_enabled", KEY_MQTT_ENABLED},

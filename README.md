@@ -339,7 +339,11 @@ password.
 
 **Lock:** the relay module sits on its own RS-485 bus on **port 1**, where this device is the
 Modbus master; port 2 is not a Modbus port in this build. The settings `lock_addr` (unit id),
-`lock_channel` (1–8) and `lock_pulse_ms` choose the relay and how long it stays on.
+`lock_channel` (1–8) and `lock_pulse_ms` choose the relay and how long an opening lasts.
+`lock_mode` says which relay state opens the door: `strike` (the default) for a lock powered to
+open — relay ON = open; `magnet` for an electromagnet powered to hold the door — relay ON =
+locked, so at rest the relay is ON and an opening switches it OFF. The Lock page also has a manual
+relay switch; it shows and sets the relay itself, whatever the mode.
 
 **One serial flash first.** Users and fingers live in their own NVS partition, `fp_nvs`, which
 `partitions_table.csv` adds. An OTA update never rewrites the partition table, so a device must

@@ -147,7 +147,7 @@ const char *fp_acs_result_str(fp_acs_result_t result);
 const char *fp_acs_enroll_state_str(fp_acs_enroll_state_t state);
 const char *fp_acs_req_str(fp_acs_req_t req);
 
-// fp_http.c: registers the nine /fp/ endpoints. Every one of them requires a session.
+// fp_http.c: registers the ten /fp/ endpoints. Every one of them requires a session.
 void fp_http_register_handlers(httpd_handle_t server);
 
 #endif // FP_ACS_ENABLED

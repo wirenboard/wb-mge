@@ -35,9 +35,10 @@
 #endif
 
 // The MQTT client publishes the fingerprint access control, so it exists where that does and
-// only there (see main/fp_acs/fp_acs.h).
+// only there (see main/fp_acs/fp_acs.h); the lock is part of it.
 #include "fp_acs.h"
 #if FP_ACS_ENABLED
+    #include "fp_lock.h"
     #include "mqtt_client_wb.h"
 #endif
 
@@ -334,6 +335,11 @@ esp_err_t settings_update(void)
     // MIO controller hangs off), so its setting must reach the hardware immediately.
     update_serial_tx_disabled();
     update_io_bus_control();
+#if FP_ACS_ENABLED
+    // Queued, not waited for: the lock task compares the lock settings with the ones it applied
+    // and, on a change, puts the relay in the closed state of the new target and mode at once.
+    fp_lock_settings_changed();
+#endif
 
     // From here to the xTaskCreate() below is one critical section: the wait for an
     // in-flight apply and the decision to spawn a new one have to be indivisible, or two

@@ -458,6 +458,21 @@ bool validate_lock_pulse_ms(const char *value)
     return validate_int_range(value, LOCK_PULSE_MS_MIN, LOCK_PULSE_MS_MAX);
 }
 
+// Which relay state opens the door: exactly one of the two mode names.
+bool validate_lock_mode(const char *value)
+{
+    if (!value) {
+        return false;
+    }
+    if (strncmp(value, LOCK_MODE_STRIKE_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        return true;
+    }
+    if (strncmp(value, LOCK_MODE_MAGNET_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        return true;
+    }
+    return false;
+}
+
 // Printable ASCII of a bounded length, the empty string included. Shared by the Telegram token
 // and the three MQTT string settings, which differ only in what they additionally refuse.
 static bool validate_printable_or_empty(const char *value, size_t max_len)

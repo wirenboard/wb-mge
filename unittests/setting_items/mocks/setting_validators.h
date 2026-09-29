@@ -42,6 +42,7 @@ bool validate_wifi_password(const char *value);
  * the mock's .c file. */
 bool validate_lock_channel(const char *value);
 bool validate_lock_pulse_ms(const char *value);
+bool validate_lock_mode(const char *value);
 bool validate_tg_token(const char *value);
 bool validate_tg_admins(const char *value);
 bool validate_mqtt_host(const char *value);

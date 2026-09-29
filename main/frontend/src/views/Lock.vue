@@ -1,7 +1,16 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { addFpTgChat, alertFpFailure, clearFpTgChats, fetchFpTgChats, removeFpTgChat } from '@/common/fpAcs';
+import { useConfirm } from '@/common/confirm';
+import {
+  addFpTgChat,
+  alertFpFailure,
+  clearFpTgChats,
+  fetchFpTgChats,
+  removeFpTgChat,
+  setFpLock,
+  useFpStatus,
+} from '@/common/fpAcs';
 import { useSettings } from '@/common/settings';
 import type { FpTgChat } from '@/common/types';
 import Button from '@/components/Button.vue';
@@ -9,16 +18,19 @@ import Heading from '@/components/Heading.vue';
 import InputNumber from '@/components/InputNumber.vue';
 import Layout from '@/components/Layout.vue';
 import PasswordInput from '@/components/PasswordInput.vue';
+import Switch from '@/components/Switch.vue';
 import { onCustomValidation } from '@/utils/validation';
 
 const { t } = useI18n();
 const { data, isChanged, isLoading, updateSettings } = useSettings();
+const { confirmDialog } = useConfirm();
 
-const lockFields = ['lock_addr', 'lock_channel', 'lock_pulse_ms'];
+const lockFields = ['lock_mode', 'lock_addr', 'lock_channel', 'lock_pulse_ms'];
 const telegramFields = ['tg_token', 'tg_admins'];
 
 // Each card posts its own keys and nothing else, the way every other settings card does.
 const saveLock = () => updateSettings({
+  lock_mode: data.value!.lock_mode,
   lock_addr: data.value!.lock_addr,
   lock_channel: data.value!.lock_channel,
   lock_pulse_ms: data.value!.lock_pulse_ms,
@@ -28,6 +40,31 @@ const saveTelegram = () => updateSettings({
   tg_token: data.value!.tg_token,
   tg_admins: data.value!.tg_admins,
 });
+
+const { status, startPolling, stopPolling } = useFpStatus(ref(false));
+
+onMounted(startPolling);
+onBeforeUnmount(stopPolling);
+
+// lock.on of the last status, or the state just asked for until the next status replaces it. Bound
+// to the status alone, the switch would keep a toggle the relay did not follow: the checkbox flips
+// on the click, and a lock.on that has not changed never sets it back.
+const relayOn = ref(false);
+watch(status, (next) => {
+  if (next) {
+    relayOn.value = next.lock.on;
+  }
+});
+
+const toggleRelay = async () => {
+  const on = !relayOn.value;
+  relayOn.value = on;
+  try {
+    await setFpLock({ on });
+  } catch (err) {
+    await alertFpFailure(err);
+  }
+};
 
 const chats = ref<FpTgChat[]>([]);
 const chatsBusy = ref(false);
@@ -66,8 +103,8 @@ const addChat = async () => {
 
 const removeChat = (chat: FpTgChat) => mutateChats(() => removeFpTgChat(chat.id));
 
-const clearChats = () => {
-  if (confirm(t('clear_chats_confirm'))) {
+const clearChats = async () => {
+  if (await confirmDialog(t('clear_chats_confirm'), t('clear_chats'))) {
     mutateChats(clearFpTgChats);
   }
 };
@@ -95,6 +132,17 @@ const clearChats = () => {
               </Button>
             </div>
             <div class="card-body">
+              <div class="field">
+                <label for="lock_on">{{ t('relay_switch') }}</label>
+                <div class="switch-end"><Switch id="lock_on" :model-value="relayOn" @update:model-value="toggleRelay" /></div>
+              </div>
+              <div class="field">
+                <label for="lock_mode">{{ t('lock_mode') }}</label>
+                <select id="lock_mode" v-model="data.lock_mode" name="lock_mode">
+                  <option value="strike">{{ t('lock_mode_strike') }}</option>
+                  <option value="magnet">{{ t('lock_mode_magnet') }}</option>
+                </select>
+              </div>
               <div class="field">
                 <label for="lock_addr">{{ t('lock_addr') }}</label>
                 <InputNumber id="lock_addr" v-model="data.lock_addr" name="lock_addr" class="mono" min="1" max="247" required />
@@ -271,6 +319,10 @@ const clearChats = () => {
 
     "relay": "Lock relay",
     "relay_sub": "Wiren Board Modbus relay module",
+    "relay_switch": "Relay",
+    "lock_mode": "Lock type",
+    "lock_mode_strike": "Strike: on = open",
+    "lock_mode_magnet": "Magnet: on = locked",
     "lock_addr": "Modbus address",
     "lock_channel": "Relay channel",
     "lock_pulse_ms": "Pulse length, ms",
@@ -300,6 +352,10 @@ const clearChats = () => {
 
     "relay": "Реле замка",
     "relay_sub": "Модуль реле Wiren Board с Modbus",
+    "relay_switch": "Реле",
+    "lock_mode": "Тип замка",
+    "lock_mode_strike": "Электрозащёлка: вкл = открыто",
+    "lock_mode_magnet": "Магнит: вкл = закрыто",
     "lock_addr": "Modbus-адрес",
     "lock_channel": "Канал реле",
     "lock_pulse_ms": "Длительность импульса, мс",
@@ -329,6 +385,10 @@ const clearChats = () => {
 
     "relay": "Құлып релесі",
     "relay_sub": "Wiren Board Modbus реле модулі",
+    "relay_switch": "Реле",
+    "lock_mode": "Құлып түрі",
+    "lock_mode_strike": "Ілгек: қосулы = ашық",
+    "lock_mode_magnet": "Магнит: қосулы = жабық",
     "lock_addr": "Modbus мекенжайы",
     "lock_channel": "Реле арнасы",
     "lock_pulse_ms": "Импульс ұзақтығы, мс",
@@ -358,6 +418,10 @@ const clearChats = () => {
 
     "relay": "Relè della serratura",
     "relay_sub": "Modulo relè Modbus Wiren Board",
+    "relay_switch": "Relè",
+    "lock_mode": "Tipo di serratura",
+    "lock_mode_strike": "Incontro: attivo = aperta",
+    "lock_mode_magnet": "Magnete: attivo = chiusa",
     "lock_addr": "Indirizzo Modbus",
     "lock_channel": "Canale del relè",
     "lock_pulse_ms": "Durata dell'impulso, ms",
@@ -387,6 +451,10 @@ const clearChats = () => {
 
     "relay": "Schlossrelais",
     "relay_sub": "Wiren Board Modbus-Relaismodul",
+    "relay_switch": "Relais",
+    "lock_mode": "Schlosstyp",
+    "lock_mode_strike": "Türöffner: an = offen",
+    "lock_mode_magnet": "Magnet: an = verriegelt",
     "lock_addr": "Modbus-Adresse",
     "lock_channel": "Relaiskanal",
     "lock_pulse_ms": "Impulsdauer, ms",

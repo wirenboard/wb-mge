@@ -3,6 +3,7 @@ import { type Ref, ref, shallowRef } from 'vue';
 import { useAlerts } from '@/common/alert';
 import { hasSession } from '@/common/session';
 import type {
+  FpLockRequest,
   FpStatus,
   FpSuccessResponse,
   FpTgChatsResponse,
@@ -39,6 +40,7 @@ const FP_ERROR_MESSAGES: Record<string, string> = {
   'not found': 'fp_error_not_found',
   'full': 'fp_error_full',
   'no image': 'fp_error_no_image',
+  'lock busy': 'fp_error_lock_busy',
   'invalid user: name is 1..48 bytes of UTF-8, tg_username up to 32 of A-Z a-z 0-9 _': 'fp_error_invalid_user',
   'invalid chat: id is a decimal chat id, name up to 48 bytes of UTF-8': 'fp_error_invalid_chat',
   'invalid JSON object': FP_ERROR_BAD_REQUEST,
@@ -47,6 +49,7 @@ const FP_ERROR_MESSAGES: Record<string, string> = {
   'expected {"slot"}': FP_ERROR_BAD_REQUEST,
   'expected {"action": "start", "user_id"} or {"action": "cancel"}': FP_ERROR_BAD_REQUEST,
   'expected {"action": "add", "id", "name"}, {"action": "remove", "id"} or {"action": "clear"}': FP_ERROR_BAD_REQUEST,
+  'expected {"on": true} or {"on": false}': FP_ERROR_BAD_REQUEST,
 };
 
 // An i18n key, or the device's own string when there is none: either way a t() argument.
@@ -181,3 +184,5 @@ export const removeFpTgChat = (id: string) =>
   api<FpSuccessResponse>('fp/tg_chats', { method: 'POST', json: { action: 'remove', id } });
 
 export const clearFpTgChats = () => api<FpSuccessResponse>('fp/tg_chats', { method: 'POST', json: { action: 'clear' } });
+
+export const setFpLock = (json: FpLockRequest) => api<FpSuccessResponse>('fp/lock', { method: 'POST', json });

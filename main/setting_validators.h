@@ -25,6 +25,7 @@ bool validate_wifi_password(const char *value);
 // configured, no admins yet.
 bool validate_lock_channel(const char *value);
 bool validate_lock_pulse_ms(const char *value);
+bool validate_lock_mode(const char *value);
 bool validate_tg_token(const char *value);
 bool validate_tg_admins(const char *value);
 

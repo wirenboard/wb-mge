@@ -63,6 +63,7 @@
 #define KEY_LOCK_ADDR               "lock_addr"
 #define KEY_LOCK_CHANNEL            "lock_channel"
 #define KEY_LOCK_PULSE_MS           "lock_pulse_ms"
+#define KEY_LOCK_MODE               "lock_mode"
 #define KEY_TG_TOKEN                "tg_token"
 #define KEY_TG_ADMINS               "tg_admins"
 
@@ -110,6 +111,11 @@
 // keys in the wb-releases manifest, so they must not be renamed.
 #define UPDATE_CHANNEL_STABLE_STR   "stable"
 #define UPDATE_CHANNEL_TESTING_STR  "testing"
+
+// Lock modes (main/fp_acs/fp_lock.c): which relay state opens the door. An electric strike is
+// powered to open (relay ON = open); an electromagnet is powered to hold the door (relay ON = locked).
+#define LOCK_MODE_STRIKE_STR        "strike"
+#define LOCK_MODE_MAGNET_STR        "magnet"
 
 // Setting types - used for type checking and JSON mapping
 typedef enum {

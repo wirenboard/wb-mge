@@ -169,6 +169,12 @@ bool validate_lock_pulse_ms(const char *value)
     return true;
 }
 
+bool validate_lock_mode(const char *value)
+{
+    (void)value;
+    return true;
+}
+
 bool validate_tg_token(const char *value)
 {
     (void)value;

@@ -81,6 +81,7 @@ const mock_setting_item_t expected_items[] = {
     {"lock_addr", "1", SETTING_ITEM_TYPE_INT},
     {"lock_channel", "1", SETTING_ITEM_TYPE_INT},
     {"lock_pulse_ms", "1000", SETTING_ITEM_TYPE_INT},
+    {"lock_mode", "strike", SETTING_ITEM_TYPE_STRING},
     {"tg_token", "", SETTING_ITEM_TYPE_STRING},
     {"tg_admins", "", SETTING_ITEM_TYPE_STRING},
 

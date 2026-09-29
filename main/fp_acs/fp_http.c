@@ -11,6 +11,7 @@
 
 #include "array_size.h"
 #include "auth.h"
+#include "fp_lock.h"
 #include "fp_store.h"
 #include "json_utils.h"
 
@@ -35,6 +36,7 @@ static const char *TAG = "fp_http";
 #define FP_HTTP_ERROR_TG_TAKEN      "telegram username taken"
 #define FP_HTTP_ERROR_USER_FIELDS   "invalid user: name is 1..48 bytes of UTF-8, tg_username up to 32 of A-Z a-z 0-9 _"
 #define FP_HTTP_ERROR_CHAT_FIELDS   "invalid chat: id is a decimal chat id, name up to 48 bytes of UTF-8"
+#define FP_HTTP_ERROR_LOCK_BUSY     "lock busy"
 
 
 // ── Responses ────────────────────────────────────────────────────────────────────────────
@@ -250,6 +252,12 @@ static bool fp_http_status_image(cJSON *root, uint32_t seq)
     return ok;
 }
 
+static bool fp_http_status_lock(cJSON *root)
+{
+    cJSON *object = cJSON_AddObjectToObject(root, "lock");
+    return ((object != NULL) && (cJSON_AddBoolToObject(object, "on", fp_lock_relay_on()) != NULL));
+}
+
 static esp_err_t fp_http_status_get(httpd_req_t *req)
 {
     if (!auth_middleware_check(req)) {
@@ -269,6 +277,7 @@ static esp_err_t fp_http_status_get(httpd_req_t *req)
     ok = ok && fp_http_status_enroll(root, &status.enroll);
     ok = ok && fp_http_status_event(root);
     ok = ok && fp_http_status_image(root, status.image_seq);
+    ok = ok && fp_http_status_lock(root);
     return fp_http_send_json(req, root, ok);
 }
 
@@ -501,6 +510,32 @@ static esp_err_t fp_http_tg_chats_post(httpd_req_t *req)
     return fp_http_send_success(req);
 }
 
+// Queued to the lock task: the relay's new state shows in GET /fp/status once it has been written.
+// A command the task did not take (not running, queue full) is a 409, for the reason given at
+// fp_http_send_req().
+static esp_err_t fp_http_lock_post(httpd_req_t *req)
+{
+    if (!auth_middleware_check(req)) {
+        return ESP_OK;
+    }
+    cJSON *body = fp_http_receive_object(req);
+    if (body == NULL) {
+        return ESP_OK;
+    }
+
+    const cJSON *on = cJSON_GetObjectItemCaseSensitive(body, "on");
+    bool valid = cJSON_IsBool(on);
+    bool value = cJSON_IsTrue(on);
+    cJSON_Delete(body);
+    if (!valid) {
+        return json_utils_send_error(req, "expected {\"on\": true} or {\"on\": false}");
+    }
+    if (!fp_lock_set(value)) {
+        return json_utils_send_error_status(req, FP_HTTP_STATUS_CONFLICT, FP_HTTP_ERROR_LOCK_BUSY);
+    }
+    return fp_http_send_success(req);
+}
+
 
 static const httpd_uri_t fp_http_uris[] = {
     {.uri = "/fp/status",        .method = HTTP_GET,  .handler = fp_http_status_get,         .user_ctx = NULL},
@@ -512,6 +547,7 @@ static const httpd_uri_t fp_http_uris[] = {
     {.uri = "/fp/enroll",        .method = HTTP_POST, .handler = fp_http_enroll_post,        .user_ctx = NULL},
     {.uri = "/fp/tg_chats",      .method = HTTP_GET,  .handler = fp_http_tg_chats_get,       .user_ctx = NULL},
     {.uri = "/fp/tg_chats",      .method = HTTP_POST, .handler = fp_http_tg_chats_post,      .user_ctx = NULL},
+    {.uri = "/fp/lock",          .method = HTTP_POST, .handler = fp_http_lock_post,          .user_ctx = NULL},
 };
 
 void fp_http_register_handlers(httpd_handle_t server)

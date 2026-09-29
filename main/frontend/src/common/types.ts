@@ -100,6 +100,14 @@ export interface FpStatus {
     width: number;
     height: number;
   } | null;
+  lock: {
+    on: boolean; // the relay as of the last coil write that went through, pulses included
+  };
+}
+
+// POST /fp/lock
+export interface FpLockRequest {
+  on: boolean;
 }
 
 export interface FpUser {
@@ -213,11 +221,13 @@ export interface Settings {
   };
   rs485_1: RsSettings;
   rs485_2: RsSettings;
-  // Lock: the Modbus relay that opens it (address 1..247 on RS-485 port 1, channel 1..8) and how
-  // long the pulse lasts (100..60000 ms).
+  // Lock: the Modbus relay that drives it (address 1..247 on RS-485 port 1, channel 1..8), how
+  // long an opening lasts (100..60000 ms) and which relay state opens it: 'strike' - relay on
+  // opens (electric strike), 'magnet' - relay on locks (electromagnet).
   lock_addr: number;
   lock_channel: number;
   lock_pulse_ms: number;
+  lock_mode: 'strike' | 'magnet';
   // Telegram bot: its token and the admins, a comma-separated list of numeric Telegram user IDs.
   tg_token: string;
   tg_admins: string;

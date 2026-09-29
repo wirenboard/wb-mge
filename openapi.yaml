@@ -939,6 +939,35 @@ paths:
                           seq: { type: integer }
                           width: { type: integer, enum: [192] }
                           height: { type: integer, enum: [192] }
+                  lock:
+                    type: object
+                    properties:
+                      'on': { type: boolean, description: "The lock relay (not the door: see lock_mode) as of the last coil write that succeeded, pulses included; false after boot until a write succeeds" }
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /fp/lock:
+    post:
+      summary: Switch the lock relay by hand
+      description: "Queued to the lock task and run after a pulse under way; the new state shows in GET /fp/status under lock. on is the relay state itself, whatever lock_mode says. Setting the state that opens the lock (on: true for strike, on: false for magnet) holds it, and openings are skipped while it is held; setting the other state releases the hold. A change of lock_addr, lock_channel or lock_mode also releases it. Not kept across a reboot: the relay starts in the locked state."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: ['on']
+              properties:
+                'on': { type: boolean }
+      responses:
+        '200': { $ref: '#/components/responses/SuccessResponse' }
+        '400': { $ref: '#/components/responses/FpError' }
+        '409':
+          description: "\"lock busy\": the command was not queued - the lock task is not running or its queue is full"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
@@ -1395,13 +1424,18 @@ components:
           minimum: 1
           maximum: 8
           default: 1
-          description: "Relay channel that opens the lock (coil channel - 1)"
+          description: "Relay channel that drives the lock (coil channel - 1)"
         lock_pulse_ms:
           type: integer
           minimum: 100
           maximum: 60000
           default: 1000
-          description: "How long the relay stays on"
+          description: "How long an opening keeps the relay in the open state (see lock_mode)"
+        lock_mode:
+          type: string
+          enum: [strike, magnet]
+          default: strike
+          description: "Which relay state opens the lock: strike - relay on opens (electric strike); magnet - relay on locks (electromagnet)"
         tg_token:
           type: string
           maxLength: 63
