@@ -203,7 +203,7 @@ const clearChats = () => {
                 type="text"
                 name="chat_id"
                 class="mono"
-                pattern="^-?[0-9]{1,20}$"
+                pattern="^-?[0-9]{1,19}$"
                 :aria-label="t('chat_id')"
                 :placeholder="t('chat_id')"
                 @input="(ev) => onCustomValidation(ev, t('wrong_chat_id_pattern'))"
