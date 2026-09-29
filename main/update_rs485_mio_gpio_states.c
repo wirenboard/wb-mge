@@ -87,8 +87,8 @@ void update_serial_tx_disabled(void)
 #endif
 }
 
-// Leave both RS-485 transceivers in receive, once, at boot. Called from app_main before the
-// Modbus stack is brought up.
+// Leave both RS-485 transceivers in receive (on WB-MGU only port 1's, see the end of this
+// comment), once, at boot. Called from app_main before the Modbus stack is brought up.
 //
 // A no-op in the slave and master roles, and deliberately so: there the DE/RE lines belong
 // to the UART from mb_*_start_serial() onwards, which drives them by hardware for
@@ -112,17 +112,33 @@ void update_serial_tx_disabled(void)
 //
 // Same idiom as mb_*_set_tx_disabled(): level before direction, so the pad never drives an
 // undefined level in the window between the two.
+//
+// WB-MGU is the exception: there only port 1 is parked. In the "none" role SERIAL_IO_PIN_2
+// (GPIO13) carries the PPS output of the GPS module in the WBE2 slot, read by
+// main/gps_ntp/gps_time.c as an input, so it is not parked - parking it LOW would fight the
+// module's output. The one thing that still drives it is the factory clock_out test
+// (main/wb_test.c), which also takes GPIO10 from UART2: after that test PPS and the module
+// command line stay lost until a reboot.
 void park_serial_direction_pins(void)
 {
 #if WB_MB_ROLE_NONE
+#if defined(MODEL_mgu_v1)
+    static const int dir_pins[] = {SERIAL_IO_PIN_1};
+#else
     static const int dir_pins[] = {SERIAL_IO_PIN_1, SERIAL_IO_PIN_2};
+#endif
 
     for (unsigned i = 0; i < (sizeof(dir_pins) / sizeof(dir_pins[0])); i++) {
         gpio_reset_pin(dir_pins[i]);
         gpio_set_level(dir_pins[i], 0);
         gpio_set_direction(dir_pins[i], GPIO_MODE_OUTPUT);
     }
+#if defined(MODEL_mgu_v1)
+    ESP_LOGI(TAG, "RS485 direction pin %d parked LOW: no Modbus role owns it; WBE2 pin %d left undriven "
+                  "(GPS PPS input)", SERIAL_IO_PIN_1, SERIAL_IO_PIN_2);
+#else
     ESP_LOGI(TAG, "RS485 direction pins (%d, %d) parked LOW: no Modbus role owns them",
              SERIAL_IO_PIN_1, SERIAL_IO_PIN_2);
+#endif
 #endif
 }

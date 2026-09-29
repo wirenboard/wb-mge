@@ -42,6 +42,12 @@ if(CONFIG_WB_MODBUS_ROLE_MASTER)
         message(STATUS "Modbus role: master — RTU master on both RS-485 ports, no TCP, no slave")
     endif()
 elseif(CONFIG_WB_MODBUS_ROLE_NONE)
+    # The GPS-disciplined NTP server needs UART2 and the WBE2 pins free, so it lives in this
+    # role only. Its sources compile to nothing off WB-MGU hardware (see main/gps_ntp/gps_ntp.h).
+    list(APPEND COMPONENT_SRCS
+        "gps_ntp/gps_ntp.c"
+        "gps_ntp/gps_time.c"
+        "gps_ntp/ntp_server.c")
     if(NOT CMAKE_BUILD_EARLY_EXPANSION)
         message(STATUS "Modbus role: none — no Modbus stack is compiled")
     endif()
@@ -121,6 +127,7 @@ idf_component_register(SRCS ${COMPONENT_SRCS}
                             "wb_app_desc"
                             "voltage_monitor"
                             "qemu"
+                            "gps_ntp"
                         EMBED_TXTFILES
                             # Compressible text shell assets served with Content-Encoding: gzip.
                             frontend/dist/index.css.gz

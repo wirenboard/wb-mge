@@ -12,6 +12,7 @@
 #include "network.h"
 #include "settings_update.h"
 #include "debug_log.h"
+#include "gps_ntp.h"
 
 // The Modbus stack of the built role, and the example task that goes with it. In the "none"
 // role neither header exists on this build and none of the calls below is made: the two
@@ -157,9 +158,9 @@ void app_main(void)
 
     print_setting_items();
 
-    // Both RS-485 transceivers into receive before anything else touches those pins. A no-op
-    // unless this is a "none" build; see the comment on the function for why that role needs
-    // it and the other two must not have it.
+    // Both RS-485 transceivers into receive before anything else touches those pins (on WB-MGU
+    // only port 1: GPIO13 is the GPS PPS input). A no-op unless this is a "none" build; see the
+    // comment on the function for why that role needs it and the other two must not have it.
     park_serial_direction_pins();
 
     // The two RS-485 slaves come up HERE, before the network and before the web server.
@@ -214,6 +215,12 @@ void app_main(void)
     #endif
 
     ESP_ERROR_CHECK(network_init());
+
+    // GPS-disciplined NTP server: WB-MGU in the "none" role only, where no Modbus stack holds
+    // UART2 and the WBE2 slot's pins. Its sockets need the network stack initialised above.
+    #if GPS_NTP_ENABLED
+        gps_ntp_start();
+    #endif
 
     // Deliberately NOT ESP_ERROR_CHECK: a web server that will not start must not abort the boot.
     // An abort() here panics and reboots, and every cause that can make the start fail — too
