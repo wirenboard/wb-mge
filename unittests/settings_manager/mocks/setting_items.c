@@ -205,6 +205,17 @@ static const mock_type_entry_t type_table[] = {
     { "485_fail_safe_2",    SETTING_ITEM_TYPE_BOOL,   "true"              },
     { "485_tx_dis_2",       SETTING_ITEM_TYPE_BOOL,   "false"             },
     { "upd_channel",        SETTING_ITEM_TYPE_STRING, "stable"            },
+    { "lock_addr",          SETTING_ITEM_TYPE_INT,    "1"                 },
+    { "lock_channel",       SETTING_ITEM_TYPE_INT,    "1"                 },
+    { "lock_pulse_ms",      SETTING_ITEM_TYPE_INT,    "1000"              },
+    { "tg_token",           SETTING_ITEM_TYPE_STRING, ""                  },
+    { "tg_admins",          SETTING_ITEM_TYPE_STRING, ""                  },
+    { "mqtt_enabled",       SETTING_ITEM_TYPE_BOOL,   "false"             },
+    { "mqtt_host",          SETTING_ITEM_TYPE_STRING, ""                  },
+    { "mqtt_port",          SETTING_ITEM_TYPE_INT,    "1883"              },
+    { "mqtt_user",          SETTING_ITEM_TYPE_STRING, ""                  },
+    { "mqtt_pass",          SETTING_ITEM_TYPE_STRING, ""                  },
+    { "mqtt_id",            SETTING_ITEM_TYPE_STRING, ""                  },
 };
 
 #define TYPE_TABLE_SIZE (sizeof(type_table) / sizeof(type_table[0]))

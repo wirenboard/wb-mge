@@ -78,6 +78,7 @@ void mb_master_lock_give(void);
 // the UART and driving it LOW, or hand the pin back. This is the 485_tx_dis_N kill-switch,
 // and it matters at least as much here as in the slave role: a master TRANSMITS by itself,
 // so this is the setting that keeps a port quiet on a bus the user does not want driven.
+// ESP_ERR_NOT_SUPPORTED for a port this master does not own (see FP_ACS_ENABLED in mb_master.c).
 esp_err_t mb_master_set_tx_disabled(unsigned index, bool disabled);
 
 // ── The request API ──────────────────────────────────────────────────────────────────
@@ -113,3 +114,6 @@ esp_err_t mb_master_read_input(uint8_t port, uint8_t slave_id, uint16_t addr,
                                uint16_t count, uint16_t *out);
 esp_err_t mb_master_write_holding(uint8_t port, uint8_t slave_id, uint16_t addr,
                                   uint16_t value);
+// FC05: switch one coil (0-based, as on the wire) on (0xFF00) or off (0x0000). Same return
+// values as the rest of this API.
+esp_err_t mb_master_write_coil(uint8_t port, uint8_t slave_id, uint16_t coil, bool on);

@@ -205,6 +205,10 @@ paths:
                     type: integer
                     minimum: 0
                     description: "PSRAM size in kilobytes"
+                  fp_acs:
+                    type: boolean
+                    enum: [true]
+                    description: "Present only in firmware with the fingerprint access control (WB-MGU, MB_ROLE=master) and the /fp/ endpoints"
                   ethernet:
                     type: object
                     properties:
@@ -887,6 +891,252 @@ paths:
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
+  # ── Fingerprint access control ──────────────────────────────────────────────────────
+  # Present only in a WB-MGU master build (main/fp_acs/fp_acs.h: FP_ACS_ENABLED). Errors use
+  # ErrorResponse: 400 malformed request, 404 unknown user/slot/chat, 409 busy/full/sensor offline,
+  # 500 storage unavailable.
+  /fp/status:
+    get:
+      summary: Sensor, enrollment, last event and last image state
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sensor:
+                    type: object
+                    properties:
+                      online: { type: boolean }
+                      capacity: { type: integer, description: "Template slots of the sensor; 0 until it has answered once" }
+                      used: { type: integer, description: "Slots referenced by users" }
+                  users_rev:
+                    type: integer
+                    description: "Changes with every change to the user list (fingers included): re-read GET /fp/users"
+                  enroll:
+                    type: object
+                    properties:
+                      state: { type: string, enum: [idle, place, lift, processing, done, error, cancelled] }
+                      user_id: { type: [integer, 'null'] }
+                      step: { type: integer, description: "1..steps, 0 when idle" }
+                      steps: { type: integer, enum: [5] }
+                      slot: { type: [integer, 'null'], description: "The slot the new finger was stored in, once done" }
+                      error: { type: [string, 'null'] }
+                  last_event:
+                    oneOf:
+                      - type: 'null'
+                      - $ref: '#/components/schemas/FpEvent'
+                  image:
+                    oneOf:
+                      - type: 'null'
+                      - type: object
+                        properties:
+                          seq: { type: integer }
+                          width: { type: integer, enum: [192] }
+                          height: { type: integer, enum: [192] }
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /fp/image:
+    get:
+      summary: The last finger image, 8-bit greyscale, row by row
+      responses:
+        '200':
+          description: width * height bytes (see GET /fp/status)
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '404':
+          description: No image since boot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /fp/users:
+    get:
+      summary: All users, ascending by id
+      responses:
+        '200':
+          description: Users
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/FpUser'
+                  max_users: { type: integer, enum: [100] }
+                  max_fingers: { type: integer, enum: [10] }
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /fp/user:
+    post:
+      summary: Create a user (no id) or update the fields given (id)
+      description: "Created users default to enabled, allow_fp, not allow_tg, empty tg_username."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                id: { type: integer, minimum: 1, maximum: 100 }
+                name: { type: string, minLength: 1, description: "1..48 bytes of UTF-8" }
+                enabled: { type: boolean }
+                allow_fp: { type: boolean }
+                allow_tg: { type: boolean }
+                tg_username: { type: string, pattern: '^@?[A-Za-z0-9_]{0,32}$', description: "Stored without '@', matched case-insensitively" }
+      responses:
+        '200':
+          description: The stored user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, enum: [true] }
+                  user:
+                    $ref: '#/components/schemas/FpUser'
+        '400': { $ref: '#/components/responses/FpError' }
+        '404': { $ref: '#/components/responses/FpError' }
+        '409': { $ref: '#/components/responses/FpError' }
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /fp/user/delete:
+    post:
+      summary: Delete a user and the templates of its fingers
+      description: "Queued to the sensor task; the removal shows as a users_rev change."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id: { type: integer }
+      responses:
+        '200': { $ref: '#/components/responses/SuccessResponse' }
+        '400': { $ref: '#/components/responses/FpError' }
+        '404': { $ref: '#/components/responses/FpError' }
+        '409': { $ref: '#/components/responses/FpError' }
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /fp/finger/delete:
+    post:
+      summary: Delete one finger by its sensor slot
+      description: "Queued to the sensor task; the removal shows as a users_rev change."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slot]
+              properties:
+                slot: { type: integer }
+      responses:
+        '200': { $ref: '#/components/responses/SuccessResponse' }
+        '400': { $ref: '#/components/responses/FpError' }
+        '404': { $ref: '#/components/responses/FpError' }
+        '409': { $ref: '#/components/responses/FpError' }
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /fp/enroll:
+    post:
+      summary: Start enrolling one more finger of a user (5 placements), or cancel
+      description: "Progress is reported in GET /fp/status under enroll."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required: [action, user_id]
+                  properties:
+                    action: { type: string, enum: [start] }
+                    user_id: { type: integer }
+                - type: object
+                  required: [action]
+                  properties:
+                    action: { type: string, enum: [cancel] }
+      responses:
+        '200': { $ref: '#/components/responses/SuccessResponse' }
+        '400': { $ref: '#/components/responses/FpError' }
+        '404': { $ref: '#/components/responses/FpError' }
+        '409':
+          description: "An enrollment is running, the user or the sensor is full, or the sensor is offline"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /fp/tg_chats:
+    get:
+      summary: Telegram chats the bot answers in
+      responses:
+        '200':
+          description: Chats, in the order they were added
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chats:
+                    type: array
+                    maxItems: 20
+                    items:
+                      $ref: '#/components/schemas/FpTgChat'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+    post:
+      summary: Add (or rename), remove one, or clear all allowed chats
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required: [action, id]
+                  properties:
+                    action: { type: string, enum: [add] }
+                    id: { type: string, pattern: '^-?[0-9]{1,19}$' }
+                    name: { type: string, description: "Up to 48 bytes of UTF-8" }
+                - type: object
+                  required: [action, id]
+                  properties:
+                    action: { type: string, enum: [remove] }
+                    id: { type: string }
+                - type: object
+                  required: [action]
+                  properties:
+                    action: { type: string, enum: [clear] }
+      responses:
+        '200': { $ref: '#/components/responses/SuccessResponse' }
+        '400': { $ref: '#/components/responses/FpError' }
+        '404': { $ref: '#/components/responses/FpError' }
+        '409': { $ref: '#/components/responses/FpError' }
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
   /gcov:
     get:
       summary: Stream on-target code-coverage data (coverage builds only)
@@ -915,6 +1165,12 @@ components:
   responses:
     UnauthorizedError:
       description: Unauthorized - Session cookie required or invalid
+    FpError:
+      description: The request was refused; error names the reason
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     SuccessResponse:
       description: Operation successful
       content:
@@ -925,6 +1181,37 @@ components:
               success:
                 type: boolean
   schemas:
+    FpUser:
+      type: object
+      properties:
+        id: { type: integer, minimum: 1, maximum: 100 }
+        name: { type: string }
+        enabled: { type: boolean }
+        allow_fp: { type: boolean }
+        allow_tg: { type: boolean }
+        tg_username: { type: string }
+        fingers:
+          type: array
+          maxItems: 10
+          items: { type: integer, description: "Sensor slot" }
+
+    FpEvent:
+      type: object
+      properties:
+        seq: { type: integer }
+        uptime_s: { type: integer, description: "Device uptime at the event" }
+        source: { type: string, enum: [fingerprint, telegram] }
+        result: { type: string, enum: [granted, denied, unknown] }
+        user_id: { type: [integer, 'null'] }
+        user_name: { type: [string, 'null'] }
+        score: { type: [integer, 'null'], description: "Match score of a known user's fingerprint" }
+
+    FpTgChat:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+
     RS485Status:
       type: object
       description: >-
@@ -1098,6 +1385,64 @@ components:
           type: boolean
           default: false
           description: "Permanently disable WiFi. Always present in GET; when true the response omits the wifi sub-object"
+        lock_addr:
+          type: integer
+          minimum: 1
+          maximum: 247
+          default: 1
+          description: "Modbus unit id of the relay module that opens the lock, on RS-485 port 1 (fingerprint access control)"
+        lock_channel:
+          type: integer
+          minimum: 1
+          maximum: 8
+          default: 1
+          description: "Relay channel that opens the lock (coil channel - 1)"
+        lock_pulse_ms:
+          type: integer
+          minimum: 100
+          maximum: 60000
+          default: 1000
+          description: "How long the relay stays on"
+        tg_token:
+          type: string
+          maxLength: 63
+          pattern: '^[!-~]*$'
+          default: ""
+          description: "Telegram bot token; empty means no bot"
+        tg_admins:
+          type: string
+          maxLength: 63
+          pattern: '^([0-9]+(,[0-9]+)*)?$'
+          default: ""
+          description: "Numeric Telegram user ids of the bot admins, comma-separated"
+        mqtt_enabled: { type: boolean, default: false }
+        mqtt_host:
+          type: string
+          maxLength: 63
+          pattern: '^[!-~]*$'
+          default: ""
+          description: "Broker host name or IP; empty means no broker"
+        mqtt_port:
+          type: integer
+          minimum: 1
+          maximum: 65535
+          default: 1883
+        mqtt_user:
+          type: string
+          maxLength: 63
+          pattern: '^[ -~]*$'
+          default: ""
+        mqtt_pass:
+          type: string
+          maxLength: 63
+          pattern: '^[ -~]*$'
+          default: ""
+        mqtt_id:
+          type: string
+          maxLength: 63
+          pattern: '^[!-~]*$'
+          default: ""
+          description: "Device id in /devices/<id>/...; no '/', '+', '#' or spaces. Empty: derived from the model and the MAC"
 
     SettingsWarning:
       type: object

@@ -17,17 +17,31 @@
 #include "esp_modbus_master.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "fp_acs.h"
 #include "setting_items.h"
 
 static const char *TAG = "mb_master";
 
 // Modbus function codes. esp-modbus keeps its own MB_FUNC_* enum in mb_proto.h, which is a
-// PRIVATE include dir of the component (mb_objects/include), so the three codes this
-// module sends are spelled out here rather than reached for through a header the component
-// does not export.
+// PRIVATE include dir of the component (mb_objects/include), so the codes this module sends
+// are spelled out here rather than reached for through a header the component does not
+// export. FC05 is compiled into esp-modbus unconditionally (MB_FUNC_WRITE_COIL_ENABLED is a
+// fixed 1 in its mb_config.h, not a Kconfig option).
 #define MB_FC_READ_HOLDING      0x03
 #define MB_FC_READ_INPUT        0x04
+#define MB_FC_WRITE_COIL        0x05
 #define MB_FC_WRITE_HOLDING     0x06
+
+// FC05 coil values, as the specification defines them: anything else is refused.
+#define MB_COIL_ON              0xFF00
+#define MB_COIL_OFF             0x0000
+
+// With the fingerprint access control compiled in, RS-485 port 2 (index 1) is the WBE2 slot the
+// fingerprint sensor sits in, and its UART and pins belong to main/fp_acs/r503.c: this master
+// neither opens that port nor touches its pins.
+#if FP_ACS_ENABLED
+    #define MB_MASTER_FP_PORT_INDEX     1
+#endif
 
 // The Modbus limit on FC03/FC04: 125 registers in one response frame. A larger request is
 // refused here rather than sent and rejected by the far end.
@@ -137,6 +151,18 @@ static StaticSemaphore_t mb_req_mutex_buffer[RS485_PORTS_COUNT];
 static bool mb_tx_disabled[RS485_PORTS_COUNT];
 
 
+// Whether this master drives the port at all.
+static bool mb_master_port_owned(unsigned index)
+{
+#if FP_ACS_ENABLED
+    return (index != MB_MASTER_FP_PORT_INDEX);
+#else
+    (void)index;
+    return true;
+#endif
+}
+
+
 // ── Settings ─────────────────────────────────────────────────────────────────────────
 
 /* Map a string value to its corresponding integer constant using a lookup table.
@@ -236,7 +262,7 @@ bool mb_master_check_settings_changed(void)
         // others, so comparing a port whose handle is NULL would report a change on every
         // single settings write - a Wi-Fi password included - and interrupt the traffic on
         // the port that IS working.
-        if (mb_handles[i] == NULL) {
+        if ((!mb_master_port_owned(i)) || (mb_handles[i] == NULL)) {
             continue;
         }
         mb_serial_config_t config;
@@ -258,6 +284,9 @@ esp_err_t mb_master_set_tx_disabled(unsigned index, bool disabled)
 {
     if (index >= RS485_PORTS_COUNT) {
         return ESP_ERR_INVALID_ARG;
+    }
+    if (!mb_master_port_owned(index)) {
+        return ESP_ERR_NOT_SUPPORTED;
     }
     const mb_serial_port_t *port = &mb_serial_ports[index];
 
@@ -500,7 +529,12 @@ esp_err_t mb_master_start_serial(void)
     // down with it, and a device driving one RS-485 bus is worth more than one driving
     // neither.
     unsigned started = 0;
+    unsigned owned = 0;
     for (unsigned i = 0; i < RS485_PORTS_COUNT; i++) {
+        if (!mb_master_port_owned(i)) {
+            continue;
+        }
+        owned++;
         if (mb_start_master_port(i) == ESP_OK) {
             started++;
         }
@@ -516,8 +550,8 @@ esp_err_t mb_master_start_serial(void)
         ESP_LOGE(TAG, "No RS-485 port came up: this device polls Modbus on neither bus");
         return ESP_FAIL;
     }
-    if (started < RS485_PORTS_COUNT) {
-        ESP_LOGW(TAG, "Only %u of %u RS-485 ports came up", started, (unsigned)RS485_PORTS_COUNT);
+    if (started < owned) {
+        ESP_LOGW(TAG, "Only %u of %u RS-485 ports came up", started, owned);
     }
 
     mb_serial_running = true;
@@ -528,6 +562,9 @@ esp_err_t mb_master_start_serial(void)
     // that routing IS the enabled state: without the reset, a port that was disabled before
     // the restart would look already-disabled to the setter and keep the UART's pin.
     for (unsigned i = 0; i < RS485_PORTS_COUNT; i++) {
+        if (!mb_master_port_owned(i)) {
+            continue;
+        }
         mb_tx_disabled[i] = false;
         mb_master_set_tx_disabled(i, setting_items_read_bool(mb_serial_ports[i].tx_dis_key));
     }
@@ -564,7 +601,9 @@ esp_err_t mb_master_stop(void)
     }
 
     for (unsigned i = 0; i < RS485_PORTS_COUNT; i++) {
-        mb_delete_instance(i);
+        if (mb_master_port_owned(i)) {
+            mb_delete_instance(i);
+        }
     }
     mb_serial_running = false;
 
@@ -686,6 +725,20 @@ esp_err_t mb_master_write_holding(uint8_t port, uint8_t slave_id, uint16_t addr,
         .slave_addr = slave_id,
         .command    = MB_FC_WRITE_HOLDING,
         .reg_start  = addr,
+        .reg_size   = 1,
+    };
+    return mb_master_request(port, &request, &value_buf);
+}
+
+esp_err_t mb_master_write_coil(uint8_t port, uint8_t slave_id, uint16_t coil, bool on)
+{
+    // Carried in the request frame like FC06: esp-modbus reads *(uint16_t *)data_ptr and puts it
+    // on the wire high byte first.
+    uint16_t value_buf = on ? MB_COIL_ON : MB_COIL_OFF;
+    mb_param_request_t request = {
+        .slave_addr = slave_id,
+        .command    = MB_FC_WRITE_COIL,
+        .reg_start  = coil,
         .reg_size   = 1,
     };
     return mb_master_request(port, &request, &value_buf);

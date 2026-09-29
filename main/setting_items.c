@@ -234,6 +234,24 @@ static const setting_item_t setting_items[] = {
 
     // Firmware update channel: read by the web UI to pick a version from the release manifest
     {KEY_UPDATE_CHANNEL, DEFAULT_UPDATE_CHANNEL, validate_update_channel, SETTING_ITEM_TYPE_STRING},
+
+    // Fingerprint access control: the relay that opens the lock and the Telegram bot. Stored in
+    // every build, like the MQTT settings below, so a configuration exported from one device
+    // imports into another whatever it was built as; only the WB-MGU master build reads them.
+    // The relay's unit id is a Modbus unit id like any other, so it takes the same 1..247.
+    {KEY_LOCK_ADDR, DEFAULT_LOCK_ADDR, validate_slave_id, SETTING_ITEM_TYPE_INT},
+    {KEY_LOCK_CHANNEL, DEFAULT_LOCK_CHANNEL, validate_lock_channel, SETTING_ITEM_TYPE_INT},
+    {KEY_LOCK_PULSE_MS, DEFAULT_LOCK_PULSE_MS, validate_lock_pulse_ms, SETTING_ITEM_TYPE_INT},
+    {KEY_TG_TOKEN, DEFAULT_TG_TOKEN, validate_tg_token, SETTING_ITEM_TYPE_STRING},
+    {KEY_TG_ADMINS, DEFAULT_TG_ADMINS, validate_tg_admins, SETTING_ITEM_TYPE_STRING},
+
+    // MQTT: where the broker is and what this device calls itself on it.
+    {KEY_MQTT_ENABLED, DEFAULT_MQTT_ENABLED, validate_bool, SETTING_ITEM_TYPE_BOOL},
+    {KEY_MQTT_HOST, DEFAULT_MQTT_HOST, validate_mqtt_host, SETTING_ITEM_TYPE_STRING},
+    {KEY_MQTT_PORT, DEFAULT_MQTT_PORT, validate_port, SETTING_ITEM_TYPE_INT},
+    {KEY_MQTT_USER, DEFAULT_MQTT_USER, validate_mqtt_credential, SETTING_ITEM_TYPE_STRING},
+    {KEY_MQTT_PASS, DEFAULT_MQTT_PASS, validate_mqtt_credential, SETTING_ITEM_TYPE_STRING},
+    {KEY_MQTT_ID, DEFAULT_MQTT_ID, validate_mqtt_id, SETTING_ITEM_TYPE_STRING},
 };
 
 static const setting_item_t *find_setting_item(const char *key)

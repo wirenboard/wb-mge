@@ -35,9 +35,16 @@ set(COMPONENT_SRCS "main.c"
 # build announced "Modbus role: slave" first and then its real role. That pass collects
 # REQUIRES only and ignores SRCS, so the list below is free to be wrong there.
 if(CONFIG_WB_MODBUS_ROLE_MASTER)
+    # The fingerprint access control drives its lock through this master. Its sources compile to
+    # nothing off WB-MGU hardware (see main/fp_acs/fp_acs.h).
     list(APPEND COMPONENT_SRCS
         "mb_master/mb_master.c"
-        "mb_master/user_app.c")
+        "mb_master/user_app.c"
+        "fp_acs/fp_acs.c"
+        "fp_acs/fp_http.c"
+        "fp_acs/fp_lock.c"
+        "fp_acs/fp_store.c"
+        "fp_acs/r503.c")
     if(NOT CMAKE_BUILD_EARLY_EXPANSION)
         message(STATUS "Modbus role: master — RTU master on both RS-485 ports, no TCP, no slave")
     endif()
@@ -121,6 +128,7 @@ idf_component_register(SRCS ${COMPONENT_SRCS}
                             "wb_app_desc"
                             "voltage_monitor"
                             "qemu"
+                            "fp_acs"
                         EMBED_TXTFILES
                             # Compressible text shell assets served with Content-Encoding: gzip.
                             frontend/dist/index.css.gz

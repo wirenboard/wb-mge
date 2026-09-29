@@ -49,6 +49,25 @@
 
 #define DEFAULT_UPDATE_CHANNEL              UPDATE_CHANNEL_STABLE_STR
 
+// Fingerprint access control (main/fp_acs/): the relay that opens the lock - unit id on RS-485
+// port 1, channel counted from 1 - and how long it stays on.
+#define DEFAULT_LOCK_ADDR           "1"
+#define DEFAULT_LOCK_CHANNEL        "1"
+#define DEFAULT_LOCK_PULSE_MS       "1000"
+
+// Telegram bot: no token means no bot; the admins are numeric Telegram user ids.
+#define DEFAULT_TG_TOKEN            ""
+#define DEFAULT_TG_ADMINS           ""
+
+// MQTT. Off out of the box with nothing configured: a device that has never been told about a
+// broker must not go looking for one. The empty id means "build one from the model and the MAC".
+#define DEFAULT_MQTT_ENABLED        "false"
+#define DEFAULT_MQTT_HOST           ""
+#define DEFAULT_MQTT_PORT           "1883"
+#define DEFAULT_MQTT_USER           ""
+#define DEFAULT_MQTT_PASS           ""
+#define DEFAULT_MQTT_ID             ""
+
 
 #ifdef MODEL_mge_v3
     #define DEVICE_MODEL            "WB-MGE v.3"

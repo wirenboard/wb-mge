@@ -31,6 +31,8 @@ INC += $(UNITTEST_DIR)/mocks/freertos
 INC += $(PROJ_DIR)/main
 INC += $(PROJ_DIR)/main/network
 INC += $(PROJ_DIR)/main/voltage_monitor
+# fp_acs.h (FP_ACS_ENABLED, which is 0 on the host) decides whether /info carries "fp_acs".
+INC += $(PROJ_DIR)/main/fp_acs
 # sys_info.h pulls in wb_app_desc.h and the ESP-IDF app-format headers; expose
 # them on the host (mirrors the http_server unit-test setup).
 INC += $(PROJ_DIR)/main/wb_app_desc

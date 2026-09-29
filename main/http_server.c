@@ -7,6 +7,7 @@
 #include "ota_handler.h"
 #include "wb_test.h"
 #include "coverage_dump.h"
+#include "fp_acs.h"
 
 #include <esp_http_server.h>
 #include <sys/param.h>
@@ -17,7 +18,9 @@
 #include "setting_items.h"
 #include "sys_info.h"
 
-#define MAX_URI_HANDLERS                    24          // 23 endpoints are registered below (the last one only in COVERAGE_BUILD)
+// 22 endpoints are always registered below, plus the nine /fp/ ones (FP_ACS_ENABLED) and /gcov
+// (COVERAGE_BUILD): 32 when all of them are there.
+#define MAX_URI_HANDLERS                    32
 #define STACK_SIZE                          (1024 * 6)
 #define MAX_OPEN_SOCKETS                    12          // Increased to allow simultaneous connections from at least 2-3 devices
 
@@ -358,6 +361,9 @@ esp_err_t http_server_init_port(uint16_t port)
         httpd_register_uri_handler(http_server, &wb_test_get);
         httpd_register_uri_handler(http_server, &wb_test_post);
         httpd_register_uri_handler(http_server, &hostname_get);
+#if FP_ACS_ENABLED
+        fp_http_register_handlers(http_server);
+#endif
 #ifdef COVERAGE_BUILD
         coverage_dump_register_handlers(http_server);
 #endif

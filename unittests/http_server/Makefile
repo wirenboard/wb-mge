@@ -18,6 +18,8 @@ INC += $(UNITTEST_DIR)
 INC += $(UNITTEST_DIR)/mocks
 INC += mocks
 INC += $(PROJ_DIR)/main
+# fp_acs.h (FP_ACS_ENABLED, which is 0 on the host) decides whether the /fp/ endpoints are registered.
+INC += $(PROJ_DIR)/main/fp_acs
 # sys_info.h (used by http_server.c for the build-identity ETag) pulls in
 # wb_app_desc.h and the ESP-IDF app-format headers; expose them on the host.
 INC += $(PROJ_DIR)/main/wb_app_desc

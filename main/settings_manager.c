@@ -42,6 +42,20 @@ static const setting_mapping_t top_level_mappings[] = {
     {"io_bus", KEY_IO_BUS_ENABLED},
     {"vout", KEY_485_VOUT},
     {"update_channel", KEY_UPDATE_CHANNEL},
+
+    // Fingerprint access control and MQTT: flat top-level keys named after the NVS keys, the way
+    // io_bus and vout are.
+    {"lock_addr", KEY_LOCK_ADDR},
+    {"lock_channel", KEY_LOCK_CHANNEL},
+    {"lock_pulse_ms", KEY_LOCK_PULSE_MS},
+    {"tg_token", KEY_TG_TOKEN},
+    {"tg_admins", KEY_TG_ADMINS},
+    {"mqtt_enabled", KEY_MQTT_ENABLED},
+    {"mqtt_host", KEY_MQTT_HOST},
+    {"mqtt_port", KEY_MQTT_PORT},
+    {"mqtt_user", KEY_MQTT_USER},
+    {"mqtt_pass", KEY_MQTT_PASS},
+    {"mqtt_id", KEY_MQTT_ID},
 };
 
 static const setting_mapping_t wifi_mappings[] = {

@@ -9,7 +9,7 @@
 
 #define HTTPD_MAX_URI_LEN                       100
 // Mirror main/http_server.c.
-#define MAX_URI_HANDLERS                        24
+#define MAX_URI_HANDLERS                        32
 
 #define STACK_SIZE                              (1024 * 6)
 #define MAX_OPEN_SOCKETS                        12

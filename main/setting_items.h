@@ -58,6 +58,24 @@
 #define KEY_MB_SLAVE_ID             "mb_slave_id"
 #define KEY_MB_TCP_PORT             "mb_tcp_port"
 
+// Fingerprint access control: the relay that opens the lock (main/fp_acs/fp_lock.c) and the
+// Telegram bot. NVS keys are capped at 15 characters.
+#define KEY_LOCK_ADDR               "lock_addr"
+#define KEY_LOCK_CHANNEL            "lock_channel"
+#define KEY_LOCK_PULSE_MS           "lock_pulse_ms"
+#define KEY_TG_TOKEN                "tg_token"
+#define KEY_TG_ADMINS               "tg_admins"
+
+// MQTT. What the client needs to reach a Wiren Board controller's broker and what to call
+// itself there. An empty mqtt_id means "the model name and the MAC", which is what a device
+// that was never named answers to.
+#define KEY_MQTT_ENABLED            "mqtt_enabled"
+#define KEY_MQTT_HOST               "mqtt_host"
+#define KEY_MQTT_PORT               "mqtt_port"
+#define KEY_MQTT_USER               "mqtt_user"
+#define KEY_MQTT_PASS               "mqtt_pass"
+#define KEY_MQTT_ID                 "mqtt_id"
+
 // WiFi modes
 #define WIFI_MODE_AP_STR            "ap"
 #define WIFI_MODE_STA_STR           "sta"

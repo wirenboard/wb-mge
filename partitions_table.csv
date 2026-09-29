@@ -3,5 +3,9 @@ nvs,        data,   nvs,        0x9000,     16K,
 otadata,    data,   ota,        0xd000,     8K,
 phy_init,   data,   phy,        0xf000,     4K,
 # factory,    app,    factory,    0x10000,    512K,
+# Users and fingers of the fingerprint access control (main/fp_acs/fp_store.c), in the region the
+# unused factory slot above leaves free. The partition table is written only by a serial flash, never
+# by an OTA update: a device needs one serial flash of this table before the partition exists.
+fp_nvs,     data,   nvs,        0x10000,    64K,
 ota_0,      app,    ota_0,      0x90000,    1728K,
 ota_1,      app,    ota_1,      0x240000,   1728K,

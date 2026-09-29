@@ -153,3 +153,48 @@ bool validate_wifi_password(const char *value)
     mock_validate_wifi_password_called = true;
     return true;
 }
+
+/* Fingerprint access control and MQTT validators. No "was it called" flag for these, unlike the
+ * ones above: this suite checks the settings TABLE, and what they accept is checked in
+ * unittests/setting_validators. They exist here only so the table links. */
+bool validate_lock_channel(const char *value)
+{
+    (void)value;
+    return true;
+}
+
+bool validate_lock_pulse_ms(const char *value)
+{
+    (void)value;
+    return true;
+}
+
+bool validate_tg_token(const char *value)
+{
+    (void)value;
+    return true;
+}
+
+bool validate_tg_admins(const char *value)
+{
+    (void)value;
+    return true;
+}
+
+bool validate_mqtt_host(const char *value)
+{
+    (void)value;
+    return true;
+}
+
+bool validate_mqtt_credential(const char *value)
+{
+    (void)value;
+    return true;
+}
+
+bool validate_mqtt_id(const char *value)
+{
+    (void)value;
+    return true;
+}

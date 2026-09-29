@@ -77,6 +77,19 @@ const mock_setting_item_t expected_items[] = {
     {"485_tx_dis_2", "false", SETTING_ITEM_TYPE_BOOL},
 
     {"upd_channel", "stable", SETTING_ITEM_TYPE_STRING},
+
+    {"lock_addr", "1", SETTING_ITEM_TYPE_INT},
+    {"lock_channel", "1", SETTING_ITEM_TYPE_INT},
+    {"lock_pulse_ms", "1000", SETTING_ITEM_TYPE_INT},
+    {"tg_token", "", SETTING_ITEM_TYPE_STRING},
+    {"tg_admins", "", SETTING_ITEM_TYPE_STRING},
+
+    {"mqtt_enabled", "false", SETTING_ITEM_TYPE_BOOL},
+    {"mqtt_host", "", SETTING_ITEM_TYPE_STRING},
+    {"mqtt_port", "1883", SETTING_ITEM_TYPE_INT},
+    {"mqtt_user", "", SETTING_ITEM_TYPE_STRING},
+    {"mqtt_pass", "", SETTING_ITEM_TYPE_STRING},
+    {"mqtt_id", "", SETTING_ITEM_TYPE_STRING},
 };
 
 #define SETTING_ITEMS_COUNT         (ARRAY_SIZE(expected_items))

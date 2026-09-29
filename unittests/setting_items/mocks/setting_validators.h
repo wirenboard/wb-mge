@@ -37,3 +37,13 @@ bool validate_bool(const char *value);
 bool validate_login(const char *value);
 bool validate_password(const char *value);
 bool validate_wifi_password(const char *value);
+
+/* Fingerprint access control and MQTT validators, stubbed to accept anything — see the note in
+ * the mock's .c file. */
+bool validate_lock_channel(const char *value);
+bool validate_lock_pulse_ms(const char *value);
+bool validate_tg_token(const char *value);
+bool validate_tg_admins(const char *value);
+bool validate_mqtt_host(const char *value);
+bool validate_mqtt_credential(const char *value);
+bool validate_mqtt_id(const char *value);

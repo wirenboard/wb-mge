@@ -314,6 +314,40 @@ The per-port serial parameters (`baudrate_N`, `parity_N`, `stopbits_N`, `databit
 transceiver controls (`485_term_N`, `485_fail_safe_N`, `485_tx_dis_N`) are read by both the
 slave and the master role from the same keys, and exist in every build.
 
+## Fingerprint access control (WB-MGU)
+
+A WB-MGU built in the master role is a door controller: a Grow R503 fingerprint sensor in the
+WBE2 slot decides who may enter, and a Wiren Board relay module opens the lock. The code is in
+`main/fp_acs/`; in every other build it compiles to nothing.
+
+```bash
+make TARGET=mgu_v1 MB_ROLE=master build-idf-project
+```
+
+**Sensor wiring** (R503 connector pins; the manual warns the wire colours vary):
+
+| R503 pin | Signal | WB-MGU |
+| -------- | ------ | ------ |
+| 1 | Power, 3.3 V | 3.3 V |
+| 2 | GND | GND |
+| 3 | TXD (sensor output) | GPIO4 (port-2 RX) |
+| 4 | RXD (sensor input) | GPIO10 (port-2 TX) |
+| 6 | 3.3VT, touch power | 3.3 V |
+
+Pin 5 (WAKEUP) is not used, nor is GPIO13. The link is 57600 8N1 with the factory address and
+password.
+
+**Lock:** the relay module sits on its own RS-485 bus on **port 1**, where this device is the
+Modbus master; port 2 is not a Modbus port in this build. The settings `lock_addr` (unit id),
+`lock_channel` (1–8) and `lock_pulse_ms` choose the relay and how long it stays on.
+
+**One serial flash first.** Users and fingers live in their own NVS partition, `fp_nvs`, which
+`partitions_table.csv` adds. An OTA update never rewrites the partition table, so a device must
+be flashed over serial once (`make TARGET=mgu_v1 MB_ROLE=master flash`); until then the log says
+the partition is missing and no user can be stored.
+
+The HTTP API is `/fp/*` in `openapi.yaml`.
+
 ## Known limitations
 
 - **The master logs every timeout at ERROR level, and there is no knob for it.** The request

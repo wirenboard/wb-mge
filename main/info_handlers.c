@@ -7,6 +7,7 @@
 #include "sys_info.h"
 #include "voltage_monitor.h"
 #include "config_button.h"
+#include "fp_acs.h"
 
 #include <esp_log.h>
 #include <esp_wifi.h>
@@ -284,6 +285,12 @@ esp_err_t info_get_handler(httpd_req_t *req)
     // Add PSRAM info
     cJSON_AddBoolToObject(response_json, "psram_available", sys_info.psram_available);
     cJSON_AddNumberToObject(response_json, "psram_size_kb", sys_info.psram_size_kb);
+
+    // Present only in firmware that has the fingerprint access control and GET /fp/*; the web UI
+    // shows its pages by it.
+    #if FP_ACS_ENABLED
+        cJSON_AddBoolToObject(response_json, "fp_acs", true);
+    #endif
 
     // Build network info
     cJSON *network_json = NULL;

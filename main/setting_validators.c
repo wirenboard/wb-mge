@@ -12,6 +12,34 @@
 #define MAX_WIFI_PASS_LEN                   63
 #define BAUDRATE_MIN                        1200
 #define BAUDRATE_MAX                        115200
+// The relay modules have up to 8 channels; the pulse is long enough for a lock to react and
+// short enough not to hold a door open for good.
+#define LOCK_CHANNEL_MIN                    1
+#define LOCK_CHANNEL_MAX                    8
+#define LOCK_PULSE_MS_MIN                   100
+#define LOCK_PULSE_MS_MAX                   60000
+// The whole room a setting value has (SETTING_ITEM_MAX_STR_LEN - 1).
+#define MAX_TG_STR_LEN                      63
+// The whole room a setting value has, as above. The device id is held to the same bound because
+// it IS a setting value, and the topic buffers it goes into are sized for it.
+#define MAX_MQTT_STR_LEN                    63
+#define MAX_MQTT_ID_LEN                     63
+#define TG_ADMINS_SEPARATOR                 ','
+
+// A decimal integer in min..max and nothing else.
+static bool validate_int_range(const char *value, long min, long max)
+{
+    if (!value) {
+        return false;
+    }
+
+    char *endptr;
+    long parsed = strtol(value, &endptr, 10);
+    if (endptr == value) {
+        return false;
+    }
+    return ((*endptr == '\0') && (parsed >= min) && (parsed <= max));
+}
 
 // Validation functions
 bool validate_hostname(const char *value)
@@ -416,4 +444,120 @@ bool validate_wifi_password(const char *value)
         }
     }
     return true;
+}
+
+// Which relay of the module opens the lock, counted from 1 the way the case is labelled.
+bool validate_lock_channel(const char *value)
+{
+    return validate_int_range(value, LOCK_CHANNEL_MIN, LOCK_CHANNEL_MAX);
+}
+
+// How long the relay stays on, in milliseconds.
+bool validate_lock_pulse_ms(const char *value)
+{
+    return validate_int_range(value, LOCK_PULSE_MS_MIN, LOCK_PULSE_MS_MAX);
+}
+
+// Printable ASCII of a bounded length, the empty string included. Shared by the Telegram token
+// and the three MQTT string settings, which differ only in what they additionally refuse.
+static bool validate_printable_or_empty(const char *value, size_t max_len)
+{
+    if (!value) {
+        return false;
+    }
+
+    size_t len = strlen(value);
+    if (len == 0) {
+        return true;
+    }
+    if (len > max_len) {
+        return false;
+    }
+
+    for (size_t i = 0; i < len; i++) {
+        char c = value[i];
+        if ((c < ' ') || (c > '~')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The bot token, or nothing when there is no bot. A token never contains a space, so one is a
+// paste error rather than part of it.
+bool validate_tg_token(const char *value)
+{
+    if (!validate_printable_or_empty(value, MAX_TG_STR_LEN)) {
+        return false;
+    }
+    return (strchr(value, ' ') == NULL);
+}
+
+// Numeric Telegram user ids separated by commas ("123,456"), or nothing: no empty item, no
+// leading or trailing comma, no spaces.
+bool validate_tg_admins(const char *value)
+{
+    if (!value) {
+        return false;
+    }
+
+    size_t len = strlen(value);
+    if (len == 0) {
+        return true;
+    }
+    if (len > MAX_TG_STR_LEN) {
+        return false;
+    }
+
+    bool digit_seen = false;
+    for (size_t i = 0; i < len; i++) {
+        char c = value[i];
+        if ((c >= '0') && (c <= '9')) {
+            digit_seen = true;
+        } else if ((c == TG_ADMINS_SEPARATOR) && digit_seen) {
+            digit_seen = false;
+        } else {
+            return false;
+        }
+    }
+    return digit_seen;
+}
+
+// The broker's address: a host name or an IP literal, or nothing at all - "no broker configured"
+// is the factory state and the way a user removes one. Spaces are refused because a host name
+// cannot contain one and an address that does is a typo, not a host.
+bool validate_mqtt_host(const char *value)
+{
+    if (!validate_printable_or_empty(value, MAX_MQTT_STR_LEN)) {
+        return false;
+    }
+    return (strchr(value, ' ') == NULL);
+}
+
+// The user name and the password. Both may be empty: a broker that takes anonymous connections
+// is the common case on a controller's own bus.
+bool validate_mqtt_credential(const char *value)
+{
+    return validate_printable_or_empty(value, MAX_MQTT_STR_LEN);
+}
+
+// The name this device appears under in /devices/<id>/... . It is pasted into a topic, so the
+// characters MQTT gives a meaning of their own are refused rather than escaped: '/' would split
+// the id across topic levels, and '+' and '#' are the wildcards a subscription is built from.
+// The empty string is allowed and means "derive one from the model and the MAC".
+bool validate_mqtt_id(const char *value)
+{
+    if (!validate_printable_or_empty(value, MAX_MQTT_ID_LEN)) {
+        return false;
+    }
+    if (strchr(value, '/') != NULL) {
+        return false;
+    }
+    if (strchr(value, '+') != NULL) {
+        return false;
+    }
+    if (strchr(value, '#') != NULL) {
+        return false;
+    }
+    return (strchr(value, ' ') == NULL);
 }

@@ -24,6 +24,12 @@
     #include "user_app.h"
 #endif
 
+// Fingerprint access control: WB-MGU in the master role only (see main/fp_acs/fp_acs.h).
+#include "fp_acs.h"
+#if FP_ACS_ENABLED
+    #include "fp_lock.h"
+#endif
+
 // Hardware-logic headers: needed by both builds. In QEMU these resolve to the
 // virtual IO bus (gpio_expander.h symbols come from virtual_io_qemu.c).
 #include "rs485_control.h"
@@ -209,7 +215,15 @@ void app_main(void)
     //     handle that does not exist yet is a FreeRTOS assert;
     //   - master: the task's first poll must meet instances that are already up, or it comes
     //     straight back with ESP_ERR_INVALID_STATE before a single frame goes on the bus.
-    #if (!WB_MB_ROLE_NONE)
+    //
+    // The fingerprint access control IS the application of its build, so the example poller does
+    // not run there: it would poll port 2, which belongs to the sensor. Its lock task goes first -
+    // the sensor task opens the door through it - and neither needs the network, so the door
+    // works on a device that has none.
+    #if FP_ACS_ENABLED
+        fp_lock_start();
+        fp_acs_start();
+    #elif (!WB_MB_ROLE_NONE)
         user_app_start();
     #endif
 
