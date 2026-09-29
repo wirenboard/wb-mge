@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useAlerts } from '@/common/alert';
+import { useConfirm } from '@/common/confirm';
 import {
   alertFpFailure,
   cancelFpEnroll,
@@ -22,6 +23,7 @@ import Heading from '@/components/Heading.vue';
 import Info from '@/components/Info.vue';
 import InfoRow from '@/components/InfoRow.vue';
 import Layout from '@/components/Layout.vue';
+import Modal from '@/components/Modal.vue';
 import Switch from '@/components/Switch.vue';
 import { api } from '@/utils/api';
 import { onCustomValidation } from '@/utils/validation';
@@ -81,6 +83,7 @@ const SOURCE_KEYS: Record<FpEventSource, string> = {
 
 const { t } = useI18n();
 const { showAlert } = useAlerts();
+const { confirmDialog } = useConfirm();
 const { uptime } = useUptime();
 
 // Opened by "Add finger" or by an enrollment started elsewhere (MQTT, another browser); it stays
@@ -256,16 +259,14 @@ const saveDraft = () => mutate(async () => {
 });
 
 const removeUser = async (user: FpUser) => {
-  if (!confirm(t('delete_user_confirm', { name: user.name }))) {
+  if (!(await confirmDialog(t('delete_user_confirm', { name: user.name }), t('delete')))) {
     return;
   }
-  if ((await mutate(() => deleteFpUser(user.id))) && (draft.value?.id === user.id)) {
-    draft.value = null;
-  }
+  await mutate(() => deleteFpUser(user.id));
 };
 
-const removeFinger = (slot: number) => {
-  if (!confirm(t('delete_finger_confirm', { slot }))) {
+const removeFinger = async (slot: number) => {
+  if (!(await confirmDialog(t('delete_finger_confirm', { slot }), t('delete')))) {
     return;
   }
   mutate(() => deleteFpFinger(slot));
@@ -273,14 +274,41 @@ const removeFinger = (slot: number) => {
 
 const enroll = computed(() => status.value?.enroll);
 const enrollActive = computed(() => !!enroll.value && ENROLL_ACTIVE_STATES.includes(enroll.value.state));
+const enrollUser = computed(() => users.value.find((user) => user.id === enroll.value?.user_id));
 
-watch(enrollActive, (active) => {
-  if (active) {
-    enrollOpen.value = true;
+// An enrollment started elsewhere opens the editor on its user. The record is watched too: on page
+// load the status reporting the enrollment comes before the users list. A form already open is left
+// as it is, so nothing typed into it is lost.
+watch([enrollActive, enrollUser], ([active, user]) => {
+  if (!active) {
+    return;
+  }
+  enrollOpen.value = true;
+  if (user && !draft.value) {
+    draft.value = toDraft(user);
   }
 });
 
-const enrollUserName = computed(() => users.value.find((user) => user.id === enroll.value?.user_id)?.name ?? DASH);
+const enrollUserName = computed(() => enrollUser.value?.name ?? DASH);
+
+const editorOpen = computed(() => !!draft.value || enrollOpen.value);
+
+const editorTitle = computed(() => {
+  if (!draft.value) {
+    return t('enroll_title');
+  }
+  return (draft.value.id === undefined) ? t('new_user') : t('edit_user');
+});
+
+// A running enrollment is followed and cancelled in the editor, so it stays open until the
+// enrollment is cancelled or finishes.
+const closeEditor = () => {
+  if (enrollActive.value) {
+    return;
+  }
+  draft.value = null;
+  enrollOpen.value = false;
+};
 
 const enrollMessage = computed(() => {
   const value = enroll.value;
@@ -376,12 +404,7 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
                   </tr>
                 </thead>
                 <tbody>
-                  <tr
-                    v-for="user in users"
-                    :key="user.id"
-                    class="access-row"
-                    :class="{ 'access-rowSelected': draft?.id === user.id }"
-                  >
+                  <tr v-for="user in users" :key="user.id" class="access-row">
                     <td>{{ user.name }}</td>
                     <td v-for="flag in USER_FLAGS" :key="flag" class="access-cellCenter">
                       <Switch
@@ -409,81 +432,81 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
           </div>
         </section>
 
-        <div v-if="draft || enrollOpen" class="grid-2">
-          <section v-if="draft" class="card">
-            <form @submit.prevent="saveDraft">
-              <div class="card-header">
-                <div class="title">{{ draft.id === undefined ? t('new_user') : t('edit_user') }}</div>
-                <div class="access-actions">
-                  <Button type="button" variant="outline" @click="draft = null">{{ t('close') }}</Button>
-                  <Button type="submit" :is-loading="busy" :disabled="busy">{{ t('save') }}</Button>
-                </div>
-              </div>
-              <div class="card-body">
-                <div class="field">
-                  <label for="user_name">{{ t('user_name') }}</label>
-                  <input id="user_name" v-model="draft.name" type="text" name="user_name" required />
-                </div>
-                <div class="field">
-                  <label for="user_tg_username">{{ t('user_tg_username') }}</label>
-                  <input
-                    id="user_tg_username"
-                    v-model="draft.tg_username"
-                    type="text"
-                    name="user_tg_username"
-                    class="mono"
-                    pattern="^[A-Za-z0-9_]{0,32}$"
-                    maxlength="32"
-                    :placeholder="t('tg_username_placeholder')"
-                    @input="(ev) => onCustomValidation(ev, t('wrong_tg_username_pattern'))"
-                  />
-                </div>
-                <div v-for="flag in USER_FLAGS" :key="flag" class="field">
-                  <label :for="`user_${flag}`">{{ t(USER_FLAG_KEYS[flag]) }}</label>
-                  <div class="access-switchEnd"><Switch :id="`user_${flag}`" v-model="draft[flag]" /></div>
-                </div>
-              </div>
-            </form>
+        <Modal :open="editorOpen" @close="closeEditor">
+          <template #title>{{ editorTitle }}</template>
+          <template #actions>
+            <Button type="button" variant="outline" :disabled="enrollActive" @click="closeEditor">
+              {{ t('close') }}
+            </Button>
+            <Button v-if="draft" type="submit" form="user_form" :is-loading="busy" :disabled="busy">
+              {{ t('save') }}
+            </Button>
+          </template>
 
-            <div v-if="draftUser" class="card-body sub-section">
-              <div class="access-fingersHeader">
-                <div class="sub-section-label">
-                  {{ t('fingers', { n: draftUser.fingers.length, max: maxFingers }) }}
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  :disabled="busy || enrollActive || (draftUser.fingers.length >= maxFingers)"
-                  @click="addFinger(draftUser)"
-                >
-                  {{ t('add_finger') }}
-                </Button>
-              </div>
-              <p v-if="!draftUser.fingers.length" class="access-note">{{ t('no_fingers') }}</p>
-              <ul v-else class="access-fingers">
-                <li v-for="slot in draftUser.fingers" :key="slot" class="access-finger">
-                  <span class="mono">{{ t('finger_slot', { slot }) }}</span>
-                  <Button type="button" variant="danger" :disabled="busy" @click="removeFinger(slot)">
-                    {{ t('delete') }}
-                  </Button>
-                </li>
-              </ul>
+          <form v-if="draft" id="user_form" @submit.prevent="saveDraft">
+            <div class="field">
+              <label for="user_name">{{ t('user_name') }}</label>
+              <input id="user_name" v-model="draft.name" type="text" name="user_name" required autofocus />
             </div>
-          </section>
+            <div class="field">
+              <label for="user_tg_username">{{ t('user_tg_username') }}</label>
+              <input
+                id="user_tg_username"
+                v-model="draft.tg_username"
+                type="text"
+                name="user_tg_username"
+                class="mono"
+                pattern="^[A-Za-z0-9_]{0,32}$"
+                maxlength="32"
+                :placeholder="t('tg_username_placeholder')"
+                @input="(ev) => onCustomValidation(ev, t('wrong_tg_username_pattern'))"
+              />
+            </div>
+            <div v-for="flag in USER_FLAGS" :key="flag" class="field">
+              <label :for="`user_${flag}`">{{ t(USER_FLAG_KEYS[flag]) }}</label>
+              <div class="access-switchEnd"><Switch :id="`user_${flag}`" v-model="draft[flag]" /></div>
+            </div>
+          </form>
 
-          <section v-if="enrollOpen && enroll" class="card">
-            <div class="card-header">
-              <div class="card-title-wrap">
-                <div class="title">{{ t('enroll_title') }}</div>
-                <div class="sub">{{ enrollUserName }}</div>
+          <div v-if="draftUser" class="sub-section">
+            <div class="access-sectionHeader">
+              <div class="sub-section-label">
+                {{ t('fingers', { n: draftUser.fingers.length, max: maxFingers }) }}
               </div>
+              <Button
+                type="button"
+                variant="outline"
+                :disabled="busy || enrollActive || (draftUser.fingers.length >= maxFingers)"
+                @click="addFinger(draftUser)"
+              >
+                {{ t('add_finger') }}
+              </Button>
+            </div>
+            <p v-if="!draftUser.fingers.length" class="access-note">{{ t('no_fingers') }}</p>
+            <ul v-else class="access-fingers">
+              <li v-for="slot in draftUser.fingers" :key="slot" class="access-finger">
+                <span class="mono">{{ t('finger_slot', { slot }) }}</span>
+                <Button type="button" variant="danger" :disabled="busy" @click="removeFinger(slot)">
+                  {{ t('delete') }}
+                </Button>
+              </li>
+            </ul>
+          </div>
+
+          <div v-if="enrollOpen && enroll" class="sub-section">
+            <div class="access-sectionHeader">
+              <!-- Without the form the modal title already says this, and its Close does the same. -->
+              <div v-if="draft" class="sub-section-label">{{ t('enroll_title') }}</div>
               <Button v-if="enrollActive" type="button" variant="danger" :disabled="busy" @click="cancelEnroll">
                 {{ t('cancel') }}
               </Button>
-              <Button v-else type="button" variant="outline" @click="enrollOpen = false">{{ t('close') }}</Button>
+              <Button v-else-if="draft" type="button" variant="outline" @click="enrollOpen = false">
+                {{ t('close') }}
+              </Button>
             </div>
-            <div class="card-body access-event">
+            <div class="access-event">
               <div class="access-eventInfo">
+                <InfoRow :label="t('event_user')">{{ enrollUserName }}</InfoRow>
                 <InfoRow v-if="enrollActive" :label="t('enroll_progress')">
                   <span class="mono">{{ t('enroll_step', { n: enroll.step, m: enroll.steps }) }}</span>
                 </InfoRow>
@@ -493,8 +516,8 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
               </div>
               <FingerprintImage v-if="image" class="access-image" v-bind="image" :label="t('image_label')" />
             </div>
-          </section>
-        </div>
+          </div>
+        </Modal>
       </template>
     </div>
   </Layout>
@@ -547,10 +570,6 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
   vertical-align: middle;
 }
 
-.access-rowSelected td {
-  background: var(--brand-soft);
-}
-
 .access-cellCenter {
   text-align: center;
 }
@@ -565,7 +584,7 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
   justify-self: end;
 }
 
-.access-fingersHeader {
+.access-sectionHeader {
   display: flex;
   justify-content: space-between;
   align-items: center;

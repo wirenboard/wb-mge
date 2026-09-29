@@ -5,11 +5,13 @@
       <slot />
     </main>
     <AlertsWrapper />
+    <ConfirmDialog />
   </div>
 </template>
 
 <script setup lang="ts">
 import AlertsWrapper from '@/components/AlertsWrapper.vue';
+import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import Sidebar from '@/components/Sidebar.vue';
 </script>
 
