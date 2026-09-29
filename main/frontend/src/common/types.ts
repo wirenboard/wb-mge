@@ -56,6 +56,96 @@ export interface Info {
   // has nothing to read from them.
   psram_available: boolean;
   psram_size_kb: number;
+  // Present, and true, only on firmware that has the fingerprint access control and GET /fp/*.
+  fp_acs?: boolean;
+}
+
+export type FpEnrollState = 'idle' | 'place' | 'lift' | 'processing' | 'done' | 'error' | 'cancelled';
+
+export type FpEventSource = 'fingerprint' | 'telegram';
+
+export type FpEventResult = 'granted' | 'denied' | 'unknown';
+
+export interface FpEvent {
+  seq: number;
+  uptime_s: number; // device uptime at the moment of the event
+  source: FpEventSource;
+  result: FpEventResult;
+  user_id: number | null;
+  user_name: string | null;
+  score: number | null;
+}
+
+// GET /fp/status
+export interface FpStatus {
+  sensor: {
+    online: boolean;
+    capacity: number;
+    used: number;
+  };
+  // Changes whenever the user list changes, including from MQTT: the cue to re-read GET /fp/users.
+  users_rev: number;
+  enroll: {
+    state: FpEnrollState;
+    user_id: number | null;
+    step: number;
+    steps: number;
+    slot: number | null;
+    error: string | null;
+  };
+  last_event: FpEvent | null;
+  // The last image GET /fp/image serves: width * height bytes of 8-bit grayscale.
+  image: {
+    seq: number;
+    width: number;
+    height: number;
+  } | null;
+}
+
+export interface FpUser {
+  id: number;
+  name: string;
+  enabled: boolean;
+  allow_fp: boolean;
+  allow_tg: boolean;
+  tg_username: string;
+  fingers: number[]; // sensor slots
+}
+
+// GET /fp/users
+export interface FpUsersResponse {
+  users: FpUser[];
+  max_users: number;
+  max_fingers: number;
+}
+
+// POST /fp/user: without an id it creates a user, with one it updates the fields given.
+export interface FpUserRequest {
+  id?: number;
+  name: string;
+  enabled?: boolean;
+  allow_fp?: boolean;
+  allow_tg?: boolean;
+  tg_username?: string;
+}
+
+export interface FpUserResponse {
+  success: boolean;
+  user: FpUser;
+}
+
+export interface FpSuccessResponse {
+  success: boolean;
+}
+
+export interface FpTgChat {
+  id: string;
+  name: string;
+}
+
+// GET /fp/tg_chats
+export interface FpTgChatsResponse {
+  chats: FpTgChat[];
 }
 
 export type WiFiSecuityProtocol = 'open' | 'wpa2_psk' | 'wpa3_psk';
@@ -123,6 +213,24 @@ export interface Settings {
   };
   rs485_1: RsSettings;
   rs485_2: RsSettings;
+  // Lock: the Modbus relay that opens it (address 1..247 on RS-485 port 1, channel 1..8) and how
+  // long the pulse lasts (100..60000 ms).
+  lock_addr: number;
+  lock_channel: number;
+  lock_pulse_ms: number;
+  // Telegram bot: its token and the admins, a comma-separated list of numeric Telegram user IDs.
+  tg_token: string;
+  tg_admins: string;
+  // MQTT: whether the device connects to a broker, where that broker is, what it logs in as, and
+  // the identifier it appears under in /devices/<id>/... . An empty mqtt_id means the firmware
+  // builds one from the model and the MAC; an empty mqtt_host means no broker is configured and
+  // nothing is started even with mqtt_enabled true.
+  mqtt_enabled: boolean;
+  mqtt_host: string;
+  mqtt_port: number;
+  mqtt_user: string;
+  mqtt_pass: string;
+  mqtt_id: string;
 }
 
 export interface WifiScanStartResponce {
