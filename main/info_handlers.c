@@ -7,6 +7,7 @@
 #include "sys_info.h"
 #include "voltage_monitor.h"
 #include "config_button.h"
+#include "gps_ntp.h"
 
 #include <esp_log.h>
 #include <esp_wifi.h>
@@ -284,6 +285,11 @@ esp_err_t info_get_handler(httpd_req_t *req)
     // Add PSRAM info
     cJSON_AddBoolToObject(response_json, "psram_available", sys_info.psram_available);
     cJSON_AddNumberToObject(response_json, "psram_size_kb", sys_info.psram_size_kb);
+
+    // Present only in firmware that serves GET /gps; the web UI shows its page by it.
+    #if GPS_NTP_ENABLED
+        cJSON_AddBoolToObject(response_json, "gps_ntp", true);
+    #endif
 
     // Build network info
     cJSON *network_json = NULL;

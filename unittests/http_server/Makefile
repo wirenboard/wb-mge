@@ -18,6 +18,8 @@ INC += $(UNITTEST_DIR)
 INC += $(UNITTEST_DIR)/mocks
 INC += mocks
 INC += $(PROJ_DIR)/main
+# gps_ntp.h (GPS_NTP_ENABLED, which is 0 on the host) decides whether /gps is registered.
+INC += $(PROJ_DIR)/main/gps_ntp
 # sys_info.h (used by http_server.c for the build-identity ETag) pulls in
 # wb_app_desc.h and the ESP-IDF app-format headers; expose them on the host.
 INC += $(PROJ_DIR)/main/wb_app_desc

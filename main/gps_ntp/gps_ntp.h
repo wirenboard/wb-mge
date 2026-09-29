@@ -24,3 +24,11 @@
 // Starts the GPS timebase and the NTP server. Never aborts: every failure is logged and leaves
 // the rest of the firmware running. Call once, after network_init().
 void gps_ntp_start(void);
+
+#if GPS_NTP_ENABLED
+    #include <esp_http_server.h>
+
+    // GET /gps: timebase, PPS, fix, satellites, NMEA link and NTP server statistics as JSON.
+    // Same authentication as GET /info.
+    esp_err_t gps_ntp_get_handler(httpd_req_t *req);
+#endif

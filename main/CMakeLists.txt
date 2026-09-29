@@ -46,6 +46,8 @@ elseif(CONFIG_WB_MODBUS_ROLE_NONE)
     # role only. Its sources compile to nothing off WB-MGU hardware (see main/gps_ntp/gps_ntp.h).
     list(APPEND COMPONENT_SRCS
         "gps_ntp/gps_ntp.c"
+        "gps_ntp/gps_nmea.c"
+        "gps_ntp/gps_sky.c"
         "gps_ntp/gps_time.c"
         "gps_ntp/ntp_server.c")
     if(NOT CMAKE_BUILD_EARLY_EXPANSION)

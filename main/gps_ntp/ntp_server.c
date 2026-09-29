@@ -11,6 +11,7 @@
 
 #include "sdkconfig.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lwip/sockets.h"
@@ -61,7 +62,76 @@
 #define NTP_SERVER_FRACTION_SHIFT           32
 
 
+typedef enum {
+    NTP_SERVER_OUTCOME_IGNORED = 0,
+    NTP_SERVER_OUTCOME_SYNCED,
+    NTP_SERVER_OUTCOME_UNSYNCED,
+} ntp_server_outcome_t;
+
+// Written by the server task, read by ntp_server_get_stats(); both under ntp_server_lock.
+typedef struct {
+    uint32_t requests;
+    uint32_t answered_synced;
+    uint32_t answered_unsynced;
+    uint32_t ignored;
+    bool has_request;
+    struct in_addr last_client;
+    int64_t last_request_us;            // esp_timer time
+} ntp_server_counters_t;
+
+
 static const char *TAG = "ntp_server";
+
+static portMUX_TYPE ntp_server_lock = portMUX_INITIALIZER_UNLOCKED;
+static ntp_server_counters_t ntp_server_counters = {0};
+
+
+static void ntp_server_count_request(const struct sockaddr_in *peer)
+{
+    int64_t now_us = esp_timer_get_time();
+
+    portENTER_CRITICAL(&ntp_server_lock);
+    ntp_server_counters.requests++;
+    ntp_server_counters.has_request = true;
+    ntp_server_counters.last_client = peer->sin_addr;
+    ntp_server_counters.last_request_us = now_us;
+    portEXIT_CRITICAL(&ntp_server_lock);
+}
+
+
+static void ntp_server_count_outcome(ntp_server_outcome_t outcome)
+{
+    portENTER_CRITICAL(&ntp_server_lock);
+    if (outcome == NTP_SERVER_OUTCOME_SYNCED) {
+        ntp_server_counters.answered_synced++;
+    } else if (outcome == NTP_SERVER_OUTCOME_UNSYNCED) {
+        ntp_server_counters.answered_unsynced++;
+    } else {
+        ntp_server_counters.ignored++;
+    }
+    portEXIT_CRITICAL(&ntp_server_lock);
+}
+
+
+void ntp_server_get_stats(ntp_server_stats_t *stats)
+{
+    memset(stats, 0, sizeof(*stats));
+
+    portENTER_CRITICAL(&ntp_server_lock);
+    int64_t now_us = esp_timer_get_time();
+    ntp_server_counters_t counters = ntp_server_counters;
+    portEXIT_CRITICAL(&ntp_server_lock);
+
+    stats->requests = counters.requests;
+    stats->answered_synced = counters.answered_synced;
+    stats->answered_unsynced = counters.answered_unsynced;
+    stats->ignored = counters.ignored;
+    stats->has_request = counters.has_request;
+    if (counters.has_request) {
+        inet_ntoa_r(counters.last_client, stats->last_client, sizeof(stats->last_client));
+        stats->last_request_age_us = now_us - counters.last_request_us;
+    }
+}
 
 
 static void ntp_server_put_u32(uint8_t *dst, uint32_t value)
@@ -103,10 +173,11 @@ static void ntp_server_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(NTP_SERVER_RX_ERROR_DELAY_MS));
             continue;
         }
-        if (received < NTP_SERVER_PACKET_LEN) {
-            continue;
-        }
-        if ((request[NTP_SERVER_OFFSET_FLAGS] & NTP_SERVER_MODE_MASK) != NTP_SERVER_MODE_CLIENT) {
+        ntp_server_count_request(&peer);
+        if ((received < NTP_SERVER_PACKET_LEN) ||
+            ((request[NTP_SERVER_OFFSET_FLAGS] & NTP_SERVER_MODE_MASK) != NTP_SERVER_MODE_CLIENT))
+        {
+            ntp_server_count_outcome(NTP_SERVER_OUTCOME_IGNORED);
             continue;
         }
 
@@ -135,6 +206,8 @@ static void ntp_server_task(void *arg)
 
         if (sendto(sock, reply, sizeof(reply), 0, (struct sockaddr *)&peer, peer_len) < 0) {
             ESP_LOGW(TAG, "sendto failed: errno %d", errno);
+        } else {
+            ntp_server_count_outcome(synced ? NTP_SERVER_OUTCOME_SYNCED : NTP_SERVER_OUTCOME_UNSYNCED);
         }
     }
 }

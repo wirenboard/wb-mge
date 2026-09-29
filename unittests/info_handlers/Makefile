@@ -31,6 +31,8 @@ INC += $(UNITTEST_DIR)/mocks/freertos
 INC += $(PROJ_DIR)/main
 INC += $(PROJ_DIR)/main/network
 INC += $(PROJ_DIR)/main/voltage_monitor
+# gps_ntp.h (GPS_NTP_ENABLED, which is 0 on the host) decides whether /info carries "gps_ntp".
+INC += $(PROJ_DIR)/main/gps_ntp
 # sys_info.h pulls in wb_app_desc.h and the ESP-IDF app-format headers; expose
 # them on the host (mirrors the http_server unit-test setup).
 INC += $(PROJ_DIR)/main/wb_app_desc

@@ -7,6 +7,7 @@
 #include "ota_handler.h"
 #include "wb_test.h"
 #include "coverage_dump.h"
+#include "gps_ntp.h"
 
 #include <esp_http_server.h>
 #include <sys/param.h>
@@ -17,7 +18,9 @@
 #include "setting_items.h"
 #include "sys_info.h"
 
-#define MAX_URI_HANDLERS                    24          // 23 endpoints are registered below (the last one only in COVERAGE_BUILD)
+// 22 endpoints are always registered below, plus /gps (GPS_NTP_ENABLED) and /gcov
+// (COVERAGE_BUILD): 24 when both are there.
+#define MAX_URI_HANDLERS                    24
 #define STACK_SIZE                          (1024 * 6)
 #define MAX_OPEN_SOCKETS                    12          // Increased to allow simultaneous connections from at least 2-3 devices
 
@@ -279,6 +282,14 @@ static const httpd_uri_t hostname_get = {
     .handler = hostname_get_handler,
     .user_ctx = NULL,
 };
+#if GPS_NTP_ENABLED
+static const httpd_uri_t gps_get = {
+    .uri = "/gps",
+    .method = HTTP_GET,
+    .handler = gps_ntp_get_handler,
+    .user_ctx = NULL,
+};
+#endif
 
 
 static uint16_t get_web_port_setting(void)
@@ -358,6 +369,9 @@ esp_err_t http_server_init_port(uint16_t port)
         httpd_register_uri_handler(http_server, &wb_test_get);
         httpd_register_uri_handler(http_server, &wb_test_post);
         httpd_register_uri_handler(http_server, &hostname_get);
+#if GPS_NTP_ENABLED
+        httpd_register_uri_handler(http_server, &gps_get);
+#endif
 #ifdef COVERAGE_BUILD
         coverage_dump_register_handlers(http_server);
 #endif
