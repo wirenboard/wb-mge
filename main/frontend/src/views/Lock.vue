@@ -354,7 +354,7 @@ const clearChats = async () => {
     "relay_sub": "Модуль реле Wiren Board с Modbus",
     "relay_switch": "Реле",
     "lock_mode": "Тип замка",
-    "lock_mode_strike": "Электрозащёлка: вкл = открыто",
+    "lock_mode_strike": "Защёлка: вкл = открыто",
     "lock_mode_magnet": "Магнит: вкл = закрыто",
     "lock_addr": "Modbus-адрес",
     "lock_channel": "Канал реле",
