@@ -14,16 +14,19 @@ import GaugeIcon from '@/assets/gaugeIcon.svg?component';
 import SlidersIcon from '@/assets/slidersIcon.svg?component';
 import NetworkIcon from '@/assets/networkIcon.svg?component';
 import CpuIcon from '@/assets/cpuIcon.svg?component';
+import SatelliteIcon from '@/assets/satelliteIcon.svg?component';
 import { useHostname } from '@/common/hostname';
 import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
 import { documentation, support, email, website } from '@/common/links';
+import type { Info } from '@/common/types';
 
 const MENU_ICONS: Record<string, Component> = {
   gauge: GaugeIcon,
   sliders: SlidersIcon,
   network: NetworkIcon,
   cpu: CpuIcon,
+  satellite: SatelliteIcon,
 };
 
 function getMenuIcon(key: unknown): Component | undefined {
@@ -42,8 +45,15 @@ const { hostname } = useHostname();
 const { info } = useInfo();
 const { initData: savedSettings } = useSettings();
 
+// A route whose meta names an /info flag is a feature only some firmware has: it is listed only
+// while /info reports that flag as true.
+const hasRequiredInfoFlag = (route: RouteRecordRaw): boolean => {
+  const flag = route.meta?.requiresInfoFlag as keyof Info | undefined;
+  return !flag || info.value?.[flag] === true;
+};
+
 const menuGroups = computed(() => {
-  const routes = router.options.routes.filter(r => r.meta?.menuName) as RouteRecordRaw[];
+  const routes = (router.options.routes as RouteRecordRaw[]).filter(r => r.meta?.menuName && hasRequiredInfoFlag(r));
   const groups: Record<string, RouteRecordRaw[]> = {};
   for (const r of routes) {
     const group = (r.meta?.menuGroup as string) || 'default';

@@ -56,6 +56,76 @@ export interface Info {
   // has nothing to read from them.
   psram_available: boolean;
   psram_size_kb: number;
+  // Present, and true, only on firmware that has the GPS-disciplined NTP server and GET /gps.
+  gps_ntp?: boolean;
+}
+
+// GET /gps. Every `null` means "not known yet" (no fix, no PPS edge, no request so far...).
+export type GpsSatelliteSystem = 'GPS' | 'GLONASS' | 'Galileo' | 'BeiDou' | 'QZSS' | 'unknown';
+
+export type GpsAntennaState = 'ok' | 'open' | 'short' | 'unknown';
+
+export interface GpsSatellite {
+  system: GpsSatelliteSystem;
+  prn: number;
+  elevation: number | null;
+  azimuth: number | null;
+  snr: number | null;
+  used: boolean;
+}
+
+export interface GpsStatus {
+  time: {
+    synced: boolean;
+    unix_us: number | null; // UTC; below 2^53, so exact in a JS number
+    last_pps_age_ms: number | null;
+    anchor_age_ms: number | null;
+    locked_for_s: number | null;
+    lock_count: number;
+    loss_count: number;
+  };
+  pps: {
+    count: number;
+    interval_us: number | null;
+    interval_min_us: number | null;
+    interval_max_us: number | null;
+    interval_avg_us: number | null;
+    rmc_delay_ms: number | null;
+  };
+  fix: {
+    rmc_status: 'A' | 'V' | null;
+    mode: 1 | 2 | 3 | null;
+    quality: number | null;
+    sats_used: number | null;
+    sats_in_view: number | null;
+    pdop: number | null;
+    hdop: number | null;
+    vdop: number | null;
+    lat: number | null;
+    lon: number | null;
+    alt_m: number | null;
+    speed_kmh: number | null;
+    course_deg: number | null;
+  };
+  satellites: GpsSatellite[];
+  nmea: {
+    baud: number;
+    link: 'detecting' | 'ok';
+    bytes: number;
+    sentences: number;
+    checksum_errors: number;
+    rmc_valid: number;
+    rmc_invalid: number;
+  };
+  antenna: GpsAntennaState;
+  ntp: {
+    requests: number;
+    answered_synced: number;
+    answered_unsynced: number;
+    ignored: number;
+    last_client: string | null;
+    last_request_age_ms: number | null;
+  };
 }
 
 export type WiFiSecuityProtocol = 'open' | 'wpa2_psk' | 'wpa3_psk';

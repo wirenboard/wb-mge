@@ -4,6 +4,7 @@ import { hasSession } from '@/common/session';
 import { useSettings } from '@/common/settings';
 import type { LogoutResponse } from '@/common/types';
 import Dashboard from '@/views/Dashboard.vue';
+import GpsNtp from '@/views/GpsNtp.vue';
 import Login from '@/views/Login.vue';
 import Network from '@/views/Network.vue';
 import SerialPorts from '@/views/SerialPorts.vue';
@@ -26,6 +27,31 @@ const router = createRouter({
           fetchInfo(),
           refresh(),
         ]);
+      }],
+    },
+    {
+      // menuName doubles as the post-login redirect path (checkSession, Login.vue), hence 'gps'.
+      path: '/gps',
+      name: 'gps',
+      component: GpsNtp,
+      meta: {
+        requiresAuth: true,
+        menuName: 'gps',
+        menuGroup: 'overview',
+        menuIcon: 'satellite',
+        requiresInfoFlag: 'gps_ntp',
+      },
+      beforeEnter: [checkSession, async () => {
+        const { info, fetchInfo } = useInfo();
+        const { refresh } = useSettings();
+        await Promise.all([
+          fetchInfo(),
+          refresh(),
+        ]);
+        // Firmware without the feature has no GET /gps: a typed-in or bookmarked URL goes to the overview.
+        if (info.value?.gps_ntp !== true) {
+          return { name: 'dashboard' };
+        }
       }],
     },
     {
