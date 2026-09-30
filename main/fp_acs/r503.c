@@ -98,7 +98,7 @@ static const char *TAG = "r503";
 static bool r503_ready;
 
 // Only the sensor task calls in here, so none of these is guarded.
-static uint8_t r503_rx[R503_CONTENT_MAX + R503_CHECKSUM_LEN];  // content and checksum of the packet being received
+static uint8_t r503_rx[R503_CONTENT_MAX + R503_CHECKSUM_LEN];   // content and checksum of the packet being received
 static uint8_t r503_cmd;                                        // instruction code of the command in progress
 static char    r503_error[R503_ERROR_MAX];                      // why it failed; empty while it has not
 
@@ -165,7 +165,7 @@ static TickType_t r503_ticks_left(TickType_t deadline)
 }
 
 // Records why the command in progress failed, for r503_last_error(). Not logged: a timeout repeats
-// every few seconds while the sensor is offline, and the caller logs the esp_err anyway.
+// every few seconds while the sensor is offline, and the caller logs the failure anyway.
 static void r503_error_set(const char *fmt, ...)
 {
     va_list args;

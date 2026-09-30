@@ -52,7 +52,8 @@ static void fp_console_append(const char *text, size_t len)
 
 // The log's vprintf. It runs in every task that logs, some of them with small stacks: the line is
 // formatted into a static buffer, and nothing here logs. The UART gets every line first and
-// whatever happens next; the ring skips a line rather than hold the task up.
+// whatever happens next; the ring skips a line rather than hold the task up for more than
+// FP_CONSOLE_LOCK_WAIT_MS.
 static int fp_console_vprintf(const char *fmt, va_list args)
 {
     // esp_log calls this without a lock, so it may run before esp_log_set_vprintf() has returned

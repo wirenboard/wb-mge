@@ -112,6 +112,14 @@ static void fp_acs_set_online(bool online)
     }
 }
 
+// What a failed exchange is reported as: the driver's reason says what went wrong on the wire, the
+// error name alone does not.
+static const char *fp_acs_io_error_str(esp_err_t err)
+{
+    const char *reason = r503_last_error();
+    return ((reason[0] != '\0') ? reason : esp_err_to_name(err));
+}
+
 // True when the exchange itself worked, whatever the sensor answered. Transport failures are
 // counted, and FP_ACS_OFFLINE_ERRORS of them in a row take the sensor offline: the task stops
 // scanning and goes back to handshaking.
@@ -122,9 +130,7 @@ static bool fp_acs_io_ok(esp_err_t err, const char *what)
         return true;
     }
     fp_acs_transport_errors++;
-    // The driver's reason says what went wrong on the wire; the error name alone does not.
-    const char *reason = r503_last_error();
-    ESP_LOGW(TAG, "%s: %s", what, (reason[0] != '\0') ? reason : esp_err_to_name(err));
+    ESP_LOGW(TAG, "%s: %s", what, fp_acs_io_error_str(err));
     if (fp_acs_transport_errors >= FP_ACS_OFFLINE_ERRORS) {
         fp_acs_set_online(false);
     }
@@ -440,15 +446,16 @@ static fp_acs_wait_t fp_acs_enroll_wait(bool want_finger)
 
 // Fails the enrollment on a transport error or a refusal. True when the command succeeded. A
 // transport error is reported by the driver's own reason (which packet check failed), so that
-// GET /fp/status says what went wrong without a UART console on the device.
-static bool fp_acs_enroll_check(esp_err_t err, uint8_t code, const char *what)
+// GET /fp/status says what went wrong without a UART console on the device. code is a pointer so
+// that it is read after the command that fills it: the order in which a call's arguments are
+// evaluated is unspecified.
+static bool fp_acs_enroll_check(esp_err_t err, const uint8_t *code, const char *what)
 {
     char error[FP_ACS_ENROLL_ERROR_MAX];
     if (!fp_acs_io_ok(err, what)) {
-        const char *reason = r503_last_error();
-        snprintf(error, sizeof(error), "%s: %s", what, (reason[0] != '\0') ? reason : esp_err_to_name(err));
-    } else if (code != R503_CODE_OK) {
-        snprintf(error, sizeof(error), "%s: %s", what, r503_code_str(code));
+        snprintf(error, sizeof(error), "%s: %s", what, fp_acs_io_error_str(err));
+    } else if (*code != R503_CODE_OK) {
+        snprintf(error, sizeof(error), "%s: %s", what, r503_code_str(*code));
     } else {
         return true;
     }
@@ -491,7 +498,7 @@ static void fp_acs_run_enroll(uint8_t user_id)
         if (take == FP_ACS_ENROLL_STEPS) {
             fp_acs_upload_image(FP_ACS_IMAGE_NO_EVENT);
         }
-        if (!fp_acs_enroll_check(r503_img2tz(take, &code), code, "Img2Tz")) {
+        if (!fp_acs_enroll_check(r503_img2tz(take, &code), &code, "Img2Tz")) {
             return;
         }
 
@@ -504,7 +511,7 @@ static void fp_acs_run_enroll(uint8_t user_id)
     }
 
     fp_acs_enroll_step(FP_ACS_ENROLL_STATE_PROCESSING, FP_ACS_ENROLL_STEPS);
-    if (!fp_acs_enroll_check(r503_reg_model(&code), code, "RegModel")) {
+    if (!fp_acs_enroll_check(r503_reg_model(&code), &code, "RegModel")) {
         return;
     }
 
@@ -516,7 +523,7 @@ static void fp_acs_run_enroll(uint8_t user_id)
         fp_acs_enroll_end(FP_ACS_ENROLL_STATE_ERROR, "no free slot on the sensor");
         return;
     }
-    if (!fp_acs_enroll_check(r503_store(FP_ACS_TEMPLATE_BUFFER, slot, &code), code, "Store")) {
+    if (!fp_acs_enroll_check(r503_store(FP_ACS_TEMPLATE_BUFFER, slot, &code), &code, "Store")) {
         return;
     }
 

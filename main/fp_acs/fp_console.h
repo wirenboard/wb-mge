@@ -8,8 +8,8 @@
  *
  * Not captured: the bootloader and the startup code before app_main() (ESP_EARLY_LOG, which
  * bypasses the log's vprintf), logging from an ISR, a critical section or before the scheduler
- * runs, and a line that arrives while the ring is busy for longer than a short wait. Nothing
- * survives a reboot.
+ * runs, and a line that arrives while the ring is busy for longer than a short wait. A line longer
+ * than 255 bytes is kept cut, ending in "...". Nothing survives a reboot.
  */
 
 #include "fp_acs.h"

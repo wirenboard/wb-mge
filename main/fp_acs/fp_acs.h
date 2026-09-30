@@ -10,13 +10,13 @@
  * one combination; everywhere else its sources compile to nothing and this header carries only
  * FP_ACS_ENABLED.
  *
- *   r503.c      the sensor's packet protocol
- *   fp_store.c  users, their fingers and the allowed Telegram chats, in the "fp_nvs" partition
- *   fp_lock.c   the lock pulse
- *   fp_log.c    the log of opening attempts, kept in "fp_nvs" too, and the SNTP clock it is stamped with
- *   fp_acs.c    the one task that owns the sensor: scanning, enrollment, deletion, last image
+ *   r503.c        the sensor's packet protocol
+ *   fp_store.c    users, their fingers and the allowed Telegram chats, in the "fp_nvs" partition
+ *   fp_lock.c     the lock pulse
+ *   fp_log.c      the log of opening attempts, kept in "fp_nvs" too, and the SNTP clock it is stamped with
+ *   fp_acs.c      the one task that owns the sensor: scanning, enrollment, deletion, last image
  *   fp_console.c  a RAM copy of the device log, for GET /fp/console
- *   fp_http.c   GET/POST /fp/...
+ *   fp_http.c     GET/POST /fp/...
  */
 
 // Explicit: CONFIG_WB_MODBUS_ROLE_MASTER comes from sdkconfig.h, and mb_role.h silently resolves
