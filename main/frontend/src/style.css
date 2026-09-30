@@ -235,6 +235,12 @@ legend {
 }
 .pill.ok .dot { background: var(--primary-color); }
 .pill.muted { color: var(--text-muted); }
+.pill.danger {
+  color: var(--danger-color);
+  border-color: color-mix(in oklch, var(--danger-color) 40%, var(--border-color));
+  background: var(--danger-soft);
+}
+.pill.danger .dot { background: var(--danger-color); }
 .pill .dot {
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--text-muted);

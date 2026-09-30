@@ -73,7 +73,7 @@ const RESULT_KEYS: Record<FpEventResult, string> = {
 };
 const RESULT_PILL_CLASSES: Record<FpEventResult, string> = {
   granted: 'ok',
-  denied: 'access-pillDenied',
+  denied: 'danger',
   unknown: 'muted',
 };
 const SOURCE_KEYS: Record<FpEventSource, string> = {
@@ -348,7 +348,7 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
             <div class="card-header">
               <div class="title">{{ t('sensor') }}</div>
               <span v-if="status.sensor.online" class="pill ok"><span class="dot" />{{ t('sensor_online') }}</span>
-              <span v-else class="pill access-pillDenied"><span class="dot" />{{ t('sensor_offline') }}</span>
+              <span v-else class="pill danger"><span class="dot" />{{ t('sensor_offline') }}</span>
             </div>
             <div class="card-body">
               <InfoRow :label="t('templates')">
@@ -524,16 +524,6 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
 </template>
 
 <style scoped>
-.access-pillDenied {
-  color: var(--danger-color);
-  border-color: color-mix(in oklch, var(--danger-color) 40%, var(--border-color));
-  background: var(--danger-soft);
-}
-
-.access-pillDenied .dot {
-  background: var(--danger-color);
-}
-
 .access-event {
   display: flex;
   flex-wrap: wrap;

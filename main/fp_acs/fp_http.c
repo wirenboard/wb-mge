@@ -12,6 +12,7 @@
 #include "array_size.h"
 #include "auth.h"
 #include "fp_lock.h"
+#include "fp_log.h"
 #include "fp_store.h"
 #include "json_utils.h"
 
@@ -37,6 +38,12 @@ static const char *TAG = "fp_http";
 #define FP_HTTP_ERROR_USER_FIELDS   "invalid user: name is 1..48 bytes of UTF-8, tg_username up to 32 of A-Z a-z 0-9 _"
 #define FP_HTTP_ERROR_CHAT_FIELDS   "invalid chat: id is a decimal chat id, name up to 48 bytes of UTF-8"
 #define FP_HTTP_ERROR_LOCK_BUSY     "lock busy"
+
+#define FP_HTTP_LOG_HEAD            "{\"entries\":["
+#define FP_HTTP_LOG_TAIL            "]}"
+// Room for one record's JSON and the comma before it: a user name of control characters escapes
+// to six bytes a character.
+#define FP_HTTP_LOG_ENTRY_MAX       512
 
 
 // ── Responses ────────────────────────────────────────────────────────────────────────────
@@ -216,6 +223,19 @@ static bool fp_http_status_enroll(cJSON *root, const fp_acs_enroll_t *enroll)
     return ok;
 }
 
+// The fields the last event and a log record share: who tried, how, and what came of it.
+static bool fp_http_add_attempt(cJSON *object, fp_acs_source_t source, fp_acs_result_t result, uint8_t user_id,
+                                const char *user_name, bool has_score, uint16_t score)
+{
+    bool known = (user_id != FP_STORE_NO_USER);
+    bool ok = (cJSON_AddStringToObject(object, "source", fp_acs_source_str(source)) != NULL);
+    ok = (cJSON_AddStringToObject(object, "result", fp_acs_result_str(result)) != NULL) && ok;
+    ok = fp_http_add_nullable_number(object, "user_id", known, user_id) && ok;
+    ok = fp_http_add_nullable_string(object, "user_name", known, user_name) && ok;
+    ok = fp_http_add_nullable_number(object, "score", has_score, score) && ok;
+    return ok;
+}
+
 static bool fp_http_status_event(cJSON *root)
 {
     fp_acs_event_t event;
@@ -226,14 +246,10 @@ static bool fp_http_status_event(cJSON *root)
     if (object == NULL) {
         return false;
     }
-    bool known = (event.user_id != FP_STORE_NO_USER);
     bool ok = (cJSON_AddNumberToObject(object, "seq", event.seq) != NULL);
     ok = (cJSON_AddNumberToObject(object, "uptime_s", event.uptime_s) != NULL) && ok;
-    ok = (cJSON_AddStringToObject(object, "source", fp_acs_source_str(event.source)) != NULL) && ok;
-    ok = (cJSON_AddStringToObject(object, "result", fp_acs_result_str(event.result)) != NULL) && ok;
-    ok = fp_http_add_nullable_number(object, "user_id", known, event.user_id) && ok;
-    ok = fp_http_add_nullable_string(object, "user_name", known, event.user_name) && ok;
-    ok = fp_http_add_nullable_number(object, "score", event.has_score, event.score) && ok;
+    ok = fp_http_add_attempt(object, event.source, event.result, event.user_id, event.user_name, event.has_score,
+                             event.score) && ok;
     return ok;
 }
 
@@ -316,6 +332,72 @@ static esp_err_t fp_http_image_get(httpd_req_t *req)
     heap_caps_free(image);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Sending the image failed: %s", esp_err_to_name(err));
+    }
+    return ESP_OK;
+}
+
+static cJSON *fp_http_log_entry_json(const fp_log_entry_t *entry)
+{
+    cJSON *object = cJSON_CreateObject();
+    if (object == NULL) {
+        return NULL;
+    }
+    bool ok = (cJSON_AddNumberToObject(object, "seq", entry->seq) != NULL);
+    ok = fp_http_add_nullable_number(object, "time", (entry->time != FP_LOG_TIME_UNKNOWN), entry->time) && ok;
+    ok = fp_http_add_attempt(object, entry->source, entry->result, entry->user_id, entry->user_name, entry->has_score,
+                             entry->score) && ok;
+    if (!ok) {
+        cJSON_Delete(object);
+        return NULL;
+    }
+    return object;
+}
+
+// Newest first. Each record is printed on its own into one PSRAM buffer: the whole log as one
+// cJSON tree would be well over a thousand small allocations, which land in internal RAM.
+static esp_err_t fp_http_log_get(httpd_req_t *req)
+{
+    if (!auth_middleware_check(req)) {
+        return ESP_OK;
+    }
+
+    size_t body_size = sizeof(FP_HTTP_LOG_HEAD) + (FP_LOG_CAPACITY * FP_HTTP_LOG_ENTRY_MAX) + sizeof(FP_HTTP_LOG_TAIL);
+    fp_log_entry_t *entries = heap_caps_malloc(FP_LOG_CAPACITY * sizeof(fp_log_entry_t), MALLOC_CAP_SPIRAM);
+    char *body = heap_caps_malloc(body_size, MALLOC_CAP_SPIRAM);
+    if ((entries == NULL) || (body == NULL)) {
+        heap_caps_free(entries);
+        heap_caps_free(body);
+        return json_utils_send_error_status(req, FP_HTTP_STATUS_ERROR, FP_HTTP_ERROR_MEMORY);
+    }
+    size_t count = fp_log_snapshot(entries, FP_LOG_CAPACITY);
+
+    size_t len = sizeof(FP_HTTP_LOG_HEAD) - 1;
+    memcpy(body, FP_HTTP_LOG_HEAD, len);
+    bool ok = true;
+    for (size_t i = 0; ok && (i < count); i++) {
+        if (i > 0) {
+            body[len++] = ',';
+        }
+        cJSON *object = fp_http_log_entry_json(&entries[i]);
+        ok = ((object != NULL) && cJSON_PrintPreallocated(object, body + len, FP_HTTP_LOG_ENTRY_MAX - 1, false));
+        cJSON_Delete(object);
+        if (ok) {
+            len += strlen(body + len);
+        }
+    }
+    heap_caps_free(entries);
+    if (!ok) {
+        heap_caps_free(body);
+        return json_utils_send_error_status(req, FP_HTTP_STATUS_ERROR, FP_HTTP_ERROR_MEMORY);
+    }
+    memcpy(body + len, FP_HTTP_LOG_TAIL, sizeof(FP_HTTP_LOG_TAIL) - 1);
+    len += sizeof(FP_HTTP_LOG_TAIL) - 1;
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_send(req, body, (ssize_t)len);
+    heap_caps_free(body);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Sending the log failed: %s", esp_err_to_name(err));
     }
     return ESP_OK;
 }
@@ -545,6 +627,7 @@ static esp_err_t fp_http_lock_post(httpd_req_t *req)
 static const httpd_uri_t fp_http_uris[] = {
     {.uri = "/fp/status",        .method = HTTP_GET,  .handler = fp_http_status_get,         .user_ctx = NULL},
     {.uri = "/fp/image",         .method = HTTP_GET,  .handler = fp_http_image_get,          .user_ctx = NULL},
+    {.uri = "/fp/log",           .method = HTTP_GET,  .handler = fp_http_log_get,            .user_ctx = NULL},
     {.uri = "/fp/users",         .method = HTTP_GET,  .handler = fp_http_users_get,          .user_ctx = NULL},
     {.uri = "/fp/user",          .method = HTTP_POST, .handler = fp_http_user_post,          .user_ctx = NULL},
     {.uri = "/fp/user/delete",   .method = HTTP_POST, .handler = fp_http_user_delete_post,   .user_ctx = NULL},

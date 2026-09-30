@@ -28,6 +28,7 @@
 #include "fp_acs.h"
 #if FP_ACS_ENABLED
     #include "fp_lock.h"
+    #include "fp_log.h"
     #include "mqtt_client_wb.h"
     #include "tg_bot.h"
 #endif
@@ -242,6 +243,9 @@ void app_main(void)
                      esp_err_to_name(mqtt_ret));
         }
         tg_bot_start();
+        // The access log's clock. Here and not in fp_acs_start(), which runs before the network:
+        // SNTP starts through the TCP/IP task that esp_netif_init() in network_init() creates.
+        fp_log_clock_start();
     #endif
 
     // Deliberately NOT ESP_ERROR_CHECK: a web server that will not start must not abort the boot.

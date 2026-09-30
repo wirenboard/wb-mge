@@ -18,9 +18,9 @@
 #include "setting_items.h"
 #include "sys_info.h"
 
-// 22 endpoints are always registered below, plus the ten /fp/ ones (FP_ACS_ENABLED) and /gcov
-// (COVERAGE_BUILD): 33 when all of them are there.
-#define MAX_URI_HANDLERS                    33
+// 22 endpoints are always registered below, plus the eleven /fp/ ones (FP_ACS_ENABLED) and /gcov
+// (COVERAGE_BUILD): 34 when all of them are there.
+#define MAX_URI_HANDLERS                    34
 #define STACK_SIZE                          (1024 * 6)
 #define MAX_OPEN_SOCKETS                    12          // Increased to allow simultaneous connections from at least 2-3 devices
 

@@ -4,6 +4,7 @@ import { useAlerts } from '@/common/alert';
 import { hasSession } from '@/common/session';
 import type {
   FpLockRequest,
+  FpLogResponse,
   FpStatus,
   FpSuccessResponse,
   FpTgChatsResponse,
@@ -161,6 +162,8 @@ export const alertFpFailure = async (err: unknown) => {
 };
 
 export const fetchFpUsers = () => api<FpUsersResponse>('fp/users');
+
+export const fetchFpLog = () => api<FpLogResponse>('fp/log');
 
 export const saveFpUser = (json: FpUserRequest) => api<FpUserResponse>('fp/user', { method: 'POST', json });
 

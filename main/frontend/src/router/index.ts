@@ -6,6 +6,7 @@ import type { LogoutResponse } from '@/common/types';
 import Access from '@/views/Access.vue';
 import Dashboard from '@/views/Dashboard.vue';
 import Lock from '@/views/Lock.vue';
+import Log from '@/views/Log.vue';
 import Login from '@/views/Login.vue';
 import Network from '@/views/Network.vue';
 import SerialPorts from '@/views/SerialPorts.vue';
@@ -53,6 +54,19 @@ const router = createRouter({
         menuName: 'access',
         menuGroup: 'overview',
         menuIcon: 'fingerprint',
+        requiresInfoFlag: 'fp_acs',
+      },
+      beforeEnter: [checkSession, enterFpAcsPage],
+    },
+    {
+      path: '/log',
+      name: 'log',
+      component: Log,
+      meta: {
+        requiresAuth: true,
+        menuName: 'log',
+        menuGroup: 'overview',
+        menuIcon: 'log',
         requiresInfoFlag: 'fp_acs',
       },
       beforeEnter: [checkSession, enterFpAcsPage],

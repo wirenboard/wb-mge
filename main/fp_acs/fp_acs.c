@@ -15,6 +15,7 @@
 #include "freertos/task.h"
 
 #include "fp_lock.h"
+#include "fp_log.h"
 #include "fp_store.h"
 #include "r503.h"
 
@@ -196,6 +197,9 @@ static void fp_acs_record_event(fp_acs_source_t source, fp_acs_result_t result, 
 
     ESP_LOGI(TAG, "Event %" PRIu32 ": %s via %s, user %u \"%s\", score %u", event.seq, fp_acs_result_str(result),
              fp_acs_source_str(source), (unsigned)event.user_id, event.user_name, (unsigned)score);
+
+    // Outside the mutex: the NVS write must not hold up the readers of the state above.
+    fp_log_append(&event);
 }
 
 // Uploads ImageBuffer as the new last image. The raw 4-bit image lands in the upper half of the
@@ -326,8 +330,8 @@ static void fp_acs_scan(void)
 
     // After Img2Tz, ImageBuffer holds the thinned ridge map, not the captured image (seen on the
     // device). Uploading before Img2Tz would hold the door for the upload, so the image shown is a
-    // fresh capture of the finger still on the sensor, taken once the door is opening; a finger
-    // already lifted leaves the previous image in place.
+    // fresh capture of the finger still on the sensor, taken once the decision is made (on a grant,
+    // with the door already opening); a finger already lifted leaves the previous image in place.
     uint8_t image_code = R503_CODE_OK;
     if (fp_acs_io_ok(r503_gen_img(&image_code), "GenImg") && (image_code == R503_CODE_OK)) {
         fp_acs_upload_image();
@@ -614,6 +618,8 @@ void fp_acs_start(void)
     }
 
     fp_acs_store_ok = (fp_store_init() == ESP_OK);
+    // After the store, which mounts the partition the log lives in.
+    fp_log_init();
 
     fp_acs_image = heap_caps_malloc(FP_ACS_IMAGE_SIZE, MALLOC_CAP_SPIRAM);
     fp_acs_image_scratch = heap_caps_malloc(FP_ACS_IMAGE_SIZE, MALLOC_CAP_SPIRAM);

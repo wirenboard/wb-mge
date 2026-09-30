@@ -43,6 +43,7 @@ if(CONFIG_WB_MODBUS_ROLE_MASTER)
         "fp_acs/fp_acs.c"
         "fp_acs/fp_http.c"
         "fp_acs/fp_lock.c"
+        "fp_acs/fp_log.c"
         "fp_acs/fp_store.c"
         "fp_acs/r503.c"
         # Its MQTT side and its Telegram bot, gated the same way. esp-mqtt, esp_http_client and

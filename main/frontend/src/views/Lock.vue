@@ -123,7 +123,7 @@ const clearChats = async () => {
                 <div class="card-title-row">
                   <div class="title">{{ t('relay') }}</div>
                   <span v-if="status?.lock.online" class="pill ok"><span class="dot" />{{ t('relay_online') }}</span>
-                  <span v-else-if="status" class="pill lock-pillOffline"><span class="dot" />{{ t('relay_offline') }}</span>
+                  <span v-else-if="status" class="pill danger"><span class="dot" />{{ t('relay_offline') }}</span>
                 </div>
                 <div class="sub">{{ t('relay_sub') }}</div>
               </div>
@@ -279,16 +279,6 @@ const clearChats = async () => {
 </template>
 
 <style scoped>
-.lock-pillOffline {
-  color: var(--danger-color);
-  border-color: color-mix(in oklch, var(--danger-color) 40%, var(--border-color));
-  background: var(--danger-soft);
-}
-
-.lock-pillOffline .dot {
-  background: var(--danger-color);
-}
-
 .lock-note {
   margin: 12px 0 4px;
   color: var(--text-muted);

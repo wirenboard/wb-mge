@@ -16,6 +16,7 @@ import NetworkIcon from '@/assets/networkIcon.svg?component';
 import CpuIcon from '@/assets/cpuIcon.svg?component';
 import FingerprintIcon from '@/assets/fingerprintIcon.svg?component';
 import LockIcon from '@/assets/lockIcon.svg?component';
+import LogIcon from '@/assets/logIcon.svg?component';
 import { useHostname } from '@/common/hostname';
 import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
@@ -29,6 +30,7 @@ const MENU_ICONS: Record<string, Component> = {
   cpu: CpuIcon,
   fingerprint: FingerprintIcon,
   lock: LockIcon,
+  log: LogIcon,
 };
 
 function getMenuIcon(key: unknown): Component | undefined {

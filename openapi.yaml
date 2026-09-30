@@ -992,6 +992,32 @@ paths:
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 
+  /fp/log:
+    get:
+      summary: The access log, newest first
+      description: "Every opening attempt, from the sensor and from the Telegram bot, granted or not. The last 200 are kept in the fp_nvs partition, so the log survives reboots and power loss; without that partition it is kept in RAM only, until the next reboot. A new attempt shows in GET /fp/status as a change of last_event.seq."
+      responses:
+        '200':
+          description: Log
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entries:
+                    type: array
+                    maxItems: 200
+                    items:
+                      $ref: '#/components/schemas/FpLogEntry'
+        '500':
+          description: "\"out of memory\""
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
   /fp/users:
     get:
       summary: All users, ascending by id
@@ -1233,6 +1259,17 @@ components:
         result: { type: string, enum: [granted, denied, unknown] }
         user_id: { type: [integer, 'null'] }
         user_name: { type: [string, 'null'] }
+        score: { type: [integer, 'null'], description: "Match score of a known user's fingerprint" }
+
+    FpLogEntry:
+      type: object
+      properties:
+        seq: { type: integer, minimum: 1, description: "Grows by one with every attempt and keeps growing across reboots; not the per-boot seq of last_event" }
+        time: { type: [integer, 'null'], description: "UTC unix seconds, from the clock SNTP (pool.ntp.org) sets; null for an attempt made before the clock was set after a boot" }
+        source: { type: string, enum: [fingerprint, telegram] }
+        result: { type: string, enum: [granted, denied, unknown] }
+        user_id: { type: [integer, 'null'] }
+        user_name: { type: [string, 'null'], description: "The user's name at the time of the attempt" }
         score: { type: [integer, 'null'], description: "Match score of a known user's fingerprint" }
 
     FpTgChat:
