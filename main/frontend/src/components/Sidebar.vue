@@ -14,6 +14,7 @@ import GaugeIcon from '@/assets/gaugeIcon.svg?component';
 import SlidersIcon from '@/assets/slidersIcon.svg?component';
 import NetworkIcon from '@/assets/networkIcon.svg?component';
 import CpuIcon from '@/assets/cpuIcon.svg?component';
+import SdrIcon from '@/assets/sdrIcon.svg?component';
 import { useHostname } from '@/common/hostname';
 import { useInfo } from '@/common/info';
 import { useSettings } from '@/common/settings';
@@ -24,6 +25,7 @@ const MENU_ICONS: Record<string, Component> = {
   sliders: SlidersIcon,
   network: NetworkIcon,
   cpu: CpuIcon,
+  sdr: SdrIcon,
 };
 
 function getMenuIcon(key: unknown): Component | undefined {

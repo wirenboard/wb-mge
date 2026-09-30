@@ -101,7 +101,13 @@ else()
         "indication/indication.c"
         "indication/leds_control.c"
         "voltage_monitor/system_voltage.c"
-        "voltage_monitor/voltage_monitor.c")
+        "voltage_monitor/voltage_monitor.c"
+        "sdr/sdr_radio.c"
+        "sdr/sdr_http.c")
+    # Raw-IQ SDR receiver: owns the radio, so this build does not use Wi-Fi. Its compile
+    # definition and linker guard need the component target and are added after registration.
+    set(CONDITIONAL_INCLUDE_DIRS "sdr")
+    set(WB_SDR_ENABLED 1)
     message(STATUS "Building for hardware - including hardware-specific files only")
 endif()
 
@@ -121,6 +127,7 @@ idf_component_register(SRCS ${COMPONENT_SRCS}
                             "wb_app_desc"
                             "voltage_monitor"
                             "qemu"
+                            ${CONDITIONAL_INCLUDE_DIRS}
                         EMBED_TXTFILES
                             # Compressible text shell assets served with Content-Encoding: gzip.
                             frontend/dist/index.css.gz
@@ -137,6 +144,15 @@ idf_component_register(SRCS ${COMPONENT_SRCS}
 )
 
 target_link_libraries(${COMPONENT_TARGET} "-u wb_app_desc")
+
+# The SDR dump region is hardware-addressed SRAM1; sdr_memory_guard.ld fails the link if IRAM,
+# .data or .bss grow into it.
+if(WB_SDR_ENABLED)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE WB_SDR_ENABLED=1)
+    target_link_options(${COMPONENT_LIB} INTERFACE "-T${CMAKE_CURRENT_SOURCE_DIR}/sdr/sdr_memory_guard.ld")
+    set_property(TARGET ${COMPONENT_LIB} APPEND PROPERTY INTERFACE_LINK_DEPENDS
+                 "${CMAKE_CURRENT_SOURCE_DIR}/sdr/sdr_memory_guard.ld")
+endif()
 
 # Optional gcov coverage instrumentation for the application code (this component only).
 # Enable with: idf.py -DCOVERAGE=1 build  (or `make build-idf-project COVERAGE=1`); off by default.

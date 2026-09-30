@@ -6,6 +6,7 @@ import type { LogoutResponse } from '@/common/types';
 import Dashboard from '@/views/Dashboard.vue';
 import Login from '@/views/Login.vue';
 import Network from '@/views/Network.vue';
+import Sdr from '@/views/Sdr.vue';
 import SerialPorts from '@/views/SerialPorts.vue';
 import System from '@/views/System.vue';
 import { api } from '@/utils/api';
@@ -19,6 +20,20 @@ const router = createRouter({
       name: 'dashboard',
       component: Dashboard,
       meta: { requiresAuth: true, menuName: 'dashboard', menuGroup: 'overview', menuIcon: 'gauge' },
+      beforeEnter: [checkSession, async () => {
+        const { fetchInfo } = useInfo();
+        const { refresh } = useSettings();
+        await Promise.all([
+          fetchInfo(),
+          refresh(),
+        ]);
+      }],
+    },
+    {
+      path: '/sdr',
+      name: 'sdr',
+      component: Sdr,
+      meta: { requiresAuth: true, menuName: 'sdr', menuGroup: 'overview', menuIcon: 'sdr' },
       beforeEnter: [checkSession, async () => {
         const { fetchInfo } = useInfo();
         const { refresh } = useSettings();

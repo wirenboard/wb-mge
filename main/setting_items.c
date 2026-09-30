@@ -452,6 +452,14 @@ bool setting_items_read_bool(const char *key)
         return false;
     }
 
+    #if WB_SDR_ENABLED
+        // The SDR owns the radio. Reporting Wi-Fi as permanently disabled makes network init skip
+        // Wi-Fi, hides it in the UI and refuses scans.
+        if (strncmp(key, KEY_WIFI_PERM_DISABLE, SETTING_ITEM_MAX_STR_LEN) == 0) {
+            return true;
+        }
+    #endif
+
     char value[SETTING_ITEM_MAX_STR_LEN] = {0};
     if (setting_items_read(key, value) != ESP_OK) {
         return (strncmp(item->default_value, "true", SETTING_ITEM_MAX_STR_LEN) == 0);

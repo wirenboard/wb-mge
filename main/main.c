@@ -41,6 +41,10 @@
     #include "driver/gpio.h"
 #endif
 
+#if WB_SDR_ENABLED
+    #include "sdr_radio.h"
+#endif
+
 
 #define STATUS_LED_REGULAR_BLINK_PERIOD_MS          1000
 #define STATUS_LED_FACTORY_RESET_BLINK_PERIOD_MS    200
@@ -214,6 +218,17 @@ void app_main(void)
     #endif
 
     ESP_ERROR_CHECK(network_init());
+
+    #if WB_SDR_ENABLED
+        // Right after network_init(): it creates the default event loop the Wi-Fi driver needs, and it
+        // skipped Wi-Fi, which reads as permanently disabled in this build. Not ESP_ERROR_CHECK, for
+        // the same reason as the calls around it: the device must stay up without the SDR.
+        esp_err_t sdr_ret = sdr_radio_init();
+        if (sdr_ret != ESP_OK) {
+            ESP_LOGE(TAG, "sdr_radio_init failed: %s - continuing without the SDR",
+                     esp_err_to_name(sdr_ret));
+        }
+    #endif
 
     // Deliberately NOT ESP_ERROR_CHECK: a web server that will not start must not abort the boot.
     // An abort() here panics and reboots, and every cause that can make the start fail — too

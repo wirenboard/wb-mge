@@ -26,26 +26,32 @@ const rejectionEnvelope = (body: unknown): { error?: unknown } | null => {
   return envelope.success === false ? envelope : null;
 };
 
-export const api = async <T>(url: string, options: Options = {}): Promise<T> => {
-  const prefix = import.meta.env.DEV ? 'api/' : '';
-  let cfg: Options = { timeout: 5500, ...options };
+const DEFAULT_TIMEOUT_MS = 5500;
 
-  return ky(`${prefix}${url}`, cfg)
+// In development the device is reached through the Vite proxy mounted at /api.
+const requestUrl = (url: string): string => `${import.meta.env.DEV ? 'api/' : ''}${url}`;
+
+const mapRequestError = (err: any): never => {
+  if (err.name === 'TimeoutError') {
+    throw new Error('timeout');
+  }
+  switch (err.response?.status) {
+    case 404:
+    case 500:
+      throw new Error('connection_error');
+    case 401:
+      hasSession.value = false;
+      throw Error('unauthorized');
+  }
+  throw err;
+};
+
+export const api = async <T>(url: string, options: Options = {}): Promise<T> => {
+  let cfg: Options = { timeout: DEFAULT_TIMEOUT_MS, ...options };
+
+  return ky(requestUrl(url), cfg)
     .json<T>()
-    .catch((err) => {
-      if (err.name === 'TimeoutError') {
-        throw new Error('timeout');
-      }
-      switch (err.response?.status) {
-        case 404:
-        case 500:
-          throw new Error('connection_error');
-        case 401:
-          hasSession.value = false;
-          throw Error('unauthorized');
-      }
-      throw err;
-    })
+    .catch(mapRequestError)
     .then((body) => {
       // The envelope check belongs here and not in updateSettings(): it is the FIRMWARE's shape,
       // not the settings endpoint's, and most handlers pair it with a 4xx/5xx that the .catch()
@@ -61,3 +67,10 @@ export const api = async <T>(url: string, options: Options = {}): Promise<T> => 
       return body;
     });
 };
+
+// api() for endpoints that answer with raw bytes. There is no envelope check: a refusal from such an
+// endpoint always comes with a 4xx/5xx status, which the shared mapping above already rejects on.
+export const apiBinary = async (url: string, options: Options = {}): Promise<ArrayBuffer> =>
+  ky(requestUrl(url), { timeout: DEFAULT_TIMEOUT_MS, ...options })
+    .arrayBuffer()
+    .catch(mapRequestError);
