@@ -236,6 +236,12 @@ esp_err_t sdr_radio_scan_networks(wifi_ap_record_t *records, uint16_t *count)
     // at any level. The next capture forces its gain again.
     REG_CLR_BIT(SDR_RADIO_RX_GAIN_REG, SDR_RADIO_RX_GAIN_FORCE);
 
+    // An all-channel scan starts on channel 1, and the driver skips the retune when it believes it is already
+    // there - which it does after init, while captures have left the PLL elsewhere (channel 13 after a sweep:
+    // no channel 1 network was found while stock firmware saw four). Channel 1 makes the first slot right
+    // whatever the driver believes.
+    set_chanfreq(SDR_RADIO_CHAN_FIRST_MHZ, SDR_RADIO_CHANFREQ_MODE);
+
     // Scanning needs the station interface, which the NULL mode of raw capture does not have
     esp_err_t ret = esp_wifi_set_promiscuous(false);
     if (ret == ESP_OK) {
