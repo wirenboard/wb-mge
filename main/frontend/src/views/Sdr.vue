@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { spectrumDbfs } from '@/common/sdrSpectrum';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import Layout from '@/components/Layout.vue';
@@ -10,32 +9,33 @@ import { api, apiBinary } from '@/utils/api';
 
 interface SdrInfo {
   gain_max: number;
-  samples: number;
-  rates_msps: number[];
-  freq_min_mhz: number;
-  freq_max_mhz: number;
-  bw_min_mhz: number;
-  bw_max_mhz: number;
+  start_mhz: number;
+  stop_mhz: number;
+  bin_khz: number;
 }
 
-// Query of GET /sdr/capture. A type alias rather than an interface, so it passes as ky's searchParams.
-type CaptureParams = {
-  freq: number;
-  rate: number;
-  bw: number;
+// Query of GET /sdr/scan. A type alias rather than an interface, so it passes as ky's searchParams.
+type ScanParams = {
   gain: number;
 };
 
+// A whole device scan: bin i is centred at startMhz + i * binMhz.
 interface Frame {
-  dbfs: Float32Array;
-  params: CaptureParams;
+  dbfs: Int8Array;
+  startMhz: number;
+  binMhz: number;
 }
 
-const DEFAULT_FREQ_MHZ = 2412;
-const DEFAULT_RATE_MSPS = 80;
-const DEFAULT_BW_MHZ = 67;
-const BW_AUTO = 0;
+interface WifiChannel {
+  number: number;
+  mhz: number;
+}
+
+const DEFAULT_START_MHZ = 2400;
+const DEFAULT_STOP_MHZ = 2500;
+const DEFAULT_GAIN = 60;
 const GAIN_AGC = -1;
+const KHZ_PER_MHZ = 1000;
 const FLOOR_MIN_DB = -140;
 const FLOOR_MAX_DB = -40;
 const DEFAULT_FLOOR_DB = -100;
@@ -55,7 +55,22 @@ const LABEL_COLOR = '#9aa3b0';
 const TRACE_COLOR = '#5ccf7a';
 const LABEL_FONT_PX = 11;
 const LABEL_PAD_PX = 4;
-const AXIS_HEIGHT_PX = 18;
+const CHANNEL_TICK_PX = 4;
+const CHANNEL_ROW_PX = 18;
+const FREQ_ROW_PX = 18;
+const AXIS_HEIGHT_PX = CHANNEL_ROW_PX + FREQ_ROW_PX;
+
+const WIFI_CHANNEL_1_MHZ = 2412;
+const WIFI_CHANNEL_STEP_MHZ = 5;
+const WIFI_REGULAR_CHANNELS = 13;
+const WIFI_CHANNEL_14_MHZ = 2484;
+const WIFI_CHANNELS: ReadonlyArray<WifiChannel> = [
+  ...Array.from({ length: WIFI_REGULAR_CHANNELS }, (_, index) => ({
+    number: index + 1,
+    mhz: WIFI_CHANNEL_1_MHZ + (WIFI_CHANNEL_STEP_MHZ * index),
+  })),
+  { number: WIFI_REGULAR_CHANNELS + 1, mhz: WIFI_CHANNEL_14_MHZ },
+];
 
 const buildWaterfallLut = (): Uint8ClampedArray => {
   const lut = new Uint8ClampedArray(LUT_SIZE * 3);
@@ -90,12 +105,14 @@ const gridStepDb = (range: number): number => {
 const { t } = useI18n();
 
 const info = ref<SdrInfo>();
-const freqMhz = ref(DEFAULT_FREQ_MHZ);
-const rateMsps = ref(DEFAULT_RATE_MSPS);
-const bwAuto = ref(false);
-const bwMhz = ref(DEFAULT_BW_MHZ);
-const agc = ref(true);
-const gain = ref(0);
+// The fields hold what was typed; the plots show the last pair that passed validation.
+const startMhz = ref(DEFAULT_START_MHZ);
+const stopMhz = ref(DEFAULT_STOP_MHZ);
+const scanStartMhz = ref(DEFAULT_START_MHZ);
+const scanStopMhz = ref(DEFAULT_STOP_MHZ);
+// With AGC every sweep step picks its own gain and the stitched spectrum shows steps, hence manual by default.
+const agc = ref(false);
+const gain = ref(DEFAULT_GAIN);
 const floorDb = ref(DEFAULT_FLOOR_DB);
 const rangeDb = ref(DEFAULT_RANGE_DB);
 const isRunning = ref(false);
@@ -108,19 +125,56 @@ let lastFrame: Frame | null = null;
 let loop: Promise<void> | null = null;
 let resizeObserver: ResizeObserver | null = null;
 
-const captureParams = (): CaptureParams => ({
-  freq: freqMhz.value,
-  rate: rateMsps.value,
-  bw: bwAuto.value ? BW_AUTO : bwMhz.value,
+// v-model.number leaves an empty or unparsable field as a string, which the integer check rejects.
+const spanError = computed((): string => {
+  const start = startMhz.value;
+  const stop = stopMhz.value;
+  if (!Number.isInteger(start) || !Number.isInteger(stop)) {
+    return t('error_span_integer');
+  }
+  const limits = info.value;
+  if (!limits) {
+    return '';
+  }
+  if ((start < limits.start_mhz) || (stop > limits.stop_mhz)) {
+    return t('error_span_limits', { min: limits.start_mhz, max: limits.stop_mhz });
+  }
+  if (start >= stop) {
+    return t('error_span_order');
+  }
+  return '';
+});
+
+const scanParams = (): ScanParams => ({
   gain: agc.value ? GAIN_AGC : gain.value,
 });
 
-// Frequency, rate and bandwidth decide what a waterfall column means; gain only changes its level.
-const tuningOf = (params: CaptureParams): string => `${params.freq}/${params.rate}/${params.bw}`;
-const tuning = computed(() => tuningOf(captureParams()));
+const isSameScan = (a: ScanParams, b: ScanParams): boolean => a.gain === b.gain;
+
+const expectedBins = (limits: SdrInfo): number =>
+  Math.round(((limits.stop_mhz - limits.start_mhz) * KHZ_PER_MHZ) / limits.bin_khz);
+
+// One value per pixel column of the window: the strongest bin overlapping the column, so the frame's bins
+// outside the window are cropped away. A column no bin reaches stays NaN.
+const columnPeaks = (frame: Frame, windowStartMhz: number, windowStopMhz: number, columns: number): Float32Array => {
+  const { dbfs, binMhz } = frame;
+  const peaks = new Float32Array(columns).fill(NaN);
+  const mhzPerColumn = (windowStopMhz - windowStartMhz) / columns;
+  // Bins are centred on their frequency, so bin i spans i - 0.5 .. i + 0.5 in bin units
+  const windowFirstBin = ((windowStartMhz - frame.startMhz) / binMhz) + 0.5;
+  for (let x = 0; x < columns; x++) {
+    const first = Math.floor(windowFirstBin + ((x * mhzPerColumn) / binMhz));
+    const last = Math.min(dbfs.length,
+      Math.max(first + 1, Math.ceil(windowFirstBin + (((x + 1) * mhzPerColumn) / binMhz))));
+    for (let bin = first; bin < last; bin++) {
+      peaks[x] = (bin === first) ? dbfs[bin] : Math.max(peaks[x], dbfs[bin]);
+    }
+  }
+  return peaks;
+};
 
 // api() and apiBinary() already turn a timeout and a lost session into plain messages; a 400 is the
-// device refusing the capture parameters and still carries ky's response.
+// device refusing the scan parameters and still carries ky's response.
 const errorKeyFor = (err: unknown, fallback: string): string => {
   const message = (err as Error | undefined)?.message;
   if (message === 'timeout') {
@@ -146,6 +200,49 @@ const fitCanvas = (canvas: HTMLCanvasElement): boolean => {
   canvas.width = width;
   canvas.height = height;
   return true;
+};
+
+// The first axis row carries the Wi-Fi channel ticks, the second the start, middle and stop frequencies.
+const drawFrequencyAxis = (ctx: CanvasRenderingContext2D, width: number, plotHeight: number) => {
+  const start = scanStartMhz.value;
+  const stop = scanStopMhz.value;
+  const xOf = (mhz: number): number => ((mhz - start) * width) / (stop - start);
+
+  ctx.strokeStyle = LABEL_COLOR;
+  ctx.fillStyle = LABEL_COLOR;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  let labelFreeFromX = -Infinity;
+  for (const channel of WIFI_CHANNELS) {
+    if ((channel.mhz < start) || (channel.mhz > stop)) {
+      continue;
+    }
+    const x = Math.min(width - 1, Math.round(xOf(channel.mhz))) + 0.5;
+    ctx.beginPath();
+    ctx.moveTo(x, plotHeight);
+    ctx.lineTo(x, plotHeight + CHANNEL_TICK_PX);
+    ctx.stroke();
+
+    const label = String(channel.number);
+    const halfWidth = ctx.measureText(label).width / 2;
+    const labelX = Math.min(width - halfWidth, Math.max(halfWidth, x));
+    // Over a wide span the channels crowd together; a number that would overlap the previous one is skipped.
+    if ((labelX - halfWidth) >= labelFreeFromX) {
+      ctx.fillText(label, labelX, plotHeight + CHANNEL_TICK_PX);
+      labelFreeFromX = labelX + halfWidth + LABEL_PAD_PX;
+    }
+  }
+
+  const labels: Array<[number, CanvasTextAlign, number]> = [
+    [LABEL_PAD_PX, 'left', start],
+    [width / 2, 'center', (start + stop) / 2],
+    [width - LABEL_PAD_PX, 'right', stop],
+  ];
+  ctx.textBaseline = 'middle';
+  for (const [x, align, mhz] of labels) {
+    ctx.textAlign = align;
+    ctx.fillText(`${mhz} ${t('unit_mhz')}`, x, plotHeight + CHANNEL_ROW_PX + (FREQ_ROW_PX / 2));
+  }
 };
 
 const drawSpectrum = () => {
@@ -183,35 +280,22 @@ const drawSpectrum = () => {
     ctx.fillText(String(db), LABEL_PAD_PX, isBelow ? (y + 2) : (y - 2));
   }
 
-  if (!lastFrame) {
-    return;
-  }
-  const { dbfs, params } = lastFrame;
-  ctx.strokeStyle = TRACE_COLOR;
-  ctx.beginPath();
-  for (let bin = 0; bin < dbfs.length; bin++) {
-    const x = ((bin + 0.5) * width) / dbfs.length;
-    const y = Math.min(plotHeight, Math.max(0, yOf(dbfs[bin])));
-    if (bin === 0) {
-      ctx.moveTo(x, y);
-    } else {
-      ctx.lineTo(x, y);
+  if (lastFrame) {
+    const peaks = columnPeaks(lastFrame, scanStartMhz.value, scanStopMhz.value, width);
+    ctx.strokeStyle = TRACE_COLOR;
+    ctx.beginPath();
+    for (let x = 0; (x < width) && !Number.isNaN(peaks[x]); x++) {
+      const y = Math.min(plotHeight, Math.max(0, yOf(peaks[x])));
+      if (x === 0) {
+        ctx.moveTo(x + 0.5, y);
+      } else {
+        ctx.lineTo(x + 0.5, y);
+      }
     }
+    ctx.stroke();
   }
-  ctx.stroke();
 
-  const halfSpan = params.rate / 2;
-  const labels: Array<[number, CanvasTextAlign, number]> = [
-    [LABEL_PAD_PX, 'left', params.freq - halfSpan],
-    [width / 2, 'center', params.freq],
-    [width - LABEL_PAD_PX, 'right', params.freq + halfSpan],
-  ];
-  ctx.fillStyle = LABEL_COLOR;
-  ctx.textBaseline = 'middle';
-  for (const [x, align, mhz] of labels) {
-    ctx.textAlign = align;
-    ctx.fillText(`${mhz} ${t('unit_mhz')}`, x, plotHeight + (AXIS_HEIGHT_PX / 2));
-  }
+  drawFrequencyAxis(ctx, width, plotHeight);
 };
 
 const clearWaterfall = () => {
@@ -224,7 +308,7 @@ const clearWaterfall = () => {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 };
 
-const paintWaterfallRow = (dbfs: Float32Array) => {
+const paintWaterfallRow = (frame: Frame) => {
   const canvas = waterfallCanvas.value;
   const ctx = canvas?.getContext('2d');
   if (!canvas || !ctx) {
@@ -238,16 +322,10 @@ const paintWaterfallRow = (dbfs: Float32Array) => {
   const row = ctx.createImageData(width, 1);
   const floor = floorDb.value;
   const range = rangeDb.value;
-  const bins = dbfs.length;
+  const peaks = columnPeaks(frame, scanStartMhz.value, scanStopMhz.value, width);
   for (let x = 0; x < width; x++) {
-    // Pixel x covers bins [first, last); on a canvas wider than the FFT it still takes one bin.
-    const first = Math.floor((x * bins) / width);
-    const last = Math.max(first + 1, Math.floor(((x + 1) * bins) / width));
-    let peak = dbfs[first];
-    for (let bin = first + 1; bin < last; bin++) {
-      peak = Math.max(peak, dbfs[bin]);
-    }
-    const level = Math.min(1, Math.max(0, (peak - floor) / range));
+    // A column no bin reaches gets the background colour.
+    const level = Number.isNaN(peaks[x]) ? 0 : Math.min(1, Math.max(0, (peaks[x] - floor) / range));
     const color = Math.round(level * (LUT_SIZE - 1)) * 3;
     const pixel = x * 4;
     row.data[pixel] = WATERFALL_LUT[color];
@@ -258,21 +336,28 @@ const paintWaterfallRow = (dbfs: Float32Array) => {
   ctx.putImageData(row, 0, 0);
 };
 
-const captureLoop = async () => {
-  while (isRunning.value) {
-    const params = captureParams();
+const scanLoop = async () => {
+  while (isRunning.value && info.value) {
+    const limits = info.value;
+    const params = scanParams();
     try {
-      const buffer = await apiBinary('sdr/capture', { searchParams: params });
-      // A capture tuned before the last frequency, rate or bandwidth change would paint a stale row
-      // onto the waterfall that was just cleared for the new tuning.
-      if (isRunning.value && (tuningOf(params) === tuning.value)) {
-        lastFrame = { dbfs: spectrumDbfs(buffer), params };
-        drawSpectrum();
-        paintWaterfallRow(lastFrame.dbfs);
+      const buffer = await apiBinary('sdr/scan', { searchParams: params });
+      // A sweep requested before the last gain change no longer matches the controls.
+      if (!isRunning.value || !isSameScan(params, scanParams())) {
+        continue;
       }
+      const dbfs = new Int8Array(buffer);
+      const expected = expectedBins(limits);
+      // The device ends the body early when a capture fails mid-sweep.
+      if (dbfs.length !== expected) {
+        throw new Error(`SDR scan returned ${dbfs.length} bins instead of ${expected}`);
+      }
+      lastFrame = { dbfs, startMhz: limits.start_mhz, binMhz: limits.bin_khz / KHZ_PER_MHZ };
+      drawSpectrum();
+      paintWaterfallRow(lastFrame);
     } catch (err) {
       if (isRunning.value) {
-        console.error('SDR capture failed', err);
+        console.error('SDR scan failed', err);
         errorKey.value = errorKeyFor(err, 'error_capture');
         isRunning.value = false;
       }
@@ -283,10 +368,10 @@ const captureLoop = async () => {
 const start = () => {
   errorKey.value = '';
   isRunning.value = true;
-  // After Stop the previous loop may still be waiting for its last capture; it then simply carries
+  // After Stop the previous loop may still be waiting for its last sweep; it then simply carries
   // on, so a quick Stop/Start never puts two requests in flight.
   if (!loop) {
-    loop = captureLoop().finally(() => {
+    loop = scanLoop().finally(() => {
       loop = null;
     });
   }
@@ -305,7 +390,19 @@ const onResize = () => {
   }
 };
 
-watch(tuning, () => clearWaterfall());
+watch([startMhz, stopMhz, info], () => {
+  if (info.value && !spanError.value) {
+    scanStartMhz.value = startMhz.value;
+    scanStopMhz.value = stopMhz.value;
+  }
+});
+
+// Every frame covers the whole device range, so a new window only redraws the last one; the waterfall rows
+// of the old window are dropped.
+watch([scanStartMhz, scanStopMhz], () => {
+  clearWaterfall();
+  drawSpectrum();
+});
 watch([floorDb, rangeDb], () => drawSpectrum());
 
 onMounted(async () => {
@@ -319,7 +416,7 @@ onMounted(async () => {
 
   try {
     const sdrInfo = await api<SdrInfo>('sdr/info');
-    gain.value = Math.round(sdrInfo.gain_max / 2);
+    gain.value = Math.min(DEFAULT_GAIN, sdrInfo.gain_max);
     info.value = sdrInfo;
   } catch (err) {
     console.error('Failed to read the SDR parameters', err);
@@ -345,7 +442,7 @@ onBeforeUnmount(() => {
             <Button
               type="button"
               :variant="isRunning ? 'outline' : 'primary'"
-              :disabled="!info"
+              :disabled="!info || (!isRunning && !!spanError)"
               @click="isRunning ? stop() : start()"
             >
               {{ isRunning ? t('stop') : t('start') }}
@@ -353,37 +450,26 @@ onBeforeUnmount(() => {
           </div>
           <div class="card-body sdr-controls">
             <div class="field">
-              <label for="sdr_freq">{{ t('center_freq') }}</label>
+              <label for="sdr_start">{{ t('start_freq') }}</label>
               <input
-                id="sdr_freq"
-                v-model.lazy.number="freqMhz"
+                id="sdr_start"
+                v-model.lazy.number="startMhz"
                 type="number"
                 step="1"
-                :min="info?.freq_min_mhz"
-                :max="info?.freq_max_mhz"
+                :min="info?.start_mhz"
+                :max="info?.stop_mhz"
               >
             </div>
             <div class="field">
-              <label for="sdr_rate">{{ t('sample_rate') }}</label>
-              <select id="sdr_rate" v-model="rateMsps">
-                <option v-for="rate in info?.rates_msps" :key="rate" :value="rate">{{ rate }}</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="sdr_bw">{{ t('bandwidth') }}</label>
-              <div class="sdr-inline">
-                <Switch id="sdr_bw_auto" v-model="bwAuto" :aria-label="t('bw_auto_aria')" />
-                <span class="sdr-caption">{{ t('bw_auto') }}</span>
-                <input
-                  id="sdr_bw"
-                  v-model.lazy.number="bwMhz"
-                  type="number"
-                  step="1"
-                  :min="info?.bw_min_mhz"
-                  :max="info?.bw_max_mhz"
-                  :disabled="bwAuto"
-                >
-              </div>
+              <label for="sdr_stop">{{ t('stop_freq') }}</label>
+              <input
+                id="sdr_stop"
+                v-model.lazy.number="stopMhz"
+                type="number"
+                step="1"
+                :min="info?.start_mhz"
+                :max="info?.stop_mhz"
+              >
             </div>
             <div class="field">
               <label for="sdr_gain">{{ t('gain') }}</label>
@@ -402,6 +488,7 @@ onBeforeUnmount(() => {
                 <span class="mono sdr-value">{{ gain }}</span>
               </div>
             </div>
+            <div v-if="spanError" class="sdr-error" role="alert">{{ spanError }}</div>
             <div v-if="errorKey" class="sdr-error" role="alert">{{ t(errorKey) }}</div>
           </div>
         </section>
@@ -468,11 +555,6 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
-.sdr-inline input[type="number"] {
-  flex: 1;
-  min-width: 0;
-}
-
 .sdr-caption {
   color: var(--text-secondary);
 }
@@ -517,18 +599,15 @@ onBeforeUnmount(() => {
 <i18n>
 {
   "en": {
-    "title": "SDR receiver",
-    "crumbs": "Live spectrum and waterfall",
+    "title": "SDR band scanner",
+    "crumbs": "Swept spectrum and waterfall with Wi-Fi channel markers",
     "receiver": "Receiver",
     "display": "Display",
     "plots": "Spectrum and waterfall",
     "spectrum": "Spectrum",
     "waterfall": "Waterfall",
-    "center_freq": "Center frequency, MHz",
-    "sample_rate": "Sample rate, Msps",
-    "bandwidth": "Filter bandwidth, MHz",
-    "bw_auto": "Auto",
-    "bw_auto_aria": "Automatic filter bandwidth",
+    "start_freq": "Start frequency, MHz",
+    "stop_freq": "Stop frequency, MHz",
     "gain": "Gain",
     "agc": "AGC",
     "agc_aria": "Automatic gain control",
@@ -537,25 +616,25 @@ onBeforeUnmount(() => {
     "start": "Start",
     "stop": "Stop",
     "unit_mhz": "MHz",
+    "error_span_integer": "Enter the frequencies in whole MHz",
+    "error_span_limits": "The frequencies must lie within {min}–{max} MHz",
+    "error_span_order": "The start frequency must be below the stop frequency",
     "error_info": "Could not read the receiver parameters from the device",
-    "error_capture": "Could not get samples from the device",
-    "error_rejected": "The device rejected the capture parameters",
+    "error_capture": "Could not get the spectrum from the device",
+    "error_rejected": "The device rejected the scan parameters",
     "error_timeout": "The device did not answer in time",
     "error_unauthorized": "The session has expired, log in again"
   },
   "ru": {
-    "title": "SDR-приёмник",
-    "crumbs": "Спектр и водопад в реальном времени",
+    "title": "SDR-сканер диапазона",
+    "crumbs": "Спектр по развёртке и водопад с метками каналов Wi-Fi",
     "receiver": "Приёмник",
     "display": "Отображение",
     "plots": "Спектр и водопад",
     "spectrum": "Спектр",
     "waterfall": "Водопад",
-    "center_freq": "Центральная частота, МГц",
-    "sample_rate": "Частота дискретизации, Мвыб/с",
-    "bandwidth": "Полоса фильтра, МГц",
-    "bw_auto": "Авто",
-    "bw_auto_aria": "Автоматическая полоса фильтра",
+    "start_freq": "Начальная частота, МГц",
+    "stop_freq": "Конечная частота, МГц",
     "gain": "Усиление",
     "agc": "АРУ",
     "agc_aria": "Автоматическая регулировка усиления",
@@ -564,25 +643,25 @@ onBeforeUnmount(() => {
     "start": "Запустить",
     "stop": "Остановить",
     "unit_mhz": "МГц",
+    "error_span_integer": "Укажите частоты целым числом МГц",
+    "error_span_limits": "Частоты должны быть в пределах {min}–{max} МГц",
+    "error_span_order": "Начальная частота должна быть ниже конечной",
     "error_info": "Не удалось получить параметры приёмника",
-    "error_capture": "Не удалось получить отсчёты с устройства",
-    "error_rejected": "Устройство отклонило параметры захвата",
+    "error_capture": "Не удалось получить спектр с устройства",
+    "error_rejected": "Устройство отклонило параметры сканирования",
     "error_timeout": "Устройство не ответило вовремя",
     "error_unauthorized": "Сессия истекла, войдите снова"
   },
   "kk": {
-    "title": "SDR қабылдағышы",
-    "crumbs": "Нақты уақыттағы спектр және сарқырама",
+    "title": "SDR диапазон сканері",
+    "crumbs": "Wi-Fi арна белгілері бар спектр және сарқырама",
     "receiver": "Қабылдағыш",
     "display": "Көрсету",
     "plots": "Спектр және сарқырама",
     "spectrum": "Спектр",
     "waterfall": "Сарқырама",
-    "center_freq": "Орталық жиілік, МГц",
-    "sample_rate": "Дискреттеу жиілігі, Msps",
-    "bandwidth": "Сүзгі жолағы, МГц",
-    "bw_auto": "Авто",
-    "bw_auto_aria": "Сүзгі жолағын автоматты таңдау",
+    "start_freq": "Бастапқы жиілік, МГц",
+    "stop_freq": "Соңғы жиілік, МГц",
     "gain": "Күшейту",
     "agc": "AGC",
     "agc_aria": "Күшейтуді автоматты реттеу",
@@ -591,25 +670,25 @@ onBeforeUnmount(() => {
     "start": "Іске қосу",
     "stop": "Тоқтату",
     "unit_mhz": "МГц",
+    "error_span_integer": "Жиіліктерді бүтін МГц санымен енгізіңіз",
+    "error_span_limits": "Жиіліктер {min}–{max} МГц аралығында болуы керек",
+    "error_span_order": "Бастапқы жиілік соңғы жиіліктен төмен болуы керек",
     "error_info": "Қабылдағыш параметрлерін алу мүмкін болмады",
-    "error_capture": "Құрылғыдан сигнал үлгілерін алу мүмкін болмады",
-    "error_rejected": "Құрылғы түсіру параметрлерін қабылдамады",
+    "error_capture": "Құрылғыдан спектрді алу мүмкін болмады",
+    "error_rejected": "Құрылғы сканерлеу параметрлерін қабылдамады",
     "error_timeout": "Құрылғы уақытында жауап бермеді",
     "error_unauthorized": "Сеанс мерзімі аяқталды, қайта кіріңіз"
   },
   "it": {
-    "title": "Ricevitore SDR",
-    "crumbs": "Spettro e waterfall in tempo reale",
+    "title": "Scanner di banda SDR",
+    "crumbs": "Spettro a scansione e waterfall con i canali Wi-Fi",
     "receiver": "Ricevitore",
     "display": "Visualizzazione",
     "plots": "Spettro e waterfall",
     "spectrum": "Spettro",
     "waterfall": "Waterfall",
-    "center_freq": "Frequenza centrale, MHz",
-    "sample_rate": "Frequenza di campionamento, Msps",
-    "bandwidth": "Larghezza di banda del filtro, MHz",
-    "bw_auto": "Auto",
-    "bw_auto_aria": "Larghezza di banda automatica",
+    "start_freq": "Frequenza iniziale, MHz",
+    "stop_freq": "Frequenza finale, MHz",
     "gain": "Guadagno",
     "agc": "AGC",
     "agc_aria": "Controllo automatico del guadagno",
@@ -618,25 +697,25 @@ onBeforeUnmount(() => {
     "start": "Avvia",
     "stop": "Ferma",
     "unit_mhz": "MHz",
+    "error_span_integer": "Inserisci le frequenze in MHz interi",
+    "error_span_limits": "Le frequenze devono essere comprese tra {min} e {max} MHz",
+    "error_span_order": "La frequenza iniziale deve essere inferiore a quella finale",
     "error_info": "Impossibile leggere i parametri del ricevitore",
-    "error_capture": "Impossibile acquisire i campioni dal dispositivo",
-    "error_rejected": "Il dispositivo ha rifiutato i parametri di acquisizione",
+    "error_capture": "Impossibile ottenere lo spettro dal dispositivo",
+    "error_rejected": "Il dispositivo ha rifiutato i parametri di scansione",
     "error_timeout": "Il dispositivo non ha risposto in tempo",
     "error_unauthorized": "La sessione è scaduta, accedi di nuovo"
   },
   "de": {
-    "title": "SDR-Empfänger",
-    "crumbs": "Live-Spektrum und Wasserfall",
+    "title": "SDR-Bandscanner",
+    "crumbs": "Spektrum-Sweep und Wasserfall mit WLAN-Kanalmarken",
     "receiver": "Empfänger",
     "display": "Anzeige",
     "plots": "Spektrum und Wasserfall",
     "spectrum": "Spektrum",
     "waterfall": "Wasserfall",
-    "center_freq": "Mittenfrequenz, MHz",
-    "sample_rate": "Abtastrate, MS/s",
-    "bandwidth": "Filterbandbreite, MHz",
-    "bw_auto": "Auto",
-    "bw_auto_aria": "Automatische Filterbandbreite",
+    "start_freq": "Startfrequenz, MHz",
+    "stop_freq": "Stoppfrequenz, MHz",
     "gain": "Verstärkung",
     "agc": "AGC",
     "agc_aria": "Automatische Verstärkungsregelung",
@@ -645,9 +724,12 @@ onBeforeUnmount(() => {
     "start": "Starten",
     "stop": "Stoppen",
     "unit_mhz": "MHz",
+    "error_span_integer": "Frequenzen in ganzen MHz angeben",
+    "error_span_limits": "Die Frequenzen müssen zwischen {min} und {max} MHz liegen",
+    "error_span_order": "Die Startfrequenz muss unter der Stoppfrequenz liegen",
     "error_info": "Die Empfängerparameter konnten nicht gelesen werden",
-    "error_capture": "Vom Gerät konnten keine Abtastwerte empfangen werden",
-    "error_rejected": "Das Gerät hat die Erfassungsparameter abgelehnt",
+    "error_capture": "Vom Gerät konnte kein Spektrum empfangen werden",
+    "error_rejected": "Das Gerät hat die Scan-Parameter abgelehnt",
     "error_timeout": "Das Gerät hat nicht rechtzeitig geantwortet",
     "error_unauthorized": "Die Sitzung ist abgelaufen, bitte erneut anmelden"
   }

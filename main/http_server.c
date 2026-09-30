@@ -290,10 +290,10 @@ static const httpd_uri_t sdr_info_get = {
     .handler = sdr_http_info_get_handler,
     .user_ctx = NULL,
 };
-static const httpd_uri_t sdr_capture_get = {
-    .uri = "/sdr/capture",
+static const httpd_uri_t sdr_scan_get = {
+    .uri = "/sdr/scan",
     .method = HTTP_GET,
-    .handler = sdr_http_capture_get_handler,
+    .handler = sdr_http_scan_get_handler,
     .user_ctx = NULL,
 };
 #endif
@@ -378,7 +378,7 @@ esp_err_t http_server_init_port(uint16_t port)
         httpd_register_uri_handler(http_server, &hostname_get);
 #if WB_SDR_ENABLED
         httpd_register_uri_handler(http_server, &sdr_info_get);
-        httpd_register_uri_handler(http_server, &sdr_capture_get);
+        httpd_register_uri_handler(http_server, &sdr_scan_get);
 #endif
 #ifdef COVERAGE_BUILD
         coverage_dump_register_handlers(http_server);

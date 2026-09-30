@@ -1,13 +1,16 @@
 #include "sdr_http.h"
 #include "sdr_radio.h"
+#include "sdr_spectrum.h"
+#include "array_size.h"
 #include "auth.h"
 #include "json_utils.h"
-#include "array_size.h"
 
 #include <ctype.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
+#include <esp_err.h>
 #include <esp_log.h>
 
 #define SDR_HTTP_QUERY_BUF_SIZE             128
@@ -16,30 +19,28 @@
 
 #define SDR_HTTP_STATUS_CAPTURE_FAILED      "500 Internal Server Error"
 
+#define SDR_HTTP_KHZ_PER_MHZ                1000
+#define SDR_HTTP_BIN_KHZ                    ((double)SDR_RADIO_SAMPLE_RATE_KHZ / SDR_SPECTRUM_FFT_SIZE)
+// A scan keeps the centre +-30 MHz of each capture, where the widest analog filter is flat
+#define SDR_HTTP_STEP_HALF_MHZ              30
+#define SDR_HTTP_STEP_MHZ                   (2 * SDR_HTTP_STEP_HALF_MHZ)
+#define SDR_HTTP_STEP_BINS                \
+    (((SDR_HTTP_STEP_MHZ * SDR_HTTP_KHZ_PER_MHZ) * SDR_SPECTRUM_FFT_SIZE) / SDR_RADIO_SAMPLE_RATE_KHZ)
+#define SDR_HTTP_STEP_FIRST_BIN             ((SDR_SPECTRUM_FFT_SIZE - SDR_HTTP_STEP_BINS) / 2)
+
+// Measured on the device: only Wi-Fi channel centres tune. The RF frequency offset path lands about 7 MHz
+// above channel 1 whatever frequency it is asked for, so every scan is the same two steps on channels 1 and
+// 13, 60 MHz apart: 2382..2502 MHz with neither gap nor overlap
+#define SDR_HTTP_STEP_CHANNEL_1_MHZ         2412
+#define SDR_HTTP_STEP_CHANNEL_13_MHZ        2472
+#define SDR_HTTP_START_MHZ                  (SDR_HTTP_STEP_CHANNEL_1_MHZ - SDR_HTTP_STEP_HALF_MHZ)
+#define SDR_HTTP_STOP_MHZ                   (SDR_HTTP_STEP_CHANNEL_13_MHZ + SDR_HTTP_STEP_HALF_MHZ)
+
 static const char *TAG = "sdr_http";
 
-typedef struct {
-    int msps;
-    sdr_radio_rate_t rate;
-} sdr_http_rate_t;
+static const unsigned sdr_http_steps_mhz[] = {SDR_HTTP_STEP_CHANNEL_1_MHZ, SDR_HTTP_STEP_CHANNEL_13_MHZ};
+static int8_t sdr_http_step_db[SDR_HTTP_STEP_BINS];
 
-// Accepted sample rates, in the order /sdr/info lists them
-static const sdr_http_rate_t sdr_http_rates[] = {
-    {80, SDR_RADIO_RATE_80_MSPS},
-    {40, SDR_RADIO_RATE_40_MSPS},
-    {16, SDR_RADIO_RATE_16_MSPS},
-};
-
-
-static const sdr_http_rate_t *sdr_http_find_rate(long msps)
-{
-    for (size_t i = 0; i < ARRAY_SIZE(sdr_http_rates); i++) {
-        if (sdr_http_rates[i].msps == msps) {
-            return &sdr_http_rates[i];
-        }
-    }
-    return NULL;
-}
 
 // Strict: the whole value must be a decimal integer, optionally negative - no blanks, no '+', no suffix
 static bool sdr_http_query_int(const char *query, const char *key, long *value)
@@ -77,25 +78,17 @@ esp_err_t sdr_http_info_get_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
-    int rates_msps[ARRAY_SIZE(sdr_http_rates)];
-    for (size_t i = 0; i < ARRAY_SIZE(sdr_http_rates); i++) {
-        rates_msps[i] = sdr_http_rates[i].msps;
-    }
-
     cJSON_AddNumberToObject(response_json, "gain_max", sdr_radio_get_gain_max());
-    cJSON_AddNumberToObject(response_json, "samples", SDR_RADIO_MAX_SAMPLES);
-    cJSON_AddItemToObject(response_json, "rates_msps", cJSON_CreateIntArray(rates_msps, ARRAY_SIZE(rates_msps)));
-    cJSON_AddNumberToObject(response_json, "freq_min_mhz", SDR_RADIO_FREQ_MIN_MHZ);
-    cJSON_AddNumberToObject(response_json, "freq_max_mhz", SDR_RADIO_FREQ_MAX_MHZ);
-    cJSON_AddNumberToObject(response_json, "bw_min_mhz", SDR_RADIO_BW_MIN_MHZ);
-    cJSON_AddNumberToObject(response_json, "bw_max_mhz", SDR_RADIO_BW_MAX_MHZ);
+    cJSON_AddNumberToObject(response_json, "start_mhz", SDR_HTTP_START_MHZ);
+    cJSON_AddNumberToObject(response_json, "stop_mhz", SDR_HTTP_STOP_MHZ);
+    cJSON_AddNumberToObject(response_json, "bin_khz", SDR_HTTP_BIN_KHZ);
 
     json_utils_send_response(req, NULL, response_json);
     return ESP_OK;
 }
 
 
-esp_err_t sdr_http_capture_get_handler(httpd_req_t *req)
+esp_err_t sdr_http_scan_get_handler(httpd_req_t *req)
 {
     if (!auth_middleware_check(req)) {
         return ESP_OK;
@@ -107,32 +100,6 @@ esp_err_t sdr_http_capture_get_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
-    long freq_mhz = 0;
-    if ((!sdr_http_query_int(query, "freq", &freq_mhz)) ||
-        (freq_mhz < SDR_RADIO_FREQ_MIN_MHZ) || (freq_mhz > SDR_RADIO_FREQ_MAX_MHZ))
-    {
-        json_utils_send_error(req, "invalid_freq");
-        return ESP_OK;
-    }
-
-    long rate_msps = 0;
-    const sdr_http_rate_t *rate = NULL;
-    if (sdr_http_query_int(query, "rate", &rate_msps)) {
-        rate = sdr_http_find_rate(rate_msps);
-    }
-    if (rate == NULL) {
-        json_utils_send_error(req, "invalid_rate");
-        return ESP_OK;
-    }
-
-    long bw_mhz = 0;
-    if ((!sdr_http_query_int(query, "bw", &bw_mhz)) ||
-        ((bw_mhz != SDR_RADIO_BW_KEEP) && ((bw_mhz < SDR_RADIO_BW_MIN_MHZ) || (bw_mhz > SDR_RADIO_BW_MAX_MHZ))))
-    {
-        json_utils_send_error(req, "invalid_bw");
-        return ESP_OK;
-    }
-
     long gain = 0;
     if ((!sdr_http_query_int(query, "gain", &gain)) ||
         ((gain != SDR_RADIO_GAIN_AGC) && ((gain < 0) || (gain > sdr_radio_get_gain_max()))))
@@ -141,16 +108,36 @@ esp_err_t sdr_http_capture_get_handler(httpd_req_t *req)
         return ESP_OK;
     }
 
-    // Runs on the single httpd task, so captures never overlap and the buffer stays ours until sent
-    const uint8_t *iq = NULL;
-    esp_err_t ret = sdr_radio_capture((unsigned)freq_mhz, rate->rate, (unsigned)bw_mhz, (int)gain, &iq);
-    if (ret != ESP_OK) {
-        const char *error = (ret == ESP_ERR_TIMEOUT) ? "capture_timeout" : "capture_memory";
-        json_utils_send_error_status(req, SDR_HTTP_STATUS_CAPTURE_FAILED, error);
-        return ESP_OK;
+    size_t bins_sent = 0;
+
+    // Runs on the single httpd task, so captures never overlap and the words stay ours until the next one
+    for (size_t step = 0; step < ARRAY_SIZE(sdr_http_steps_mhz); step++) {
+        unsigned centre_mhz = sdr_http_steps_mhz[step];
+        const uint32_t *words = NULL;
+        esp_err_t ret = sdr_radio_capture(centre_mhz, (int)gain, &words);
+        if (ret != ESP_OK) {
+            if (step == 0) {
+                const char *error = (ret == ESP_ERR_TIMEOUT) ? "capture_timeout" : "capture_memory";
+                json_utils_send_error_status(req, SDR_HTTP_STATUS_CAPTURE_FAILED, error);
+                return ESP_OK;
+            }
+            // The body ends short of the full scan, which the client detects
+            ESP_LOGW(TAG, "Scan stopped at %u MHz after %u bins: %s", centre_mhz, (unsigned)bins_sent,
+                     esp_err_to_name(ret));
+            break;
+        }
+        if (step == 0) {
+            httpd_resp_set_type(req, "application/octet-stream");
+        }
+
+        sdr_spectrum_compute_db(words, SDR_RADIO_MAX_SAMPLES, SDR_HTTP_STEP_FIRST_BIN, SDR_HTTP_STEP_BINS,
+                                sdr_http_step_db);
+        if (httpd_resp_send_chunk(req, (const char *)sdr_http_step_db, SDR_HTTP_STEP_BINS) != ESP_OK) {
+            return ESP_FAIL;
+        }
+        bins_sent += SDR_HTTP_STEP_BINS;
     }
 
-    httpd_resp_set_type(req, "application/octet-stream");
-    httpd_resp_send(req, (const char *)iq, SDR_RADIO_CAPTURE_BYTES);
+    httpd_resp_send_chunk(req, NULL, 0);
     return ESP_OK;
 }

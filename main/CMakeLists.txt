@@ -103,6 +103,7 @@ else()
         "voltage_monitor/system_voltage.c"
         "voltage_monitor/voltage_monitor.c"
         "sdr/sdr_radio.c"
+        "sdr/sdr_spectrum.c"
         "sdr/sdr_http.c")
     # Raw-IQ SDR receiver: owns the radio, so this build does not use Wi-Fi. Its compile
     # definition and linker guard need the component target and are added after registration.
