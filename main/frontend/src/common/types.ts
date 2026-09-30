@@ -76,7 +76,7 @@ export interface FpEvent {
   score: number | null;
 }
 
-// A record of GET /fp/log. seq keeps growing across reboots; it is not the per-boot seq of last_event.
+// A record of GET /fp/log. seq keeps growing across reboots; last_event.seq is the same number.
 export interface FpLogEntry {
   seq: number;
   time: number | null; // UTC unix seconds; null when the device clock was not set yet

@@ -62,7 +62,7 @@ typedef enum {
 } fp_acs_result_t;
 
 typedef struct {
-    uint32_t        seq;                                // 1 for the first event after boot
+    uint32_t        seq;                                // the access log's seq; per boot without the log
     uint32_t        uptime_s;
     fp_acs_source_t source;
     fp_acs_result_t result;

@@ -1254,7 +1254,7 @@ components:
     FpEvent:
       type: object
       properties:
-        seq: { type: integer }
+        seq: { type: integer, description: "The attempt's seq in GET /fp/log: grows by one with every attempt and keeps growing across reboots (restarts at 1 after a reboot only on a device without the fp_nvs partition)" }
         uptime_s: { type: integer, description: "Device uptime at the event" }
         source: { type: string, enum: [fingerprint, telegram] }
         result: { type: string, enum: [granted, denied, unknown] }
@@ -1265,7 +1265,7 @@ components:
     FpLogEntry:
       type: object
       properties:
-        seq: { type: integer, minimum: 1, description: "Grows by one with every attempt and keeps growing across reboots; not the per-boot seq of last_event" }
+        seq: { type: integer, minimum: 1, description: "Grows by one with every attempt and keeps growing across reboots; the same number as last_event.seq in GET /fp/status" }
         time: { type: [integer, 'null'], description: "UTC unix seconds, from the clock SNTP (pool.ntp.org) sets; null for an attempt made before the clock was set after a boot" }
         source: { type: string, enum: [fingerprint, telegram] }
         result: { type: string, enum: [granted, denied, unknown] }

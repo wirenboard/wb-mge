@@ -6,8 +6,8 @@
  * blob per slot, "e<slot>", slot = seq % FP_LOG_CAPACITY, and the u32 "next"), so it survives
  * reboots and power loss, with a RAM copy in PSRAM that every read is served from.
  *
- * seq is persistent and keeps growing across reboots; it is not the per-boot seq of the last
- * event in GET /fp/status. Records are stamped with the wall clock that SNTP sets, or with
+ * seq is persistent and keeps growing across reboots, and it is the seq the event gets in GET
+ * /fp/status as well. Records are stamped with the wall clock that SNTP sets, or with
  * FP_LOG_TIME_UNKNOWN while the clock has not been set since boot.
  *
  * Without the partition (fp_store_init() failed) the log lives in RAM only, and a failed NVS
@@ -40,13 +40,14 @@ typedef struct {
 } fp_log_entry_t;
 
 // Loads the log from NVS. Call once, after fp_store_init(), which mounts the partition.
-void   fp_log_init(void);
+void     fp_log_init(void);
 // Starts SNTP, which sets the clock the records are stamped with. Needs esp_netif_init() to have
 // run (network_init()), and nothing more: SNTP keeps retrying until there is a network.
-void   fp_log_clock_start(void);
-// Appends the event, stamped with the current time. Blocks for the NVS write.
-void   fp_log_append(const fp_acs_event_t *event);
+void     fp_log_clock_start(void);
+// Appends the event, stamped with the current time, and returns the seq it got (event->seq is not
+// read); 0 when the log is not running. Blocks for the NVS write.
+uint32_t fp_log_append(const fp_acs_event_t *event);
 // Copies up to max records, newest first, and returns how many.
-size_t fp_log_snapshot(fp_log_entry_t *out, size_t max);
+size_t   fp_log_snapshot(fp_log_entry_t *out, size_t max);
 
 #endif // FP_ACS_ENABLED

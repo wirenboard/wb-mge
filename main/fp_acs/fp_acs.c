@@ -192,16 +192,19 @@ static uint32_t fp_acs_record_event(fp_acs_source_t source, fp_acs_result_t resu
     event.has_score = has_score;
     event.score = score;
 
+    // The access log numbers the event. Its seq keeps growing across reboots, so a web page that
+    // outlived a reboot cannot take an event of this boot for one of the last (and show that one's
+    // image beside it). Logged before the event is published, outside fp_acs's mutex: a reader that
+    // sees the new seq finds the record in the log as well.
+    uint32_t log_seq = fp_log_append(&event);
+
     fp_acs_lock();
-    event.seq = fp_acs_last_event.seq + 1;
+    event.seq = (log_seq != 0) ? log_seq : (fp_acs_last_event.seq + 1);
     fp_acs_last_event = event;
     fp_acs_unlock();
 
     ESP_LOGI(TAG, "Event %" PRIu32 ": %s via %s, user %u \"%s\", score %u", event.seq, fp_acs_result_str(result),
              fp_acs_source_str(source), (unsigned)event.user_id, event.user_name, (unsigned)score);
-
-    // Outside the mutex: the NVS write must not hold up the readers of the state above.
-    fp_log_append(&event);
     return event.seq;
 }
 

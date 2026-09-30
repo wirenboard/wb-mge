@@ -230,10 +230,10 @@ void fp_log_clock_start(void)
     ESP_LOGI(TAG, "SNTP started: %s", FP_LOG_SNTP_SERVER);
 }
 
-void fp_log_append(const fp_acs_event_t *event)
+uint32_t fp_log_append(const fp_acs_event_t *event)
 {
     if ((event == NULL) || (!fp_log_lock())) {
-        return;
+        return 0;
     }
 
     fp_log_entry_t entry;
@@ -256,6 +256,7 @@ void fp_log_append(const fp_acs_event_t *event)
         ESP_LOGW(TAG, "Writing record %" PRIu32 " failed (%s): it is kept in RAM only, until the next reboot",
                  entry.seq, esp_err_to_name(err));
     }
+    return entry.seq;
 }
 
 size_t fp_log_snapshot(fp_log_entry_t *out, size_t max)
