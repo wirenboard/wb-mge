@@ -943,6 +943,7 @@ paths:
                     type: object
                     properties:
                       'on': { type: boolean, description: "The lock relay (not the door: see lock_mode) as of the last coil write that succeeded, pulses included; false after boot until a write succeeds" }
+                      online: { type: boolean, description: "Whether the relay module answered the last exchange: a coil write, or the coil read made after 5 s without a lock request; false after boot until it answers" }
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 

@@ -43,3 +43,8 @@ void fp_lock_settings_changed(void);
 // The relay - not the door - as of the last coil write that succeeded, pulses included: true
 // after an ON, false after an OFF, false after boot until a write goes through.
 bool fp_lock_relay_on(void);
+
+// Whether the relay module answered the last exchange with it: a coil write (after its retries)
+// or the coil read the task makes whenever it has had no request for FP_LOCK_PROBE_MS (fp_lock.c).
+// False after boot until the module answers.
+bool fp_lock_relay_online(void);

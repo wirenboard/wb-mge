@@ -105,7 +105,7 @@ esp_err_t mb_master_set_tx_disabled(unsigned index, bool disabled);
 //   ESP_ERR_INVALID_RESPONSE- something answered, but not with a frame we could use
 //   ESP_ERR_NOT_SUPPORTED   - the slave refused the function code
 //   ESP_ERR_INVALID_STATE   - this port is not running (stopped, or its start failed)
-//   ESP_ERR_INVALID_ARG     - bad port, count or pointer; or, on the two reads, slave_id 0,
+//   ESP_ERR_INVALID_ARG     - bad port, count or pointer; or, on the reads, slave_id 0,
 //                             which is the broadcast address and cannot be read from
 //   ESP_FAIL                - the slave answered with a Modbus exception
 esp_err_t mb_master_read_holding(uint8_t port, uint8_t slave_id, uint16_t addr,
@@ -117,3 +117,6 @@ esp_err_t mb_master_write_holding(uint8_t port, uint8_t slave_id, uint16_t addr,
 // FC05: switch one coil (0-based, as on the wire) on (0xFF00) or off (0x0000). Same return
 // values as the rest of this API.
 esp_err_t mb_master_write_coil(uint8_t port, uint8_t slave_id, uint16_t coil, bool on);
+// FC01: read one coil (0-based, as on the wire) into *on, which is left untouched on any
+// failure. Same return values as the rest of this API.
+esp_err_t mb_master_read_coil(uint8_t port, uint8_t slave_id, uint16_t coil, bool *on);

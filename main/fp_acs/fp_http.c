@@ -255,7 +255,12 @@ static bool fp_http_status_image(cJSON *root, uint32_t seq)
 static bool fp_http_status_lock(cJSON *root)
 {
     cJSON *object = cJSON_AddObjectToObject(root, "lock");
-    return ((object != NULL) && (cJSON_AddBoolToObject(object, "on", fp_lock_relay_on()) != NULL));
+    if (object == NULL) {
+        return false;
+    }
+    bool ok = (cJSON_AddBoolToObject(object, "on", fp_lock_relay_on()) != NULL);
+    ok = (cJSON_AddBoolToObject(object, "online", fp_lock_relay_online()) != NULL) && ok;
+    return ok;
 }
 
 static esp_err_t fp_http_status_get(httpd_req_t *req)

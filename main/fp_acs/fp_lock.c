@@ -25,6 +25,8 @@ static const char *TAG = "fp_lock";
 // A pulse waiting to be taken plus the manual commands and settings checks sent while a pulse
 // runs, run after it.
 #define FP_LOCK_QUEUE_LENGTH        4
+// With no request for this long, the task reads the coil once to learn whether the relay module answers.
+#define FP_LOCK_PROBE_MS            5000
 #define FP_LOCK_TASK_STACK_SIZE     (4 * 1024)  // as main/mb_master/user_app.c: the same call path
 #define FP_LOCK_TASK_PRIORITY       5
 
@@ -52,6 +54,25 @@ static bool fp_lock_busy;
 // server, hence the atomic builtins as well.
 static bool fp_lock_relay_state;
 
+// Whether the relay module answered the last exchange: a write (after its retries) or an idle probe.
+// Written by the lock task, read by the web server, hence the atomic builtins.
+static bool fp_lock_online;
+
+
+// Logs only a change, not every exchange.
+static void fp_lock_set_online(uint8_t unit, esp_err_t err)
+{
+    bool online = (err == ESP_OK);
+    bool was_online = __atomic_exchange_n(&fp_lock_online, online, __ATOMIC_SEQ_CST);
+    if (online == was_online) {
+        return;
+    }
+    if (online) {
+        ESP_LOGI(TAG, "Relay module unit %u is online", (unsigned)unit);
+    } else {
+        ESP_LOGW(TAG, "Relay module unit %u is offline: %s", (unsigned)unit, esp_err_to_name(err));
+    }
+}
 
 // One coil write, retried: a relay module that missed a frame on a noisy bus answers the next.
 static esp_err_t fp_lock_write(uint8_t unit, uint16_t coil, bool on)
@@ -61,6 +82,7 @@ static esp_err_t fp_lock_write(uint8_t unit, uint16_t coil, bool on)
         err = mb_master_write_coil(FP_LOCK_PORT, unit, coil, on);
         if (err == ESP_OK) {
             __atomic_store_n(&fp_lock_relay_state, on, __ATOMIC_SEQ_CST);
+            fp_lock_set_online(unit, ESP_OK);
             return ESP_OK;
         }
         ESP_LOGW(TAG, "Unit %u coil %u %s: attempt %u failed: %s", (unsigned)unit, (unsigned)coil,
@@ -71,7 +93,16 @@ static esp_err_t fp_lock_write(uint8_t unit, uint16_t coil, bool on)
     }
     ESP_LOGE(TAG, "Unit %u coil %u %s: giving up after %u attempts", (unsigned)unit, (unsigned)coil,
              on ? "ON" : "OFF", FP_LOCK_WRITE_RETRIES + 1);
+    fp_lock_set_online(unit, err);
     return err;
+}
+
+// One coil read, not retried: the next probe comes FP_LOCK_PROBE_MS later anyway. Only whether the
+// module answered is kept; the coil value is not used.
+static void fp_lock_probe(const fp_lock_target_t *target)
+{
+    bool value = false;
+    fp_lock_set_online(target->unit, mb_master_read_coil(FP_LOCK_PORT, target->unit, target->coil, &value));
 }
 
 // Read before every request (fp_lock_sync()), so a changed setting applies to the next one.
@@ -166,7 +197,10 @@ static void fp_lock_task(void *arg)
 
     for (;;) {
         fp_lock_request_t request = FP_LOCK_REQUEST_PULSE;
-        if (xQueueReceive(fp_lock_queue, &request, portMAX_DELAY) != pdTRUE) {
+        if (xQueueReceive(fp_lock_queue, &request, pdMS_TO_TICKS(FP_LOCK_PROBE_MS)) != pdTRUE) {
+            // No request: the sync first, so the probe asks the relay the settings now name.
+            fp_lock_sync(&applied, &held);
+            fp_lock_probe(&applied);
             continue;
         }
         fp_lock_sync(&applied, &held);
@@ -260,6 +294,11 @@ void fp_lock_settings_changed(void)
 bool fp_lock_relay_on(void)
 {
     return __atomic_load_n(&fp_lock_relay_state, __ATOMIC_SEQ_CST);
+}
+
+bool fp_lock_relay_online(void)
+{
+    return __atomic_load_n(&fp_lock_online, __ATOMIC_SEQ_CST);
 }
 
 #endif // FP_ACS_ENABLED

@@ -25,8 +25,9 @@ static const char *TAG = "mb_master";
 // Modbus function codes. esp-modbus keeps its own MB_FUNC_* enum in mb_proto.h, which is a
 // PRIVATE include dir of the component (mb_objects/include), so the codes this module sends
 // are spelled out here rather than reached for through a header the component does not
-// export. FC05 is compiled into esp-modbus unconditionally (MB_FUNC_WRITE_COIL_ENABLED is a
-// fixed 1 in its mb_config.h, not a Kconfig option).
+// export. FC01 and FC05 are compiled into esp-modbus unconditionally (MB_FUNC_READ_COILS_ENABLED
+// and MB_FUNC_WRITE_COIL_ENABLED are a fixed 1 in its mb_config.h, not Kconfig options).
+#define MB_FC_READ_COILS        0x01
 #define MB_FC_READ_HOLDING      0x03
 #define MB_FC_READ_INPUT        0x04
 #define MB_FC_WRITE_COIL        0x05
@@ -35,6 +36,12 @@ static const char *TAG = "mb_master";
 // FC05 coil values, as the specification defines them: anything else is refused.
 #define MB_COIL_ON              0xFF00
 #define MB_COIL_OFF             0x0000
+
+// FC01 answers with packed bits, the first coil asked for in bit 0 of the first byte. esp-modbus
+// copies them into the caller's buffer with mb_util_set_bits(), which reads and writes the byte
+// after the one holding the bit as well: a one-coil read needs two bytes, not one.
+#define MB_COIL_READ_BUF_SIZE   2
+#define MB_COIL_READ_BIT        0x01
 
 // With the fingerprint access control compiled in, RS-485 port 2 (index 1) is the WBE2 slot the
 // fingerprint sensor sits in, and its UART and pins belong to main/fp_acs/r503.c: this master
@@ -742,4 +749,23 @@ esp_err_t mb_master_write_coil(uint8_t port, uint8_t slave_id, uint16_t coil, bo
         .reg_size   = 1,
     };
     return mb_master_request(port, &request, &value_buf);
+}
+
+esp_err_t mb_master_read_coil(uint8_t port, uint8_t slave_id, uint16_t coil, bool *on)
+{
+    if ((on == NULL) || (slave_id == MB_ADDR_BROADCAST)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    uint8_t coil_buf[MB_COIL_READ_BUF_SIZE] = {0};
+    mb_param_request_t request = {
+        .slave_addr = slave_id,
+        .command    = MB_FC_READ_COILS,
+        .reg_start  = coil,
+        .reg_size   = 1,
+    };
+    esp_err_t err = mb_master_request(port, &request, coil_buf);
+    if (err == ESP_OK) {
+        *on = ((coil_buf[0] & MB_COIL_READ_BIT) != 0);
+    }
+    return err;
 }

@@ -102,6 +102,7 @@ export interface FpStatus {
   } | null;
   lock: {
     on: boolean; // the relay as of the last coil write that went through, pulses included
+    online: boolean; // the relay module answered the last write or idle probe
   };
 }
 

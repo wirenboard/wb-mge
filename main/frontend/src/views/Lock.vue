@@ -120,7 +120,11 @@ const clearChats = async () => {
           <form @submit.prevent="saveLock">
             <div class="card-header">
               <div class="card-title-wrap">
-                <div class="title">{{ t('relay') }}</div>
+                <div class="card-title-row">
+                  <div class="title">{{ t('relay') }}</div>
+                  <span v-if="status?.lock.online" class="pill ok"><span class="dot" />{{ t('relay_online') }}</span>
+                  <span v-else-if="status" class="pill lock-pillOffline"><span class="dot" />{{ t('relay_offline') }}</span>
+                </div>
                 <div class="sub">{{ t('relay_sub') }}</div>
               </div>
               <Button
@@ -275,6 +279,16 @@ const clearChats = async () => {
 </template>
 
 <style scoped>
+.lock-pillOffline {
+  color: var(--danger-color);
+  border-color: color-mix(in oklch, var(--danger-color) 40%, var(--border-color));
+  background: var(--danger-soft);
+}
+
+.lock-pillOffline .dot {
+  background: var(--danger-color);
+}
+
 .lock-note {
   margin: 12px 0 4px;
   color: var(--text-muted);
@@ -319,6 +333,8 @@ const clearChats = async () => {
 
     "relay": "Lock relay",
     "relay_sub": "Wiren Board Modbus relay module",
+    "relay_online": "Online",
+    "relay_offline": "Offline",
     "relay_switch": "Relay",
     "lock_mode": "Lock type",
     "lock_mode_strike": "Strike: on = open",
@@ -352,6 +368,8 @@ const clearChats = async () => {
 
     "relay": "Реле замка",
     "relay_sub": "Модуль реле Wiren Board с Modbus",
+    "relay_online": "На связи",
+    "relay_offline": "Нет связи",
     "relay_switch": "Реле",
     "lock_mode": "Тип замка",
     "lock_mode_strike": "Защёлка: вкл = открыто",
@@ -385,6 +403,8 @@ const clearChats = async () => {
 
     "relay": "Құлып релесі",
     "relay_sub": "Wiren Board Modbus реле модулі",
+    "relay_online": "Байланыста",
+    "relay_offline": "Байланыс жоқ",
     "relay_switch": "Реле",
     "lock_mode": "Құлып түрі",
     "lock_mode_strike": "Ілгек: қосулы = ашық",
@@ -418,6 +438,8 @@ const clearChats = async () => {
 
     "relay": "Relè della serratura",
     "relay_sub": "Modulo relè Modbus Wiren Board",
+    "relay_online": "Online",
+    "relay_offline": "Offline",
     "relay_switch": "Relè",
     "lock_mode": "Tipo di serratura",
     "lock_mode_strike": "Incontro: attivo = aperta",
@@ -451,6 +473,8 @@ const clearChats = async () => {
 
     "relay": "Schlossrelais",
     "relay_sub": "Wiren Board Modbus-Relaismodul",
+    "relay_online": "Online",
+    "relay_offline": "Offline",
     "relay_switch": "Relais",
     "lock_mode": "Schlosstyp",
     "lock_mode_strike": "Türöffner: an = offen",
