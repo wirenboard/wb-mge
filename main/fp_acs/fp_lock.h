@@ -9,7 +9,9 @@
  *
  * An opening puts the relay in the open state for lock_pulse_ms and back in the closed state.
  *
- * One task does every write. At boot it puts the relay in the closed state. Before each request
+ * One task does every write. At boot it puts the relay in the closed state. A closing write that
+ * does not get through (at boot, at the end of an opening, a manual close or a settings change) is
+ * repeated every 5 s until the relay takes it or a manual open goes through. Before each request
  * it re-reads the unit id, the channel and the mode and compares them with the ones it last
  * applied; on a change it switches the relay it no longer uses OFF, puts the one it now uses in
  * the closed state and drops a manual hold. A settings save also queues that comparison on its
@@ -45,6 +47,7 @@ void fp_lock_settings_changed(void);
 bool fp_lock_relay_on(void);
 
 // Whether the relay module answered the last exchange with it: a coil write (after its retries)
-// or the coil read the task makes whenever it has had no request for FP_LOCK_PROBE_MS (fp_lock.c).
+// or the coil read the task makes whenever it has had no request for FP_LOCK_PROBE_MS (fp_lock.c),
+// or, while a closing write has not gone through, a single closing write in place of that read.
 // False after boot until the module answers.
 bool fp_lock_relay_online(void);
