@@ -56,9 +56,9 @@ static const char *TAG = "mb_master";
 
 // Unit id 0 is the Modbus broadcast address: no device answers it, by definition. A WRITE to
 // it is legitimate and is left alone, but a READ is not, and esp-modbus does not say so -
-// mbm_fn_read_holding_reg()/mbm_fn_read_inp_reg() take their `is_broadcast` branch, return
+// mbm_fn_read_holding_reg()/mbm_fn_read_inp_reg()/mbm_fn_read_coils() take their `is_broadcast` branch, return
 // MB_EX_NONE WITHOUT ever calling the register callback, and mbc_master_send_request() hands
-// back ESP_OK over a caller buffer nothing has written. So the two read functions refuse it
+// back ESP_OK over a caller buffer nothing has written. So the read functions refuse it
 // here instead. The upper end needs no check of ours: the library rejects snd_addr > 247
 // (MB_ADDRESS_MAX) with MB_EINVAL, which reaches the caller as ESP_ERR_INVALID_ARG anyway.
 #define MB_ADDR_BROADCAST       0
@@ -102,7 +102,7 @@ typedef struct {
 // mbc_master_send_request(), the only entry point this module uses, never reads that table.
 // This one-row table exists solely to satisfy that precondition; nothing looks it up, no
 // characteristic id is ever passed to mbc_master_get_parameter(), and adding a register to
-// this firmware's master side means calling one of the three functions in mb_master.h, NOT
+// this firmware's master side means calling one of the request functions in mb_master.h, NOT
 // appending a row here.
 //
 // The three fields mbc_serial_master_set_descriptor() validates are cid (must equal the row

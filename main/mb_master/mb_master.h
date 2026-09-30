@@ -10,15 +10,15 @@
  * per-port NVS keys and the ownership discipline, but no code.
  *
  * There is NO Modbus TCP here and no register store: TCP belongs to the slave role, and a
- * master has nothing to publish. What it has instead is mb_master_read_holding() and its
- * two siblings below.
+ * master has nothing to publish. What it has instead is mb_master_read_holding() and the
+ * other request functions below.
  *
  * Deliberately NOT built on the CID / characteristics-descriptor mechanism esp-modbus
  * offers (mbc_master_set_descriptor + mbc_master_get_parameter). That mechanism is a
  * polling table: every value a device might read has to be declared up front, in a static
  * table, before a single request can be sent. What a DIY user wants is a function call -
  * "read 4 holding registers at 200 from slave 7 on port 1, now, from my own task" - so
- * these three functions sit straight on mbc_master_send_request(), which takes the
+ * these functions sit straight on mbc_master_send_request(), which takes the
  * request as data rather than as a table entry.
  */
 
