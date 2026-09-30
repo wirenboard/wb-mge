@@ -156,6 +156,7 @@ const lastEventAge = computed(() => {
 // The image is re-read only when its seq changes. The seq is remembered only once the read
 // succeeded, so a failed read is retried on the next status answer.
 const image = shallowRef<GrayImage | null>(null);
+const imageEventSeq = ref<number | null>(null);
 let imageSeq: number | null = null;
 let imageLoading = false;
 watch(() => status.value?.image, async (info) => {
@@ -164,6 +165,7 @@ watch(() => status.value?.image, async (info) => {
   }
   if (info === null) {
     image.value = null;
+    imageEventSeq.value = null;
     imageSeq = null;
     return;
   }
@@ -174,6 +176,7 @@ watch(() => status.value?.image, async (info) => {
   try {
     const pixels = await fetchFpImage();
     imageSeq = info.seq;
+    imageEventSeq.value = info.event_seq;
     image.value = pixels ? { pixels, width: info.width, height: info.height } : null;
   } catch (err) {
     console.error('GET /fp/image failed', err);
@@ -181,6 +184,12 @@ watch(() => status.value?.image, async (info) => {
     imageLoading = false;
   }
 });
+
+// A scan whose finger left before the image was captured has no image of its own: an older one,
+// possibly of someone else, is not shown beside it.
+const lastEventImage = computed(() => (
+  ((lastEvent.value !== null) && (imageEventSeq.value === lastEvent.value.seq)) ? image.value : null
+));
 
 const users = ref<FpUser[]>([]);
 const maxUsers = ref(0);
@@ -373,7 +382,12 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
                 </template>
                 <p v-else class="access-note">{{ t('no_events') }}</p>
               </div>
-              <FingerprintImage v-if="image" class="access-image" v-bind="image" :label="t('image_label')" />
+              <FingerprintImage
+                v-if="lastEventImage"
+                class="access-image"
+                v-bind="lastEventImage"
+                :label="t('image_label')"
+              />
             </div>
           </section>
         </div>

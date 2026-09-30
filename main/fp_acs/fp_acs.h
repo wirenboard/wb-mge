@@ -45,6 +45,7 @@
 #define FP_ACS_IMAGE_WIDTH          R503_IMAGE_WIDTH
 #define FP_ACS_IMAGE_HEIGHT         R503_IMAGE_HEIGHT
 #define FP_ACS_IMAGE_SIZE           (FP_ACS_IMAGE_WIDTH * FP_ACS_IMAGE_HEIGHT)
+#define FP_ACS_IMAGE_NO_EVENT       0           // image_event_seq of an enrollment take: event seqs start at 1
 
 #define FP_ACS_ENROLL_STEPS         5       // finger placements per enrollment
 #define FP_ACS_ENROLL_ERROR_MAX     64
@@ -97,6 +98,7 @@ typedef struct {
     uint32_t        users_rev;
     fp_acs_enroll_t enroll;
     uint32_t        image_seq;          // 0 while there is no image
+    uint32_t        image_event_seq;    // the last_event seq the image was taken for; FP_ACS_IMAGE_NO_EVENT: none
 } fp_acs_status_t;
 
 // Why a request to the sensor task was not taken.

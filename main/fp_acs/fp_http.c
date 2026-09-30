@@ -253,7 +253,7 @@ static bool fp_http_status_event(cJSON *root)
     return ok;
 }
 
-static bool fp_http_status_image(cJSON *root, uint32_t seq)
+static bool fp_http_status_image(cJSON *root, uint32_t seq, uint32_t event_seq)
 {
     if (seq == 0) {
         return (cJSON_AddNullToObject(root, "image") != NULL);
@@ -263,6 +263,7 @@ static bool fp_http_status_image(cJSON *root, uint32_t seq)
         return false;
     }
     bool ok = (cJSON_AddNumberToObject(object, "seq", seq) != NULL);
+    ok = (cJSON_AddNumberToObject(object, "event_seq", event_seq) != NULL) && ok;
     ok = (cJSON_AddNumberToObject(object, "width", FP_ACS_IMAGE_WIDTH) != NULL) && ok;
     ok = (cJSON_AddNumberToObject(object, "height", FP_ACS_IMAGE_HEIGHT) != NULL) && ok;
     return ok;
@@ -297,7 +298,7 @@ static esp_err_t fp_http_status_get(httpd_req_t *req)
     ok = ok && (cJSON_AddNumberToObject(root, "users_rev", status.users_rev) != NULL);
     ok = ok && fp_http_status_enroll(root, &status.enroll);
     ok = ok && fp_http_status_event(root);
-    ok = ok && fp_http_status_image(root, status.image_seq);
+    ok = ok && fp_http_status_image(root, status.image_seq, status.image_event_seq);
     ok = ok && fp_http_status_lock(root);
     return fp_http_send_json(req, root, ok);
 }

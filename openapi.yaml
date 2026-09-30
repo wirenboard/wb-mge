@@ -937,6 +937,7 @@ paths:
                       - type: object
                         properties:
                           seq: { type: integer }
+                          event_seq: { type: integer, description: "The last_event seq this image was taken for; 0 for an enrollment take. The image belongs to the last event only when the two are equal: a scan whose finger was lifted before the image was captured leaves an older image here" }
                           width: { type: integer, enum: [192] }
                           height: { type: integer, enum: [192] }
                   lock:

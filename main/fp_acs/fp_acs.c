@@ -76,6 +76,7 @@ static bool              fp_acs_cancel_requested;
 static fp_acs_event_t    fp_acs_last_event;             // seq 0: no event yet
 static uint8_t          *fp_acs_image;                  // the published last image
 static uint32_t          fp_acs_image_seq;              // 0: no image yet
+static uint32_t          fp_acs_image_event_seq;        // the event the image was taken for; 0: an enrollment take
 
 // Sensor task only.
 static uint8_t          *fp_acs_image_scratch;          // where the next image is received
@@ -175,8 +176,9 @@ static bool fp_acs_connect(void)
     return true;
 }
 
-static void fp_acs_record_event(fp_acs_source_t source, fp_acs_result_t result, const fp_store_user_t *user,
-                                bool has_score, uint16_t score)
+// Returns the seq the event got.
+static uint32_t fp_acs_record_event(fp_acs_source_t source, fp_acs_result_t result, const fp_store_user_t *user,
+                                    bool has_score, uint16_t score)
 {
     fp_acs_event_t event;
     memset(&event, 0, sizeof(event));
@@ -200,13 +202,15 @@ static void fp_acs_record_event(fp_acs_source_t source, fp_acs_result_t result, 
 
     // Outside the mutex: the NVS write must not hold up the readers of the state above.
     fp_log_append(&event);
+    return event.seq;
 }
 
 // Uploads ImageBuffer as the new last image. The raw 4-bit image lands in the upper half of the
 // scratch buffer and is expanded in place into all of it: raw byte k becomes bytes 2k and 2k+1,
 // which never reach a raw byte not yet read (those sit at FP_ACS_IMAGE_SIZE / 2 + j, j > k).
-// Only a complete image replaces the published one.
-static void fp_acs_upload_image(void)
+// Only a complete image replaces the published one. event_seq is the event it was taken for,
+// FP_ACS_IMAGE_NO_EVENT for an enrollment take.
+static void fp_acs_upload_image(uint32_t event_seq)
 {
     if (fp_acs_image_scratch == NULL) {
         return;
@@ -235,6 +239,7 @@ static void fp_acs_upload_image(void)
     uint8_t *published = fp_acs_image;
     fp_acs_image = fp_acs_image_scratch;
     fp_acs_image_seq++;
+    fp_acs_image_event_seq = event_seq;
     fp_acs_unlock();
     fp_acs_image_scratch = published;
 }
@@ -326,15 +331,18 @@ static void fp_acs_scan(void)
     } else {
         fp_acs_led(R503_LED_FLASHING, R503_LED_RED);
     }
-    fp_acs_record_event(FP_ACS_SOURCE_FINGERPRINT, result, who, (who != NULL), score);
 
     // After Img2Tz, ImageBuffer holds the thinned ridge map, not the captured image (seen on the
     // device). Uploading before Img2Tz would hold the door for the upload, so the image shown is a
     // fresh capture of the finger still on the sensor, taken once the decision is made (on a grant,
-    // with the door already opening); a finger already lifted leaves the previous image in place.
+    // with the door already opening) and before the event is recorded, whose log write can take a
+    // while. A finger already lifted gives no image: the event then has none, and the web UI does not
+    // show an older image beside it.
     uint8_t image_code = R503_CODE_OK;
-    if (fp_acs_io_ok(r503_gen_img(&image_code), "GenImg") && (image_code == R503_CODE_OK)) {
-        fp_acs_upload_image();
+    bool captured = (fp_acs_io_ok(r503_gen_img(&image_code), "GenImg") && (image_code == R503_CODE_OK));
+    uint32_t event_seq = fp_acs_record_event(FP_ACS_SOURCE_FINGERPRINT, result, who, (who != NULL), score);
+    if (captured) {
+        fp_acs_upload_image(event_seq);
     }
     fp_acs_awaiting_lift = true;
 }
@@ -469,7 +477,7 @@ static void fp_acs_run_enroll(uint8_t user_id)
         fp_acs_enroll_step(FP_ACS_ENROLL_STATE_PROCESSING, take);
         // The last take is uploaded before Img2Tz, while ImageBuffer certainly still holds it.
         if (take == FP_ACS_ENROLL_STEPS) {
-            fp_acs_upload_image();
+            fp_acs_upload_image(FP_ACS_IMAGE_NO_EVENT);
         }
         if (!fp_acs_enroll_check(r503_img2tz(take, &code), code, "Img2Tz")) {
             return;
@@ -664,6 +672,7 @@ void fp_acs_get_status(fp_acs_status_t *out)
         out->capacity = fp_acs_capacity;
         out->enroll = fp_acs_enroll;
         out->image_seq = fp_acs_image_seq;
+        out->image_event_seq = fp_acs_image_event_seq;
         fp_acs_unlock();
     }
     out->used = (uint16_t)fp_store_used_slots();

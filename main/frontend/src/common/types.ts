@@ -113,6 +113,7 @@ export interface FpStatus {
   // The last image GET /fp/image serves: width * height bytes of 8-bit grayscale.
   image: {
     seq: number;
+    event_seq: number; // the last_event seq the image was taken for; 0 for an enrollment take
     width: number;
     height: number;
   } | null;
