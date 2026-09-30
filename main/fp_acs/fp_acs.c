@@ -122,7 +122,9 @@ static bool fp_acs_io_ok(esp_err_t err, const char *what)
         return true;
     }
     fp_acs_transport_errors++;
-    ESP_LOGW(TAG, "%s: %s", what, esp_err_to_name(err));
+    // The driver's reason says what went wrong on the wire; the error name alone does not.
+    const char *reason = r503_last_error();
+    ESP_LOGW(TAG, "%s: %s", what, (reason[0] != '\0') ? reason : esp_err_to_name(err));
     if (fp_acs_transport_errors >= FP_ACS_OFFLINE_ERRORS) {
         fp_acs_set_online(false);
     }
@@ -436,12 +438,15 @@ static fp_acs_wait_t fp_acs_enroll_wait(bool want_finger)
     }
 }
 
-// Fails the enrollment on a transport error or a refusal. True when the command succeeded.
+// Fails the enrollment on a transport error or a refusal. True when the command succeeded. A
+// transport error is reported by the driver's own reason (which packet check failed), so that
+// GET /fp/status says what went wrong without a UART console on the device.
 static bool fp_acs_enroll_check(esp_err_t err, uint8_t code, const char *what)
 {
     char error[FP_ACS_ENROLL_ERROR_MAX];
     if (!fp_acs_io_ok(err, what)) {
-        snprintf(error, sizeof(error), "%s: %s", what, esp_err_to_name(err));
+        const char *reason = r503_last_error();
+        snprintf(error, sizeof(error), "%s: %s", what, (reason[0] != '\0') ? reason : esp_err_to_name(err));
     } else if (code != R503_CODE_OK) {
         snprintf(error, sizeof(error), "%s: %s", what, r503_code_str(code));
     } else {

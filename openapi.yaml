@@ -926,7 +926,7 @@ paths:
                       step: { type: integer, description: "1..steps, 0 when idle" }
                       steps: { type: integer, enum: [5] }
                       slot: { type: [integer, 'null'], description: "The slot the new finger was stored in, once done" }
-                      error: { type: [string, 'null'], description: "Set in state error; \"timeout\" when no finger was placed within 30 s at a take" }
+                      error: { type: [string, 'null'], description: "Set in state error; \"timeout\" when no finger was placed within 30 s at a take. A failed sensor command reads \"<command>: <reason>\", the reason being either the sensor's refusal (\"Img2Tz: too few features\") or what went wrong on the wire (\"Img2Tz: no answer\", \"Img2Tz: checksum mismatch: received 0x1A2B, computed 0x1A2C\")" }
                   last_event:
                     oneOf:
                       - type: 'null'
@@ -1010,6 +1010,33 @@ paths:
                     maxItems: 200
                     items:
                       $ref: '#/components/schemas/FpLogEntry'
+        '500':
+          description: "\"out of memory\""
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /fp/console:
+    get:
+      summary: The device log, as the UART console prints it, oldest line first
+      description: "The last 32 KB of everything the firmware logs from the start of app_main on (the bootloader and the startup code before it are not included), kept in PSRAM, so the device can be diagnosed without a USB cable. Once 32 KB have been logged the oldest lines are dropped, and the text starts at the first whole line. Also missing: logging from an interrupt or a critical section, and a line logged while the buffer is busy for more than 10 ms. Nothing is kept across a reboot. The UART console itself is unchanged."
+      responses:
+        '200':
+          description: Log text, lines separated by \n
+          content:
+            text/plain:
+              schema:
+                type: string
+                maxLength: 32768
+        '404':
+          description: "\"console capture not running\": there was no PSRAM for the buffer at boot"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '500':
           description: "\"out of memory\""
           content:

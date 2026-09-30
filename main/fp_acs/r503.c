@@ -5,6 +5,8 @@
 #if FP_ACS_ENABLED
 
 #include <inttypes.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "board_pins.h"
@@ -90,10 +92,18 @@ static const char *TAG = "r503";
 #define R503_TIMEOUT_FLASH_MS           3000
 #define R503_TIMEOUT_IMAGE_MS           6000
 
+// Room for the longest reason below; the enrollment status holds it after "RegModel: ".
+#define R503_ERROR_MAX                  56
+
 static bool r503_ready;
 
-// The content and checksum of the packet being received. Only the sensor task calls in here.
-static uint8_t r503_rx[R503_CONTENT_MAX + R503_CHECKSUM_LEN];
+// Only the sensor task calls in here, so none of these is guarded.
+static uint8_t r503_rx[R503_CONTENT_MAX + R503_CHECKSUM_LEN];  // content and checksum of the packet being received
+static uint8_t r503_cmd;                                        // instruction code of the command in progress
+static char    r503_error[R503_ERROR_MAX];                      // why it failed; empty while it has not
+
+static void r503_error_set(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void r503_error_warn(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 
 esp_err_t r503_init(void)
@@ -154,6 +164,26 @@ static TickType_t r503_ticks_left(TickType_t deadline)
     return (left > 0) ? (TickType_t)left : 0;
 }
 
+// Records why the command in progress failed, for r503_last_error(). Not logged: a timeout repeats
+// every few seconds while the sensor is offline, and the caller logs the esp_err anyway.
+static void r503_error_set(const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(r503_error, sizeof(r503_error), fmt, args);
+    va_end(args);
+}
+
+// r503_error_set(), and a warning in the log: a malformed packet, which is not expected to repeat.
+static void r503_error_warn(const char *fmt, ...)
+{
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(r503_error, sizeof(r503_error), fmt, args);
+    va_end(args);
+    ESP_LOGW(TAG, "Command 0x%02X: %s", r503_cmd, r503_error);
+}
+
 static esp_err_t r503_read_exact(uint8_t *buf, size_t len, TickType_t deadline)
 {
     size_t got = 0;
@@ -164,6 +194,7 @@ static esp_err_t r503_read_exact(uint8_t *buf, size_t len, TickType_t deadline)
         }
         int n = uart_read_bytes(R503_UART_NUM, buf + got, len - got, left);
         if (n < 0) {
+            r503_error_set("UART read failed");
             return ESP_FAIL;
         }
         got += (size_t)n;
@@ -178,6 +209,7 @@ static esp_err_t r503_send(const uint8_t *content, size_t content_len)
     size_t pos = 0;
 
     if (content_len > R503_COMMAND_MAX) {
+        r503_error_set("command of %u bytes too long", (unsigned)content_len);
         return ESP_ERR_INVALID_SIZE;
     }
 
@@ -199,7 +231,11 @@ static esp_err_t r503_send(const uint8_t *content, size_t content_len)
     packet[pos++] = r503_low(sum);
 
     int written = uart_write_bytes(R503_UART_NUM, packet, pos);
-    return (written == (int)pos) ? ESP_OK : ESP_FAIL;
+    if (written != (int)pos) {
+        r503_error_set("UART write failed");
+        return ESP_FAIL;
+    }
+    return ESP_OK;
 }
 
 // Receives one packet into r503_rx. Everything before the start code is skipped: the module
@@ -209,8 +245,16 @@ static esp_err_t r503_receive(uint8_t *pid, size_t *content_len, TickType_t dead
 {
     uint8_t byte = 0;
     bool high_seen = false;
+    unsigned skipped = 0;                                       // bytes read without a start code among them
     for (;;) {
         esp_err_t err = r503_read_exact(&byte, 1, deadline);
+        if (err == ESP_ERR_TIMEOUT) {
+            if (skipped == 0) {
+                r503_error_set("no answer");
+            } else {
+                r503_error_set("no start code; stray bytes: %u", skipped);
+            }
+        }
         if (err != ESP_OK) {
             return err;
         }
@@ -218,10 +262,14 @@ static esp_err_t r503_receive(uint8_t *pid, size_t *content_len, TickType_t dead
             break;
         }
         high_seen = (byte == R503_START_HIGH);
+        skipped++;
     }
 
     uint8_t head[R503_HEAD_LEN];
     esp_err_t err = r503_read_exact(head, sizeof(head), deadline);
+    if (err == ESP_ERR_TIMEOUT) {
+        r503_error_set("packet header cut short");
+    }
     if (err != ESP_OK) {
         return err;
     }
@@ -231,23 +279,26 @@ static esp_err_t r503_receive(uint8_t *pid, size_t *content_len, TickType_t dead
         address = (address << R503_BYTE_BITS) | head[i];
     }
     if (address != R503_ADDRESS) {
-        ESP_LOGW(TAG, "Packet from address 0x%08" PRIX32 " ignored", address);
+        r503_error_warn("packet from address 0x%08" PRIX32, address);
         return ESP_ERR_INVALID_RESPONSE;
     }
 
     *pid = head[R503_HEAD_PID];
     if ((*pid != R503_PID_ACK) && (*pid != R503_PID_DATA) && (*pid != R503_PID_END_DATA)) {
-        ESP_LOGW(TAG, "Unexpected packet identifier 0x%02X", *pid);
+        r503_error_warn("unexpected packet identifier 0x%02X", *pid);
         return ESP_ERR_INVALID_RESPONSE;
     }
 
     uint16_t length = r503_get_u16(&head[R503_HEAD_LEN_HIGH]);
     if ((length < R503_CHECKSUM_LEN) || (length > sizeof(r503_rx))) {
-        ESP_LOGW(TAG, "Packet length %u out of range", length);
+        r503_error_warn("packet length %u out of range", length);
         return ESP_ERR_INVALID_RESPONSE;
     }
 
     err = r503_read_exact(r503_rx, length, deadline);
+    if (err == ESP_ERR_TIMEOUT) {
+        r503_error_set("packet of length %u cut short", length);
+    }
     if (err != ESP_OK) {
         return err;
     }
@@ -257,8 +308,9 @@ static esp_err_t r503_receive(uint8_t *pid, size_t *content_len, TickType_t dead
     for (size_t i = 0; i < content; i++) {
         sum = (uint16_t)(sum + r503_rx[i]);
     }
-    if (sum != r503_get_u16(&r503_rx[content])) {
-        ESP_LOGW(TAG, "Packet checksum mismatch");
+    uint16_t received = r503_get_u16(&r503_rx[content]);
+    if (sum != received) {
+        r503_error_warn("checksum mismatch: received 0x%04X, computed 0x%04X", received, sum);
         return ESP_ERR_INVALID_RESPONSE;
     }
 
@@ -271,7 +323,10 @@ static esp_err_t r503_receive(uint8_t *pid, size_t *content_len, TickType_t dead
 static esp_err_t r503_command(const uint8_t *content, size_t content_len, size_t ack_len, TickType_t deadline,
                               uint8_t *code)
 {
+    r503_cmd = content[0];
+    r503_error[0] = '\0';
     if (!r503_ready) {
+        r503_error_set("sensor UART not installed");
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -291,15 +346,13 @@ static esp_err_t r503_command(const uint8_t *content, size_t content_len, size_t
         return err;
     }
     if ((pid != R503_PID_ACK) || (len < R503_ACK_CODE_LEN)) {
-        ESP_LOGW(TAG, "Command 0x%02X: not an acknowledge (identifier 0x%02X, %u bytes)", content[0], pid,
-                 (unsigned)len);
+        r503_error_warn("not an acknowledge: identifier 0x%02X, %u bytes", pid, (unsigned)len);
         return ESP_ERR_INVALID_RESPONSE;
     }
 
     *code = r503_rx[0];
     if ((*code == R503_CODE_OK) && (len < ack_len)) {
-        ESP_LOGW(TAG, "Command 0x%02X: acknowledge of %u bytes, %u expected", content[0], (unsigned)len,
-                 (unsigned)ack_len);
+        r503_error_warn("short acknowledge: %u of %u bytes", (unsigned)len, (unsigned)ack_len);
         return ESP_ERR_INVALID_SIZE;
     }
     return ESP_OK;
@@ -400,11 +453,11 @@ esp_err_t r503_up_image(uint8_t *raw, size_t raw_size, size_t *raw_len, uint8_t 
             return err;
         }
         if ((pid != R503_PID_DATA) && (pid != R503_PID_END_DATA)) {
-            ESP_LOGW(TAG, "UpImage: packet identifier 0x%02X among the image data", pid);
+            r503_error_warn("packet identifier 0x%02X among the image data", pid);
             return ESP_ERR_INVALID_RESPONSE;
         }
         if (len > (raw_size - *raw_len)) {
-            ESP_LOGW(TAG, "UpImage: more than %u bytes of image data", (unsigned)raw_size);
+            r503_error_warn("more than %u bytes of image data", (unsigned)raw_size);
             return ESP_ERR_INVALID_SIZE;
         }
         memcpy(raw + *raw_len, r503_rx, len);
@@ -436,6 +489,11 @@ const char *r503_code_str(uint8_t code)
     case R503_CODE_PASSWORD_REQUIRED:   return "password not verified";
     default:                            return "sensor error";
     }
+}
+
+const char *r503_last_error(void)
+{
+    return r503_error;
 }
 
 #endif // FP_ACS_ENABLED

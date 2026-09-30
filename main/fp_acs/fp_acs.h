@@ -15,6 +15,7 @@
  *   fp_lock.c   the lock pulse
  *   fp_log.c    the log of opening attempts, kept in "fp_nvs" too, and the SNTP clock it is stamped with
  *   fp_acs.c    the one task that owns the sensor: scanning, enrollment, deletion, last image
+ *   fp_console.c  a RAM copy of the device log, for GET /fp/console
  *   fp_http.c   GET/POST /fp/...
  */
 
@@ -150,7 +151,7 @@ const char *fp_acs_result_str(fp_acs_result_t result);
 const char *fp_acs_enroll_state_str(fp_acs_enroll_state_t state);
 const char *fp_acs_req_str(fp_acs_req_t req);
 
-// fp_http.c: registers the eleven /fp/ endpoints. Every one of them requires a session.
+// fp_http.c: registers the twelve /fp/ endpoints. Every one of them requires a session.
 void fp_http_register_handlers(httpd_handle_t server);
 
 #endif // FP_ACS_ENABLED

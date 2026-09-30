@@ -27,6 +27,7 @@
 // Fingerprint access control: WB-MGU in the master role only (see main/fp_acs/fp_acs.h).
 #include "fp_acs.h"
 #if FP_ACS_ENABLED
+    #include "fp_console.h"
     #include "fp_lock.h"
     #include "fp_log.h"
     #include "mqtt_client_wb.h"
@@ -126,6 +127,12 @@ static inline void print_setting_items(void)
 
 void app_main(void)
 {
+    // First of all, so that GET /fp/console has the whole boot from here on: the device may sit
+    // where no laptop can reach its UART console.
+    #if FP_ACS_ENABLED
+        fp_console_start();
+    #endif
+
     debug_log_init();
 
     // Initialize GPIO expander before voltage monitoring

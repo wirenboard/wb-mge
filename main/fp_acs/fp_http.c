@@ -11,6 +11,7 @@
 
 #include "array_size.h"
 #include "auth.h"
+#include "fp_console.h"
 #include "fp_lock.h"
 #include "fp_log.h"
 #include "fp_store.h"
@@ -38,6 +39,7 @@ static const char *TAG = "fp_http";
 #define FP_HTTP_ERROR_USER_FIELDS   "invalid user: name is 1..48 bytes of UTF-8, tg_username up to 32 of A-Z a-z 0-9 _"
 #define FP_HTTP_ERROR_CHAT_FIELDS   "invalid chat: id is a decimal chat id, name up to 48 bytes of UTF-8"
 #define FP_HTTP_ERROR_LOCK_BUSY     "lock busy"
+#define FP_HTTP_ERROR_NO_CONSOLE    "console capture not running"
 
 #define FP_HTTP_LOG_HEAD            "{\"entries\":["
 #define FP_HTTP_LOG_TAIL            "]}"
@@ -403,6 +405,34 @@ static esp_err_t fp_http_log_get(httpd_req_t *req)
     return ESP_OK;
 }
 
+// The device log as the UART console printed it, oldest line first. Copied out first, so that no
+// task that logs waits on the network.
+static esp_err_t fp_http_console_get(httpd_req_t *req)
+{
+    if (!auth_middleware_check(req)) {
+        return ESP_OK;
+    }
+
+    char *text = heap_caps_malloc(FP_CONSOLE_SIZE, MALLOC_CAP_SPIRAM);
+    if (text == NULL) {
+        return json_utils_send_error_status(req, FP_HTTP_STATUS_ERROR, FP_HTTP_ERROR_MEMORY);
+    }
+    size_t len = 0;
+    if (!fp_console_copy(text, FP_CONSOLE_SIZE, &len)) {
+        heap_caps_free(text);
+        return json_utils_send_error_status(req, FP_HTTP_STATUS_NOT_FOUND, FP_HTTP_ERROR_NO_CONSOLE);
+    }
+
+    httpd_resp_set_type(req, "text/plain; charset=utf-8");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    esp_err_t err = httpd_resp_send(req, text, (ssize_t)len);
+    heap_caps_free(text);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Sending the console failed: %s", esp_err_to_name(err));
+    }
+    return ESP_OK;
+}
+
 static esp_err_t fp_http_users_get(httpd_req_t *req)
 {
     if (!auth_middleware_check(req)) {
@@ -629,6 +659,7 @@ static const httpd_uri_t fp_http_uris[] = {
     {.uri = "/fp/status",        .method = HTTP_GET,  .handler = fp_http_status_get,         .user_ctx = NULL},
     {.uri = "/fp/image",         .method = HTTP_GET,  .handler = fp_http_image_get,          .user_ctx = NULL},
     {.uri = "/fp/log",           .method = HTTP_GET,  .handler = fp_http_log_get,            .user_ctx = NULL},
+    {.uri = "/fp/console",       .method = HTTP_GET,  .handler = fp_http_console_get,        .user_ctx = NULL},
     {.uri = "/fp/users",         .method = HTTP_GET,  .handler = fp_http_users_get,          .user_ctx = NULL},
     {.uri = "/fp/user",          .method = HTTP_POST, .handler = fp_http_user_post,          .user_ctx = NULL},
     {.uri = "/fp/user/delete",   .method = HTTP_POST, .handler = fp_http_user_delete_post,   .user_ctx = NULL},

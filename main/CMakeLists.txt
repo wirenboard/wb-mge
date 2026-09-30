@@ -41,6 +41,7 @@ if(CONFIG_WB_MODBUS_ROLE_MASTER)
         "mb_master/mb_master.c"
         "mb_master/user_app.c"
         "fp_acs/fp_acs.c"
+        "fp_acs/fp_console.c"
         "fp_acs/fp_http.c"
         "fp_acs/fp_lock.c"
         "fp_acs/fp_log.c"

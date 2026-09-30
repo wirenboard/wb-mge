@@ -70,3 +70,9 @@ esp_err_t r503_up_image(uint8_t *raw, size_t raw_size, size_t *raw_len, uint8_t 
 
 // A short English description of a confirmation code, for logs and the enrollment status.
 const char *r503_code_str(uint8_t code);
+
+// Why the last command's transport failed, in a few English words ("no answer", "checksum mismatch:
+// received 0x1A2B, computed 0x1A2C", ...), for the enrollment status; "" after a command that
+// returned ESP_OK, whatever its confirmation code. Valid until the next command and, like every
+// call here, only for the sensor task: the buffer is not guarded.
+const char *r503_last_error(void);
