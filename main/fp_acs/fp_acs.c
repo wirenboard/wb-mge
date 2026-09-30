@@ -198,9 +198,13 @@ static uint32_t fp_acs_record_event(fp_acs_source_t source, fp_acs_result_t resu
     // sees the new seq finds the record in the log as well.
     uint32_t log_seq = fp_log_append(&event);
 
+    // The sensor task and the bot both get here, and the seq is handed out under the log's mutex, not
+    // this one: an event that lost the race to publish must not replace a newer one.
     fp_acs_lock();
     event.seq = (log_seq != 0) ? log_seq : (fp_acs_last_event.seq + 1);
-    fp_acs_last_event = event;
+    if (event.seq > fp_acs_last_event.seq) {
+        fp_acs_last_event = event;
+    }
     fp_acs_unlock();
 
     ESP_LOGI(TAG, "Event %" PRIu32 ": %s via %s, user %u \"%s\", score %u", event.seq, fp_acs_result_str(result),
