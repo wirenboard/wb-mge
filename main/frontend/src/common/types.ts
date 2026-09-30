@@ -74,6 +74,7 @@ export interface FpEvent {
   user_id: number | null;
   user_name: string | null;
   score: number | null;
+  chat: string | null; // the Telegram chat's title, or its id; null for a fingerprint
 }
 
 // A record of GET /fp/log. seq keeps growing across reboots; last_event.seq is the same number.
@@ -85,6 +86,7 @@ export interface FpLogEntry {
   user_id: number | null;
   user_name: string | null; // the name at the time of the attempt
   score: number | null;
+  chat: string | null; // the Telegram chat's title, or its id; null for a fingerprint
 }
 
 // GET /fp/log: newest first

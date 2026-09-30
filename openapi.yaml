@@ -1294,6 +1294,7 @@ components:
         user_id: { type: [integer, 'null'] }
         user_name: { type: [string, 'null'] }
         score: { type: [integer, 'null'], description: "Match score of a known user's fingerprint" }
+        chat: { type: [string, 'null'], description: "The Telegram chat the attempt came from: its title (groups, supergroups and channels), or its id when it has none; cut to 31 bytes of UTF-8 at a character boundary. null for a fingerprint" }
 
     FpLogEntry:
       type: object
@@ -1305,6 +1306,7 @@ components:
         user_id: { type: [integer, 'null'] }
         user_name: { type: [string, 'null'], description: "The user's name at the time of the attempt" }
         score: { type: [integer, 'null'], description: "Match score of a known user's fingerprint" }
+        chat: { type: [string, 'null'], description: "The Telegram chat the attempt came from: its title (groups, supergroups and channels), or its id when it has none; cut to 31 bytes of UTF-8 at a character boundary. null for a fingerprint" }
 
     FpTgChat:
       type: object

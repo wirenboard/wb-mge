@@ -44,6 +44,8 @@ static const char *TAG = "fp_acs";
 #define FP_ACS_NIBBLE_MASK              0x0F
 #define FP_ACS_NIBBLE_SCALE             17      // 4-bit grey 0..15 onto 8-bit 0..255
 #define FP_ACS_US_PER_S                 1000000
+#define FP_ACS_UTF8_CONT_MASK           0xC0    // a UTF-8 continuation byte is 10xxxxxx
+#define FP_ACS_UTF8_CONT_BITS           0x80
 
 typedef enum {
     FP_ACS_CMD_ENROLL,
@@ -184,9 +186,26 @@ static bool fp_acs_connect(void)
     return true;
 }
 
-// Returns the seq the event got.
+// Copies chat, cut to FP_ACS_CHAT_MAX bytes. The cut never splits a UTF-8 character: one that
+// would not fit whole is left out whole.
+static void fp_acs_copy_chat(char out[FP_ACS_CHAT_MAX + 1], const char *chat)
+{
+    size_t len = strnlen(chat, FP_ACS_CHAT_MAX + 1);
+    if (len > FP_ACS_CHAT_MAX) {
+        len = FP_ACS_CHAT_MAX;
+        // chat[len] is the first byte left out: while it continues a character, that character
+        // started inside the copy, and the copy ends before its lead byte instead.
+        while ((len > 0) && ((((uint8_t)chat[len]) & FP_ACS_UTF8_CONT_MASK) == FP_ACS_UTF8_CONT_BITS)) {
+            len--;
+        }
+    }
+    memcpy(out, chat, len);
+    out[len] = '\0';
+}
+
+// chat is the Telegram chat's label, NULL for a fingerprint. Returns the seq the event got.
 static uint32_t fp_acs_record_event(fp_acs_source_t source, fp_acs_result_t result, const fp_store_user_t *user,
-                                    bool has_score, uint16_t score)
+                                    bool has_score, uint16_t score, const char *chat)
 {
     fp_acs_event_t event;
     memset(&event, 0, sizeof(event));
@@ -199,6 +218,9 @@ static uint32_t fp_acs_record_event(fp_acs_source_t source, fp_acs_result_t resu
     }
     event.has_score = has_score;
     event.score = score;
+    if (chat != NULL) {
+        fp_acs_copy_chat(event.chat, chat);
+    }
 
     // The access log numbers the event. Its seq keeps growing across reboots, so a web page that
     // outlived a reboot cannot take an event of this boot for one of the last (and show that one's
@@ -355,7 +377,7 @@ static void fp_acs_scan(void)
     // show an older image beside it.
     uint8_t image_code = R503_CODE_OK;
     bool captured = (fp_acs_io_ok(r503_gen_img(&image_code), "GenImg") && (image_code == R503_CODE_OK));
-    uint32_t event_seq = fp_acs_record_event(FP_ACS_SOURCE_FINGERPRINT, result, who, (who != NULL), score);
+    uint32_t event_seq = fp_acs_record_event(FP_ACS_SOURCE_FINGERPRINT, result, who, (who != NULL), score, NULL);
     if (captured) {
         fp_acs_upload_image(event_seq);
     }
@@ -709,14 +731,14 @@ bool fp_acs_get_last_event(fp_acs_event_t *out)
     return (out->seq != 0);
 }
 
-void fp_acs_report_telegram_event(fp_acs_result_t result, uint8_t user_id)
+void fp_acs_report_telegram_event(fp_acs_result_t result, uint8_t user_id, const char *chat)
 {
     if (fp_acs_mutex == NULL) {
         return;
     }
     fp_store_user_t user;
     bool known = ((user_id != FP_STORE_NO_USER) && fp_store_get_user(user_id, &user));
-    fp_acs_record_event(FP_ACS_SOURCE_TELEGRAM, result, known ? &user : NULL, false, 0);
+    fp_acs_record_event(FP_ACS_SOURCE_TELEGRAM, result, known ? &user : NULL, false, 0, chat);
 }
 
 fp_acs_req_t fp_acs_enroll_start(uint8_t user_id)

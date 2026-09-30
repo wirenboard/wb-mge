@@ -44,9 +44,9 @@ static const char *TAG = "fp_http";
 
 #define FP_HTTP_LOG_HEAD            "{\"entries\":["
 #define FP_HTTP_LOG_TAIL            "]}"
-// Room for one record's JSON and the comma before it: a user name of control characters escapes
-// to six bytes a character.
-#define FP_HTTP_LOG_ENTRY_MAX       512
+// Room for one record's JSON and the comma before it: a user name and a chat of control characters
+// escape to six bytes a character, 601 bytes of JSON at worst.
+#define FP_HTTP_LOG_ENTRY_MAX       640
 
 
 // ── Responses ────────────────────────────────────────────────────────────────────────────
@@ -228,7 +228,7 @@ static bool fp_http_status_enroll(cJSON *root, const fp_acs_enroll_t *enroll)
 
 // The fields the last event and a log record share: who tried, how, and what came of it.
 static bool fp_http_add_attempt(cJSON *object, fp_acs_source_t source, fp_acs_result_t result, uint8_t user_id,
-                                const char *user_name, bool has_score, uint16_t score)
+                                const char *user_name, bool has_score, uint16_t score, const char *chat)
 {
     bool known = (user_id != FP_STORE_NO_USER);
     bool ok = (cJSON_AddStringToObject(object, "source", fp_acs_source_str(source)) != NULL);
@@ -236,6 +236,7 @@ static bool fp_http_add_attempt(cJSON *object, fp_acs_source_t source, fp_acs_re
     ok = fp_http_add_nullable_number(object, "user_id", known, user_id) && ok;
     ok = fp_http_add_nullable_string(object, "user_name", known, user_name) && ok;
     ok = fp_http_add_nullable_number(object, "score", has_score, score) && ok;
+    ok = fp_http_add_nullable_string(object, "chat", (chat[0] != '\0'), chat) && ok;
     return ok;
 }
 
@@ -252,7 +253,7 @@ static bool fp_http_status_event(cJSON *root)
     bool ok = (cJSON_AddNumberToObject(object, "seq", event.seq) != NULL);
     ok = (cJSON_AddNumberToObject(object, "uptime_s", event.uptime_s) != NULL) && ok;
     ok = fp_http_add_attempt(object, event.source, event.result, event.user_id, event.user_name, event.has_score,
-                             event.score) && ok;
+                             event.score, event.chat) && ok;
     return ok;
 }
 
@@ -367,7 +368,7 @@ static cJSON *fp_http_log_entry_json(const fp_log_entry_t *entry)
     bool ok = (cJSON_AddNumberToObject(object, "seq", entry->seq) != NULL);
     ok = fp_http_add_nullable_number(object, "time", (entry->time != FP_LOG_TIME_UNKNOWN), entry->time) && ok;
     ok = fp_http_add_attempt(object, entry->source, entry->result, entry->user_id, entry->user_name, entry->has_score,
-                             entry->score) && ok;
+                             entry->score, entry->chat) && ok;
     if (!ok) {
         cJSON_Delete(object);
         return NULL;

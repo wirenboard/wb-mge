@@ -25,9 +25,9 @@ static const char *TAG = "fp_log";
 
 // Bumped whenever the layout of fp_log_blob_t changes: a blob of another version is skipped at
 // load, not misread.
-#define FP_LOG_BLOB_VERSION         1
-// Two 32-byte NVS data entries; with the chunk header and the blob index, four entries a record.
-#define FP_LOG_BLOB_SIZE_MAX        64
+#define FP_LOG_BLOB_VERSION         2
+// Three 32-byte NVS data entries; with the chunk header and the blob index, five entries a record.
+#define FP_LOG_BLOB_SIZE_MAX        96
 
 #define FP_LOG_SNTP_SERVER          "pool.ntp.org"
 // Earlier than this, the clock is still counting from 1970 at boot: SNTP has not set it yet.
@@ -44,9 +44,10 @@ typedef struct {
     uint16_t score;
     uint8_t  has_score;
     char     user_name[FP_STORE_NAME_MAX + 1];
+    char     chat[FP_ACS_CHAT_MAX + 1];
 } fp_log_blob_t;
 
-_Static_assert(sizeof(fp_log_blob_t) <= FP_LOG_BLOB_SIZE_MAX, "an fp_log record must fit two NVS data entries");
+_Static_assert(sizeof(fp_log_blob_t) <= FP_LOG_BLOB_SIZE_MAX, "an fp_log record must fit three NVS data entries");
 
 // NULL until fp_log_init() has succeeded; guards everything below.
 static SemaphoreHandle_t  fp_log_mutex;
@@ -101,6 +102,7 @@ static void fp_log_to_blob(const fp_log_entry_t *entry, fp_log_blob_t *blob)
     blob->score = entry->score;
     blob->has_score = entry->has_score ? 1 : 0;
     memcpy(blob->user_name, entry->user_name, sizeof(blob->user_name));
+    memcpy(blob->chat, entry->chat, sizeof(blob->chat));
 }
 
 static void fp_log_from_blob(const fp_log_blob_t *blob, fp_log_entry_t *entry)
@@ -114,6 +116,7 @@ static void fp_log_from_blob(const fp_log_blob_t *blob, fp_log_entry_t *entry)
     entry->has_score = (blob->has_score != 0);
     entry->score = blob->score;
     memcpy(entry->user_name, blob->user_name, sizeof(entry->user_name));
+    memcpy(entry->chat, blob->chat, sizeof(entry->chat));
 }
 
 // Checks what came out of NVS: the blob is ours, but the partition is not beyond corruption.
@@ -122,7 +125,8 @@ static bool fp_log_blob_valid(const fp_log_blob_t *blob, uint32_t slot)
     return ((blob->version == FP_LOG_BLOB_VERSION) && (blob->seq >= FP_LOG_FIRST_SEQ) &&
             (fp_log_slot(blob->seq) == slot) && (blob->source <= FP_ACS_SOURCE_TELEGRAM) &&
             (blob->result <= FP_ACS_RESULT_UNKNOWN) &&
-            (memchr(blob->user_name, '\0', sizeof(blob->user_name)) != NULL));
+            (memchr(blob->user_name, '\0', sizeof(blob->user_name)) != NULL) &&
+            (memchr(blob->chat, '\0', sizeof(blob->chat)) != NULL));
 }
 
 // The record first, then "next": a power loss between the two leaves a record whose seq
@@ -149,6 +153,9 @@ static void fp_log_load(void)
 {
     uint32_t max_seq = 0;
     size_t loaded = 0;
+    // Counted, not logged one by one: a layout change leaves every record of the old one behind,
+    // up to FP_LOG_CAPACITY of them, until new ones overwrite them.
+    size_t unreadable = 0;
     for (uint32_t slot = 0; slot < FP_LOG_CAPACITY; slot++) {
         char key[FP_LOG_KEY_SIZE];
         fp_log_key(slot, key);
@@ -160,8 +167,9 @@ static void fp_log_load(void)
             continue;
         }
         if ((err != ESP_OK) || (len != sizeof(blob)) || (!fp_log_blob_valid(&blob, slot))) {
-            ESP_LOGW(TAG, "Record %s is unreadable (%s, %u bytes), skipped", key, esp_err_to_name(err),
+            ESP_LOGD(TAG, "Record %s is unreadable (%s, %u bytes), skipped", key, esp_err_to_name(err),
                      (unsigned)len);
+            unreadable++;
             continue;
         }
         fp_log_from_blob(&blob, &fp_log_entries[slot]);
@@ -182,6 +190,9 @@ static void fp_log_load(void)
     fp_log_next = (next > max_seq) ? next : (max_seq + 1);
     if (fp_log_next < FP_LOG_FIRST_SEQ) {
         fp_log_next = FP_LOG_FIRST_SEQ;
+    }
+    if (unreadable > 0) {
+        ESP_LOGW(TAG, "%u records are unreadable (another layout, or damaged), skipped", (unsigned)unreadable);
     }
     ESP_LOGI(TAG, "%u records loaded, next %" PRIu32, (unsigned)loaded, fp_log_next);
 }
@@ -246,6 +257,7 @@ uint32_t fp_log_append(const fp_acs_event_t *event)
     snprintf(entry.user_name, sizeof(entry.user_name), "%s", event->user_name);
     entry.has_score = event->has_score;
     entry.score = event->score;
+    snprintf(entry.chat, sizeof(entry.chat), "%s", event->chat);
 
     fp_log_entries[fp_log_slot(entry.seq)] = entry;
     fp_log_next++;

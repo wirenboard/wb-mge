@@ -50,6 +50,7 @@
 
 #define FP_ACS_ENROLL_STEPS         5       // finger placements per enrollment
 #define FP_ACS_ENROLL_ERROR_MAX     64
+#define FP_ACS_CHAT_MAX             31      // bytes of UTF-8 of an event's chat, cut at a character boundary
 
 typedef enum {
     FP_ACS_SOURCE_FINGERPRINT,
@@ -71,6 +72,7 @@ typedef struct {
     char            user_name[FP_STORE_NAME_MAX + 1];   // empty when nobody
     bool            has_score;                          // a fingerprint match of a known user
     uint16_t        score;
+    char            chat[FP_ACS_CHAT_MAX + 1];          // the Telegram chat's title, or its id; empty for a fingerprint
 } fp_acs_event_t;
 
 typedef enum {
@@ -122,9 +124,10 @@ void fp_acs_get_status(fp_acs_status_t *out);
 // False while there has been no event since boot.
 bool fp_acs_get_last_event(fp_acs_event_t *out);
 // Records an opening attempt made through Telegram as the last event. user_id may be
-// FP_STORE_NO_USER; the name is looked up in the store. Opening the lock is the caller's
-// (fp_lock_open()).
-void fp_acs_report_telegram_event(fp_acs_result_t result, uint8_t user_id);
+// FP_STORE_NO_USER; the name is looked up in the store. chat names the chat the attempt came from
+// (its title, or its id when it has none) and is cut to FP_ACS_CHAT_MAX bytes at a UTF-8 character
+// boundary. Opening the lock is the caller's (fp_lock_open()).
+void fp_acs_report_telegram_event(fp_acs_result_t result, uint8_t user_id, const char *chat);
 
 // The three requests below are queued to the sensor task and return at once; their outcome
 // shows in the status (enrollment) and in users_rev (deletions).

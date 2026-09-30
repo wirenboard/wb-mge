@@ -474,25 +474,26 @@ static void tg_bot_open_lock(void)
     }
 }
 
-static void tg_bot_cmd_open(const char *chat_id, const char *username)
+// chat_label names the chat in the access log: its title, or its id.
+static void tg_bot_cmd_open(const char *chat_id, const char *chat_label, const char *username)
 {
     fp_store_user_t user;
     if ((username != NULL) && fp_store_find_by_tg_username(username, &user)) {
         // A sender the store knows is decided by their own permission, whatever chat this is.
         if (user.enabled && user.allow_tg) {
             tg_bot_open_lock();
-            fp_acs_report_telegram_event(FP_ACS_RESULT_GRANTED, user.id);
+            fp_acs_report_telegram_event(FP_ACS_RESULT_GRANTED, user.id, chat_label);
             tg_bot_send(chat_id, TG_BOT_TEXT_OPENED);
         } else {
-            fp_acs_report_telegram_event(FP_ACS_RESULT_DENIED, user.id);
+            fp_acs_report_telegram_event(FP_ACS_RESULT_DENIED, user.id, chat_label);
             tg_bot_send(chat_id, TG_BOT_TEXT_NOT_ALLOWED);
         }
     } else if (fp_store_tg_chat_is_allowed(chat_id)) {
         tg_bot_open_lock();
-        fp_acs_report_telegram_event(FP_ACS_RESULT_GRANTED, FP_STORE_NO_USER);
+        fp_acs_report_telegram_event(FP_ACS_RESULT_GRANTED, FP_STORE_NO_USER, chat_label);
         tg_bot_send(chat_id, TG_BOT_TEXT_OPENED);
     } else {
-        fp_acs_report_telegram_event(FP_ACS_RESULT_UNKNOWN, FP_STORE_NO_USER);
+        fp_acs_report_telegram_event(FP_ACS_RESULT_UNKNOWN, FP_STORE_NO_USER, chat_label);
         tg_bot_send(chat_id, TG_BOT_TEXT_NOT_ACTIVATED);
         ESP_LOGW(TAG, "Unauthorized open attempt from chat %s", chat_id);
     }
@@ -500,7 +501,8 @@ static void tg_bot_cmd_open(const char *chat_id, const char *username)
 
 // The same commands, matched the same way, as pp-lock: /activate and /deactivate by prefix, the
 // rest exactly, and /reset and /list ignored for anyone but an admin.
-static void tg_bot_handle_message(const char *chat_id, const char *from_id, const char *username, const char *text)
+static void tg_bot_handle_message(const char *chat_id, const char *chat_label, const char *from_id,
+                                  const char *username, const char *text)
 {
     bool admin = tg_bot_is_admin(from_id);
 
@@ -515,7 +517,7 @@ static void tg_bot_handle_message(const char *chat_id, const char *from_id, cons
     } else if ((strcmp(text, TG_BOT_CMD_LIST) == 0) && admin) {
         tg_bot_cmd_list(chat_id);
     } else if ((strcmp(text, TG_BOT_CMD_OPEN) == 0) || (strcmp(text, TG_BOT_CMD_OPEN_CAPITAL) == 0)) {
-        tg_bot_cmd_open(chat_id, username);
+        tg_bot_cmd_open(chat_id, chat_label, username);
     }
 }
 
@@ -535,6 +537,7 @@ static void tg_bot_handle_update(const cJSON *update)
     const cJSON *message = cJSON_GetObjectItemCaseSensitive(update, "message");
     const cJSON *text = cJSON_GetObjectItemCaseSensitive(message, "text");
     const cJSON *chat = cJSON_GetObjectItemCaseSensitive(message, "chat");
+    const cJSON *title = cJSON_GetObjectItemCaseSensitive(chat, "title");
     const cJSON *from = cJSON_GetObjectItemCaseSensitive(message, "from");
     const cJSON *username = cJSON_GetObjectItemCaseSensitive(from, "username");
 
@@ -547,9 +550,11 @@ static void tg_bot_handle_update(const cJSON *update)
     if (!tg_bot_json_id(cJSON_GetObjectItemCaseSensitive(from, "id"), from_id, sizeof(from_id))) {
         from_id[0] = '\0';
     }
+    // Groups, supergroups and channels have a title; a private chat has none and goes by its id.
+    bool titled = (cJSON_IsString(title) && (title->valuestring[0] != '\0'));
 
-    tg_bot_handle_message(chat_id, from_id, cJSON_IsString(username) ? username->valuestring : NULL,
-                          text->valuestring);
+    tg_bot_handle_message(chat_id, titled ? title->valuestring : chat_id, from_id,
+                          cJSON_IsString(username) ? username->valuestring : NULL, text->valuestring);
 }
 
 // An update that did not fit in the response buffer is skipped by its update_id, which leads the

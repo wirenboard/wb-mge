@@ -38,6 +38,11 @@ const enumLabel = (keys: Record<string, string>, value: string) => {
   return key ? t(key) : value;
 };
 
+const sourceLabel = (source: FpEventSource, chat: string | null) => {
+  const label = enumLabel(SOURCE_KEYS, source);
+  return chat ? t('source_chat', { source: label, chat }) : label;
+};
+
 const dateFormat = computed(() => new Intl.DateTimeFormat(locale.value, { dateStyle: 'short', timeStyle: 'medium' }));
 
 const formatTime = (time: number | null) => (time === null ? DASH : dateFormat.value.format(time * MS_PER_S));
@@ -95,7 +100,7 @@ watch(lastEventSeq, (seq) => {
                 <tr v-for="entry in entries" :key="entry.seq" class="log-row">
                   <td class="mono">{{ formatTime(entry.time) }}</td>
                   <td>{{ entry.user_name ?? DASH }}</td>
-                  <td>{{ enumLabel(SOURCE_KEYS, entry.source) }}</td>
+                  <td>{{ sourceLabel(entry.source, entry.chat) }}</td>
                   <td>
                     <span class="pill" :class="RESULT_PILL_CLASSES[entry.result]">
                       {{ enumLabel(RESULT_KEYS, entry.result) }}
@@ -147,6 +152,7 @@ watch(lastEventSeq, (seq) => {
     "col_result": "Result",
     "source_fingerprint": "Fingerprint",
     "source_telegram": "Telegram",
+    "source_chat": "{source} · {chat}",
     "result_granted": "Granted",
     "result_denied": "Denied",
     "result_unknown": "Not recognized"
@@ -165,6 +171,7 @@ watch(lastEventSeq, (seq) => {
     "col_result": "Результат",
     "source_fingerprint": "Отпечаток",
     "source_telegram": "Telegram",
+    "source_chat": "{source} · {chat}",
     "result_granted": "Разрешён",
     "result_denied": "Запрещён",
     "result_unknown": "Не распознан"
@@ -183,6 +190,7 @@ watch(lastEventSeq, (seq) => {
     "col_result": "Нәтиже",
     "source_fingerprint": "Саусақ ізі",
     "source_telegram": "Telegram",
+    "source_chat": "{source} · {chat}",
     "result_granted": "Рұқсат етілді",
     "result_denied": "Тыйым салынды",
     "result_unknown": "Танылмады"
@@ -201,6 +209,7 @@ watch(lastEventSeq, (seq) => {
     "col_result": "Esito",
     "source_fingerprint": "Impronta",
     "source_telegram": "Telegram",
+    "source_chat": "{source} · {chat}",
     "result_granted": "Consentito",
     "result_denied": "Negato",
     "result_unknown": "Non riconosciuto"
@@ -219,6 +228,7 @@ watch(lastEventSeq, (seq) => {
     "col_result": "Ergebnis",
     "source_fingerprint": "Fingerabdruck",
     "source_telegram": "Telegram",
+    "source_chat": "{source} · {chat}",
     "result_granted": "Gewährt",
     "result_denied": "Verweigert",
     "result_unknown": "Nicht erkannt"

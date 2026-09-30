@@ -37,6 +37,7 @@ typedef struct {
     char            user_name[FP_STORE_NAME_MAX + 1];   // the name at the time; empty when nobody
     bool            has_score;
     uint16_t        score;
+    char            chat[FP_ACS_CHAT_MAX + 1];          // the Telegram chat's title, or its id; empty for a fingerprint
 } fp_log_entry_t;
 
 // Loads the log from NVS. Call once, after fp_store_init(), which mounts the partition.

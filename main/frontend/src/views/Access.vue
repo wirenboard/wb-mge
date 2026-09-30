@@ -100,6 +100,11 @@ const enumLabel = (keys: Record<string, string>, value: string) => {
   return key ? t(key) : value;
 };
 
+const sourceLabel = (source: FpEventSource, chat: string | null) => {
+  const label = enumLabel(SOURCE_KEYS, source);
+  return chat ? t('source_chat', { source: label, chat }) : label;
+};
+
 // The two most significant units: "2 d 3 h", "4 min 12 s", "7 s".
 const formatDuration = (totalSeconds: number) => {
   const seconds = Math.floor(totalSeconds);
@@ -376,7 +381,7 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
             <div class="card-body access-event">
               <div class="access-eventInfo">
                 <template v-if="lastEvent">
-                  <InfoRow :label="t('event_source')">{{ enumLabel(SOURCE_KEYS, lastEvent.source) }}</InfoRow>
+                  <InfoRow :label="t('event_source')">{{ sourceLabel(lastEvent.source, lastEvent.chat) }}</InfoRow>
                   <InfoRow :label="t('event_user')">{{ lastEvent.user_name ?? DASH }}</InfoRow>
                   <InfoRow :label="t('event_time')">{{ lastEventAge }}</InfoRow>
                 </template>
@@ -645,6 +650,7 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
     "ago": "{v} ago",
     "source_fingerprint": "Fingerprint",
     "source_telegram": "Telegram",
+    "source_chat": "{source} · {chat}",
     "result_granted": "Granted",
     "result_denied": "Denied",
     "result_unknown": "Not recognized",
@@ -714,6 +720,7 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
     "ago": "{v} назад",
     "source_fingerprint": "Отпечаток",
     "source_telegram": "Telegram",
+    "source_chat": "{source} · {chat}",
     "result_granted": "Разрешён",
     "result_denied": "Запрещён",
     "result_unknown": "Не распознан",
@@ -783,6 +790,7 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
     "ago": "{v} бұрын",
     "source_fingerprint": "Саусақ ізі",
     "source_telegram": "Telegram",
+    "source_chat": "{source} · {chat}",
     "result_granted": "Рұқсат етілді",
     "result_denied": "Тыйым салынды",
     "result_unknown": "Танылмады",
@@ -852,6 +860,7 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
     "ago": "{v} fa",
     "source_fingerprint": "Impronta",
     "source_telegram": "Telegram",
+    "source_chat": "{source} · {chat}",
     "result_granted": "Consentito",
     "result_denied": "Negato",
     "result_unknown": "Non riconosciuto",
@@ -921,6 +930,7 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
     "ago": "vor {v}",
     "source_fingerprint": "Fingerabdruck",
     "source_telegram": "Telegram",
+    "source_chat": "{source} · {chat}",
     "result_granted": "Gewährt",
     "result_denied": "Verweigert",
     "result_unknown": "Nicht erkannt",
