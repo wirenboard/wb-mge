@@ -331,11 +331,11 @@ make TARGET=mgu_v1 MB_ROLE=master build-idf-project
 | 1 | Power, 3.3 V | 3.3 V |
 | 2 | GND | GND |
 | 3 | TXD (sensor output) | GPIO4 (port-2 RX) |
-| 4 | RXD (sensor input) | GPIO10 (port-2 TX) |
-| 6 | 3.3VT, touch power | 3.3 V |
+| 4 | RXD (sensor input) | GPIO13 (the slot's RTS pin) |
 
-Pin 5 (WAKEUP) is not used, nor is GPIO13. The link is 57600 8N1 with the factory address and
-password.
+Pins 5 (WAKEUP) and 6 (3.3VT, touch detection power) are left unconnected: the firmware does not
+use touch wake-up. GPIO10, the slot's TX pin, is not used. The link is 57600 8N1 with the factory
+address and password.
 
 **Lock:** the relay module sits on its own RS-485 bus on **port 1**, where this device is the
 Modbus master; port 2 is not a Modbus port in this build. The settings `lock_addr` (unit id),

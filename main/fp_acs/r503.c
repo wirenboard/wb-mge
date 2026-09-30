@@ -15,10 +15,11 @@
 
 static const char *TAG = "r503";
 
-// The WBE2 slot of WB-MGU: serial port 2's TX and RX pins, plain UART, no RTS/CTS. GPIO13, the
-// slot's direction pin, is left alone.
+// The WBE2 slot of WB-MGU, plain UART, no RTS/CTS. The sensor's input is wired to the slot's
+// direction pin (GPIO13) rather than to its TX pin (GPIO10), so TX is routed there and GPIO10 is
+// left alone.
 #define R503_UART_NUM                   UART_NUM_2
-#define R503_UART_TX_PIN                SERIAL_OUTPUT_PIN_2
+#define R503_UART_TX_PIN                SERIAL_IO_PIN_2
 #define R503_UART_RX_PIN                SERIAL_INPUT_PIN_2
 #define R503_UART_BAUD_RATE             57600
 #define R503_UART_RX_BUFFER_SIZE        2048    // an UpImage burst is read as it arrives; this is slack
