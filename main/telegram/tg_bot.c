@@ -50,6 +50,8 @@ static const char *TAG = "tg_bot";
 #define TG_BOT_RETRY_MS             10000   // pause after a failed poll
 #define TG_BOT_HTTP_OK              200
 #define TG_BOT_DECIMAL_BASE         10
+#define TG_BOT_OK_PREFIX            "{\"ok\":true"          // how the Bot API opens an answer that succeeded
+#define TG_BOT_ERROR_NOT_OK         "unexpected answer"     // a 200 whose answer does not say "ok": true
 
 #define TG_BOT_ID_MAX               24      // a decimal Telegram id, sign included
 #define TG_BOT_REPLY_MAX            2048
@@ -98,6 +100,13 @@ static bool    tg_bot_booted;                           // the boot message has 
 static char    tg_bot_admins[SETTING_ITEM_MAX_STR_LEN];
 static char    tg_bot_reply[TG_BOT_REPLY_MAX];
 
+// The status tg_bot_get_status() reports: written by the bot task, read by the web server. The
+// flags use the atomic builtins; the reason, a string, is copied in and out under the spinlock.
+static bool         tg_bot_enabled;                 // a usable token is set: the bot polls
+static bool         tg_bot_online;                  // the last request got a 200 with "ok": true
+static char         tg_bot_error[TG_BOT_ERROR_MAX]; // why the last request failed; "" when none has
+static portMUX_TYPE tg_bot_error_lock = portMUX_INITIALIZER_UNLOCKED;
+
 
 static esp_err_t tg_bot_http_event(esp_http_client_event_t *evt)
 {
@@ -117,7 +126,7 @@ static esp_err_t tg_bot_http_event(esp_http_client_event_t *evt)
 
 // One request on the kept-alive connection: a GET when body is NULL, a JSON POST otherwise.
 // The response lands in tg_bot_response, the HTTP status in *status.
-static esp_err_t tg_bot_request(const char *url, const char *body, int *status)
+static esp_err_t tg_bot_exchange(const char *url, const char *body, int *status)
 {
     if (tg_bot_http == NULL) {
         // Made for the bare server, which carries no token: a server esp_http_client cannot parse
@@ -164,6 +173,58 @@ static esp_err_t tg_bot_request(const char *url, const char *body, int *status)
     return ESP_OK;
 }
 
+// Formatted outside the spinlock, so that only a copy runs with the interrupts off.
+static void tg_bot_set_error(const char *reason)
+{
+    char copy[TG_BOT_ERROR_MAX];
+    snprintf(copy, sizeof(copy), "%s", reason);
+    portENTER_CRITICAL(&tg_bot_error_lock);
+    memcpy(tg_bot_error, copy, sizeof(tg_bot_error));
+    portEXIT_CRITICAL(&tg_bot_error_lock);
+}
+
+// Whether the answer in tg_bot_response says "ok": true. One cut off by the buffer cannot be
+// parsed and is judged by its beginning: the Bot API opens every answer with that field.
+static bool tg_bot_response_ok(void)
+{
+    if (tg_bot_response_overflow) {
+        return (strncmp(tg_bot_response, TG_BOT_OK_PREFIX, sizeof(TG_BOT_OK_PREFIX) - 1) == 0);
+    }
+    cJSON *root = cJSON_ParseWithLength(tg_bot_response, tg_bot_response_len);
+    bool ok = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(root, "ok"));
+    cJSON_Delete(root);
+    return ok;
+}
+
+// Records the outcome of a request for tg_bot_get_status(): online after an HTTP 200 whose answer
+// says "ok": true, offline with the reason after anything else. status counts only when err is
+// ESP_OK. Only a change between online and offline is logged, not every request.
+static void tg_bot_note_result(esp_err_t err, int status)
+{
+    char reason[TG_BOT_ERROR_MAX] = "";
+    if (err != ESP_OK) {
+        snprintf(reason, sizeof(reason), "%s", esp_err_to_name(err));
+    } else if (status != TG_BOT_HTTP_OK) {
+        snprintf(reason, sizeof(reason), "HTTP %d", status);
+    } else if (!tg_bot_response_ok()) {
+        snprintf(reason, sizeof(reason), "%s", TG_BOT_ERROR_NOT_OK);
+    }
+
+    bool online = (reason[0] == '\0');
+    if (!online) {
+        tg_bot_set_error(reason);
+    }
+    bool was_online = __atomic_exchange_n(&tg_bot_online, online, __ATOMIC_SEQ_CST);
+    if (online == was_online) {
+        return;
+    }
+    if (online) {
+        ESP_LOGI(TAG, "Bot API server %s is online", tg_bot_server);
+    } else {
+        ESP_LOGW(TAG, "Bot API server %s is offline: %s", tg_bot_server, reason);
+    }
+}
+
 // Whether snprintf's result says the whole request URL made it into its buffer. A cut URL is never
 // sent: it may end inside the token or name another method. TG_BOT_URL_MAX rules that out for
 // any server and token the settings can hold.
@@ -196,8 +257,13 @@ static void tg_bot_send(const char *chat_id, const char *text)
         return;
     }
     int status = 0;
-    esp_err_t err = tg_bot_request(url, json, &status);
+    esp_err_t err = tg_bot_exchange(url, json, &status);
     free(json);
+    // Only a request that did not reach the server says it is offline: one that did can still be
+    // refused (400 or 403 for an admin who never started the bot) by a server that works.
+    if (err != ESP_OK) {
+        tg_bot_note_result(err, status);
+    }
 
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "sendMessage to %s failed: %s", chat_id, esp_err_to_name(err));
@@ -233,6 +299,11 @@ static void tg_bot_use_settings(const char *server, const char *token)
     tg_bot_offset = 0;
     tg_bot_backlog_dropped = false;
     tg_bot_token_usable = tg_bot_token_valid(token);
+    // What was known of the old server or token says nothing of the new: offline, and no reason,
+    // until a request with them goes through or fails.
+    tg_bot_set_error("");
+    __atomic_store_n(&tg_bot_online, false, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&tg_bot_enabled, tg_bot_token_usable, __ATOMIC_SEQ_CST);
     // The next request makes a new client: its scheme, port and Host header come from the server
     // it is made for, and a connection left open while the bot was idle may have been closed by
     // the server since.
@@ -526,7 +597,8 @@ static esp_err_t tg_bot_poll(void)
     }
 
     int status = 0;
-    esp_err_t err = tg_bot_request(url, NULL, &status);
+    esp_err_t err = tg_bot_exchange(url, NULL, &status);
+    tg_bot_note_result(err, status);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "getUpdates failed: %s", esp_err_to_name(err));
         return err;
@@ -618,6 +690,21 @@ void tg_bot_start(void)
         ESP_LOGE(TAG, "Failed to create the bot task: the Telegram bot is off");
         heap_caps_free(tg_bot_response);
         tg_bot_response = NULL;
+    }
+}
+
+void tg_bot_get_status(bool *enabled, bool *online, char *error, size_t error_size)
+{
+    char reason[TG_BOT_ERROR_MAX] = "";
+    *enabled = __atomic_load_n(&tg_bot_enabled, __ATOMIC_SEQ_CST);
+    *online = ((*enabled) && __atomic_load_n(&tg_bot_online, __ATOMIC_SEQ_CST));
+    if ((*enabled) && (!(*online))) {
+        portENTER_CRITICAL(&tg_bot_error_lock);
+        memcpy(reason, tg_bot_error, sizeof(reason));
+        portEXIT_CRITICAL(&tg_bot_error_lock);
+    }
+    if (error_size > 0) {
+        snprintf(error, error_size, "%s", reason);
     }
 }
 

@@ -16,6 +16,7 @@
 #include "fp_log.h"
 #include "fp_store.h"
 #include "json_utils.h"
+#include "tg_bot.h"
 
 static const char *TAG = "fp_http";
 
@@ -282,6 +283,23 @@ static bool fp_http_status_lock(cJSON *root)
     return ok;
 }
 
+static bool fp_http_status_telegram(cJSON *root)
+{
+    bool enabled = false;
+    bool online = false;
+    char error[TG_BOT_ERROR_MAX];
+    tg_bot_get_status(&enabled, &online, error, sizeof(error));
+
+    cJSON *object = cJSON_AddObjectToObject(root, "telegram");
+    if (object == NULL) {
+        return false;
+    }
+    bool ok = (cJSON_AddBoolToObject(object, "enabled", enabled) != NULL);
+    ok = (cJSON_AddBoolToObject(object, "online", online) != NULL) && ok;
+    ok = fp_http_add_nullable_string(object, "error", (error[0] != '\0'), error) && ok;
+    return ok;
+}
+
 static esp_err_t fp_http_status_get(httpd_req_t *req)
 {
     if (!auth_middleware_check(req)) {
@@ -302,6 +320,7 @@ static esp_err_t fp_http_status_get(httpd_req_t *req)
     ok = ok && fp_http_status_event(root);
     ok = ok && fp_http_status_image(root, status.image_seq, status.image_event_seq);
     ok = ok && fp_http_status_lock(root);
+    ok = ok && fp_http_status_telegram(root);
     return fp_http_send_json(req, root, ok);
 }
 

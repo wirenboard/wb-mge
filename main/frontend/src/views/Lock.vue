@@ -180,7 +180,13 @@ const clearChats = async () => {
         <section class="card">
           <form @submit.prevent="saveTelegram">
             <div class="card-header">
-              <div class="title">{{ t('telegram') }}</div>
+              <div class="card-title-row">
+                <div class="title">{{ t('telegram') }}</div>
+                <template v-if="status?.telegram.enabled">
+                  <span v-if="status.telegram.online" class="pill ok"><span class="dot" />{{ t('tg_online') }}</span>
+                  <span v-else class="pill danger"><span class="dot" />{{ t('tg_offline') }}</span>
+                </template>
+              </div>
               <Button
                 type="submit"
                 :is-loading="isLoading && isChanged(telegramFields)"
@@ -352,6 +358,8 @@ const clearChats = async () => {
     "relay_note_page": "Serial ports",
 
     "telegram": "Telegram bot",
+    "tg_online": "Online",
+    "tg_offline": "Offline",
     "tg_api_url": "Bot API server",
     "tg_api_url_placeholder": "https://api.telegram.org",
     "tg_token": "Bot token",
@@ -390,6 +398,8 @@ const clearChats = async () => {
     "relay_note_page": "Последовательные порты",
 
     "telegram": "Telegram-бот",
+    "tg_online": "На связи",
+    "tg_offline": "Нет связи",
     "tg_api_url": "Сервер Bot API",
     "tg_api_url_placeholder": "https://api.telegram.org",
     "tg_token": "Токен бота",
@@ -428,6 +438,8 @@ const clearChats = async () => {
     "relay_note_page": "Сериялық порттар",
 
     "telegram": "Telegram-бот",
+    "tg_online": "Байланыста",
+    "tg_offline": "Байланыс жоқ",
     "tg_api_url": "Bot API сервері",
     "tg_api_url_placeholder": "https://api.telegram.org",
     "tg_token": "Бот токені",
@@ -466,6 +478,8 @@ const clearChats = async () => {
     "relay_note_page": "Porte seriali",
 
     "telegram": "Bot Telegram",
+    "tg_online": "Online",
+    "tg_offline": "Offline",
     "tg_api_url": "Server Bot API",
     "tg_api_url_placeholder": "https://api.telegram.org",
     "tg_token": "Token del bot",
@@ -504,6 +518,8 @@ const clearChats = async () => {
     "relay_note_page": "Serielle Schnittstellen",
 
     "telegram": "Telegram-Bot",
+    "tg_online": "Online",
+    "tg_offline": "Offline",
     "tg_api_url": "Bot-API-Server",
     "tg_api_url_placeholder": "https://api.telegram.org",
     "tg_token": "Bot-Token",

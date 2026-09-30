@@ -121,6 +121,11 @@ export interface FpStatus {
     on: boolean; // the relay as of the last coil write that went through, pulses included
     online: boolean; // the relay module answered the last write or idle probe
   };
+  telegram: {
+    enabled: boolean; // a usable bot token is set, so the bot polls
+    online: boolean; // the last Bot API request got HTTP 200 with "ok": true; false while not enabled
+    error: string | null; // why the last request failed; null when online or not enabled
+  };
 }
 
 // POST /fp/lock

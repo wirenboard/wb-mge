@@ -900,7 +900,7 @@ paths:
   # web UI cannot tell from a lost connection.
   /fp/status:
     get:
-      summary: Sensor, enrollment, last event and last image state
+      summary: Sensor, enrollment, last event, last image, lock relay and Telegram bot state
       responses:
         '200':
           description: Status
@@ -945,6 +945,12 @@ paths:
                     properties:
                       'on': { type: boolean, description: "The lock relay (not the door: see lock_mode) as of the last coil write that succeeded, pulses included; false after boot until a write succeeds" }
                       online: { type: boolean, description: "Whether the relay module answered the last exchange: a coil write, or the coil read made after 5 s without a lock request; false after boot until it answers" }
+                  telegram:
+                    type: object
+                    properties:
+                      enabled: { type: boolean, description: "A usable bot token is set (tg_token), so the bot polls the Bot API server (tg_api_url)" }
+                      online: { type: boolean, description: "Whether the last getUpdates got HTTP 200 with \"ok\": true and no sendMessage since failed to reach the server (one the server refuses, e.g. to an admin who never started the bot, does not count); false after boot and after a change of tg_api_url or tg_token until a getUpdates succeeds, and while not enabled" }
+                      error: { type: [string, 'null'], description: "Why the last request failed: an esp_http_client error (\"ESP_ERR_HTTP_CONNECT\"), \"HTTP <status>\" (401 or 404: wrong token; 409: another client polls this bot, or it has a webhook) or \"unexpected answer\" (HTTP 200 without \"ok\": true). null when online, when not enabled, and when no request has failed since boot or the last change of tg_api_url or tg_token" }
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 

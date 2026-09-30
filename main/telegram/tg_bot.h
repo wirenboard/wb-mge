@@ -22,6 +22,23 @@
  *                                Every attempt is reported as a Telegram event of fp_acs.
  */
 
+#include <stdbool.h>
+#include <stddef.h>
+
+// The longest reason tg_bot_get_status() gives, NUL included.
+#define TG_BOT_ERROR_MAX    48
+
 // Starts the bot task. Call once, after network_init(); the task waits for a token and for the
 // network by itself.
 void tg_bot_start(void);
+
+// The bot as GET /fp/status reports it. Callable from any task.
+//   enabled  a usable token is set, so the bot polls the Bot API server.
+//   online   the last getUpdates got HTTP 200 with "ok": true, and no sendMessage since failed to
+//            reach the server (one the server refuses does not count). False after boot and after
+//            a change of server or token until a getUpdates succeeds, and whenever the bot is not
+//            enabled.
+//   error    why the last request failed ("ESP_ERR_HTTP_CONNECT", "HTTP 401", ...), cut to
+//            error_size; empty when online, when not enabled, and when no request has failed since
+//            boot or the last change of server or token.
+void tg_bot_get_status(bool *enabled, bool *online, char *error, size_t error_size);
