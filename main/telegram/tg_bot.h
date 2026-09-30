@@ -33,12 +33,16 @@
 void tg_bot_start(void);
 
 // The bot as GET /fp/status reports it. Callable from any task.
-//   enabled  a usable token is set, so the bot polls the Bot API server.
+//   enabled  a token is set (tg_token not empty).
 //   online   the last getUpdates got HTTP 200 with "ok": true, and no sendMessage since failed to
 //            reach the server (one the server refuses does not count). False after boot and after
 //            a change of server or token until a getUpdates succeeds, and whenever the bot is not
-//            enabled.
-//   error    why the last request failed ("ESP_ERR_HTTP_CONNECT", "HTTP 401", ...), cut to
-//            error_size; empty when online, when not enabled, and when no request has failed since
-//            boot or the last change of server or token.
+//            enabled. The bot takes a change up once the request under way and the pause after a
+//            failed one - or, while no usable token is set, the 5 s idle wait - is over: until then
+//            the status still describes the old settings.
+//   error    why the last request failed ("ESP_ERR_HTTP_CONNECT", "HTTP 401", ...), or "invalid
+//            token" for a token with characters no bot token has (it is never sent), cut to
+//            error_size; empty when online, when not enabled, and when the token has only characters
+//            a bot token may have and no request has failed since boot or the last change of server
+//            or token.
 void tg_bot_get_status(bool *enabled, bool *online, char *error, size_t error_size);

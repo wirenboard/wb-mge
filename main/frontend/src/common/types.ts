@@ -122,9 +122,9 @@ export interface FpStatus {
     online: boolean; // the relay module answered the last write or idle probe
   };
   telegram: {
-    enabled: boolean; // a usable bot token is set, so the bot polls
-    online: boolean; // the last Bot API request got HTTP 200 with "ok": true; false while not enabled
-    error: string | null; // why the last request failed; null when online or not enabled
+    enabled: boolean; // a bot token is set
+    online: boolean; // the last getUpdates got HTTP 200 with "ok": true and no sendMessage since failed to reach the server; false while not enabled
+    error: string | null; // why the last request failed, or "invalid token"; null when online or not enabled
   };
 }
 

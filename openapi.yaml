@@ -948,9 +948,9 @@ paths:
                   telegram:
                     type: object
                     properties:
-                      enabled: { type: boolean, description: "A usable bot token is set (tg_token), so the bot polls the Bot API server (tg_api_url)" }
-                      online: { type: boolean, description: "Whether the last getUpdates got HTTP 200 with \"ok\": true and no sendMessage since failed to reach the server (one the server refuses, e.g. to an admin who never started the bot, does not count); false after boot and after a change of tg_api_url or tg_token until a getUpdates succeeds, and while not enabled" }
-                      error: { type: [string, 'null'], description: "Why the last request failed: an esp_http_client error (\"ESP_ERR_HTTP_CONNECT\"), \"HTTP <status>\" (401 or 404: wrong token; 409: another client polls this bot, or it has a webhook) or \"unexpected answer\" (HTTP 200 without \"ok\": true). null when online, when not enabled, and when no request has failed since boot or the last change of tg_api_url or tg_token" }
+                      enabled: { type: boolean, description: "A bot token is set (tg_token not empty). One with characters no bot token has is never sent: the bot shows offline with error \"invalid token\"" }
+                      online: { type: boolean, description: "Whether the last getUpdates got HTTP 200 with \"ok\": true and no sendMessage since failed to reach the server (one the server refuses, e.g. to an admin who never started the bot, does not count); false after boot and after a change of tg_api_url or tg_token until a getUpdates succeeds, and while not enabled. The bot takes a change up once the request under way and the pause after a failed one (or, while no usable token is set, the 5 s idle wait) is over; until then the status still describes the old settings" }
+                      error: { type: [string, 'null'], description: "Why the last request failed: an esp_http_client error (\"ESP_ERR_HTTP_CONNECT\"), \"HTTP <status>\" (401 or 404: wrong token; 409: another client polls this bot, or it has a webhook), \"unexpected answer\" (HTTP 200 without \"ok\": true) or \"invalid token\" (tg_token has characters no bot token has, so it is never sent). null when online, when not enabled, and when the token has only characters a bot token may have and no request has failed since boot or the last change of tg_api_url or tg_token" }
         '401':
           $ref: '#/components/responses/UnauthorizedError'
 

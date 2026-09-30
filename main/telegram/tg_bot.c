@@ -52,6 +52,7 @@ static const char *TAG = "tg_bot";
 #define TG_BOT_DECIMAL_BASE         10
 #define TG_BOT_OK_PREFIX            "{\"ok\":true"          // how the Bot API opens an answer that succeeded
 #define TG_BOT_ERROR_NOT_OK         "unexpected answer"     // a 200 whose answer does not say "ok": true
+#define TG_BOT_ERROR_BAD_TOKEN      "invalid token"         // tg_token has characters no bot token has
 
 #define TG_BOT_ID_MAX               24      // a decimal Telegram id, sign included
 #define TG_BOT_REPLY_MAX            2048
@@ -86,7 +87,7 @@ _Static_assert(TG_BOT_ID_MAX > (FP_STORE_TG_CHAT_ID_MAX + 1), "a chat id cut to 
                                     "'open' - Open the door (works in activated groups, "          \
                                     "and for users allowed to open it through Telegram)\n"
 
-// Task only: nothing below is touched by any other task.
+// Task only: nothing in this group is touched by any other task.
 static esp_http_client_handle_t tg_bot_http;
 static char   *tg_bot_response;                         // TG_BOT_RESPONSE_MAX bytes, NUL-terminated
 static size_t  tg_bot_response_len;
@@ -102,9 +103,9 @@ static char    tg_bot_reply[TG_BOT_REPLY_MAX];
 
 // The status tg_bot_get_status() reports: written by the bot task, read by the web server. The
 // flags use the atomic builtins; the reason, a string, is copied in and out under the spinlock.
-static bool         tg_bot_enabled;                 // a usable token is set: the bot polls
-static bool         tg_bot_online;                  // the last request got a 200 with "ok": true
-static char         tg_bot_error[TG_BOT_ERROR_MAX]; // why the last request failed; "" when none has
+static bool         tg_bot_enabled;                 // a token is set
+static bool         tg_bot_online;                  // see tg_bot_get_status() in tg_bot.h
+static char         tg_bot_error[TG_BOT_ERROR_MAX]; // see tg_bot_get_status() in tg_bot.h
 static portMUX_TYPE tg_bot_error_lock = portMUX_INITIALIZER_UNLOCKED;
 
 
@@ -259,13 +260,10 @@ static void tg_bot_send(const char *chat_id, const char *text)
     int status = 0;
     esp_err_t err = tg_bot_exchange(url, json, &status);
     free(json);
-    // Only a request that did not reach the server says it is offline: one that did can still be
-    // refused (400 or 403 for an admin who never started the bot) by a server that works.
     if (err != ESP_OK) {
+        // Only a request that did not reach the server says it is offline: one that did can still
+        // be refused (400 or 403 for an admin who never started the bot) by a server that works.
         tg_bot_note_result(err, status);
-    }
-
-    if (err != ESP_OK) {
         ESP_LOGW(TAG, "sendMessage to %s failed: %s", chat_id, esp_err_to_name(err));
     } else if (status != TG_BOT_HTTP_OK) {
         ESP_LOGW(TAG, "sendMessage to %s answered HTTP %d", chat_id, status);
@@ -300,10 +298,12 @@ static void tg_bot_use_settings(const char *server, const char *token)
     tg_bot_backlog_dropped = false;
     tg_bot_token_usable = tg_bot_token_valid(token);
     // What was known of the old server or token says nothing of the new: offline, and no reason,
-    // until a request with them goes through or fails.
-    tg_bot_set_error("");
+    // until a request with them goes through or fails. A token with characters no bot token has is
+    // never sent, and shows as that reason rather than as no token at all.
+    bool token_set = (token[0] != '\0');
+    tg_bot_set_error((token_set && (!tg_bot_token_usable)) ? TG_BOT_ERROR_BAD_TOKEN : "");
     __atomic_store_n(&tg_bot_online, false, __ATOMIC_SEQ_CST);
-    __atomic_store_n(&tg_bot_enabled, tg_bot_token_usable, __ATOMIC_SEQ_CST);
+    __atomic_store_n(&tg_bot_enabled, token_set, __ATOMIC_SEQ_CST);
     // The next request makes a new client: its scheme, port and Host header come from the server
     // it is made for, and a connection left open while the bot was idle may have been closed by
     // the server since.
