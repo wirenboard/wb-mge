@@ -1487,6 +1487,12 @@ components:
           pattern: '^([0-9]+(,[0-9]+)*)?$'
           default: ""
           description: "Numeric Telegram user ids of the bot admins, comma-separated"
+        tg_api_url:
+          type: string
+          maxLength: 63
+          pattern: '^https?://[!-"$-.0-9;->@-~]([!-"$->@-~]*[!-"$-.0->@-~])?$'
+          default: "https://api.telegram.org"
+          description: "Telegram Bot API server the bot talks to: http:// or https://, a host, an optional port and path, no trailing '/', '?' or '#'; the bot requests <tg_api_url>/bot<token>/<method>. Set it to a self-hosted telegram-bot-api server (usually http://host:8081) or a mirror where api.telegram.org is blocked. Plain http sends the token unencrypted. A change is picked up without a restart, once the request under way or the pause after it is over, and drops the updates still queued, as a token change does"
         mqtt_enabled: { type: boolean, default: false }
         mqtt_host:
           type: string

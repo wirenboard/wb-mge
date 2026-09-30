@@ -84,6 +84,7 @@ const mock_setting_item_t expected_items[] = {
     {"lock_mode", "strike", SETTING_ITEM_TYPE_STRING},
     {"tg_token", "", SETTING_ITEM_TYPE_STRING},
     {"tg_admins", "", SETTING_ITEM_TYPE_STRING},
+    {"tg_api_url", "https://api.telegram.org", SETTING_ITEM_TYPE_STRING},
 
     {"mqtt_enabled", "false", SETTING_ITEM_TYPE_BOOL},
     {"mqtt_host", "", SETTING_ITEM_TYPE_STRING},

@@ -187,6 +187,12 @@ bool validate_tg_admins(const char *value)
     return true;
 }
 
+bool validate_tg_api_url(const char *value)
+{
+    (void)value;
+    return true;
+}
+
 bool validate_mqtt_host(const char *value)
 {
     (void)value;

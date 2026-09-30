@@ -345,6 +345,15 @@ open — relay ON = open; `magnet` for an electromagnet powered to hold the door
 locked, so at rest the relay is ON and an opening switches it OFF. The Lock page also has a manual
 relay switch; it shows and sets the relay itself, whatever the mode.
 
+**Telegram bot:** `tg_token` is the bot token (empty — no bot) and `tg_admins` the numeric
+Telegram user ids of its admins. `tg_api_url` is the Bot API server the bot talks to,
+`https://api.telegram.org` by default; where that address is blocked, point it at a self-hosted
+[telegram-bot-api](https://github.com/tdlib/telegram-bot-api) server (usually `http://host:8081`)
+or a mirror. It takes `http://` or `https://`, a host, an optional port and path, and no trailing
+`/`; the bot requests `<tg_api_url>/bot<token>/<method>`. Plain `http://` sends the token
+unencrypted. The bot picks a change of the server, like one of the token, up without a restart,
+once the request under way or the pause after it is over, and drops the updates still queued.
+
 **One serial flash first.** Users and fingers live in their own NVS partition, `fp_nvs`, which
 `partitions_table.csv` adds. An OTA update never rewrites the partition table, so a device must
 be flashed over serial once (`make TARGET=mgu_v1 MB_ROLE=master flash`); until then the log says

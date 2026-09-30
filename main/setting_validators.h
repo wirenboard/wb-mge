@@ -21,13 +21,14 @@ bool validate_password(const char *value);
 bool validate_wifi_password(const char *value);
 
 // Fingerprint access control. lock_addr reuses validate_slave_id(): the relay's unit id takes
-// the 1..247 any Modbus unit id may. The two Telegram validators accept the empty string - no bot
-// configured, no admins yet.
+// the 1..247 any Modbus unit id may. The token and admins validators accept the empty string - no
+// bot configured, no admins yet; the Bot API server is always required.
 bool validate_lock_channel(const char *value);
 bool validate_lock_pulse_ms(const char *value);
 bool validate_lock_mode(const char *value);
 bool validate_tg_token(const char *value);
 bool validate_tg_admins(const char *value);
+bool validate_tg_api_url(const char *value);
 
 // MQTT settings. All three string validators accept the empty string - an unconfigured broker,
 // an anonymous connection and an unnamed device are all legitimate states - and mqtt_port reuses

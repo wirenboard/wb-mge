@@ -26,7 +26,7 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
 const { confirmDialog } = useConfirm();
 
 const lockFields = ['lock_mode', 'lock_addr', 'lock_channel', 'lock_pulse_ms'];
-const telegramFields = ['tg_token', 'tg_admins'];
+const telegramFields = ['tg_api_url', 'tg_token', 'tg_admins'];
 
 // Each card posts its own keys and nothing else, the way every other settings card does.
 const saveLock = () => updateSettings({
@@ -37,6 +37,7 @@ const saveLock = () => updateSettings({
 });
 
 const saveTelegram = () => updateSettings({
+  tg_api_url: data.value!.tg_api_url,
   tg_token: data.value!.tg_token,
   tg_admins: data.value!.tg_admins,
 });
@@ -189,6 +190,21 @@ const clearChats = async () => {
               </Button>
             </div>
             <div class="card-body">
+              <!-- Not `mono`: in the monospace font the placeholder URL overflows the 200px input. -->
+              <div class="field">
+                <label for="tg_api_url">{{ t('tg_api_url') }}</label>
+                <input
+                  id="tg_api_url"
+                  v-model="data.tg_api_url"
+                  type="text"
+                  name="tg_api_url"
+                  pattern="^(?=[\x21-\x7E]*$)https?:\/\/[^\/:?#]([^?#]*[^\/?#])?$"
+                  maxlength="63"
+                  required
+                  :placeholder="t('tg_api_url_placeholder')"
+                  @input="(ev) => onCustomValidation(ev, t('wrong_tg_api_url_pattern'))"
+                />
+              </div>
               <div class="field">
                 <label for="tg_token">{{ t('tg_token') }}</label>
                 <PasswordInput
@@ -336,11 +352,14 @@ const clearChats = async () => {
     "relay_note_page": "Serial ports",
 
     "telegram": "Telegram bot",
+    "tg_api_url": "Bot API server",
+    "tg_api_url_placeholder": "https://api.telegram.org",
     "tg_token": "Bot token",
     "tg_admins": "Admin IDs",
     "tg_admins_placeholder": "12345678, 87654321",
     "wrong_tg_token_pattern": "Enter up to 63 characters without spaces",
     "wrong_tg_admins_pattern": "Enter numeric Telegram user IDs separated by commas, without spaces",
+    "wrong_tg_api_url_pattern": "Enter an address starting with http:// or https://, without spaces, ? or #, and without a trailing /",
 
     "chats": "Allowed chats",
     "no_chats": "No allowed chats",
@@ -371,11 +390,14 @@ const clearChats = async () => {
     "relay_note_page": "Последовательные порты",
 
     "telegram": "Telegram-бот",
+    "tg_api_url": "Сервер Bot API",
+    "tg_api_url_placeholder": "https://api.telegram.org",
     "tg_token": "Токен бота",
     "tg_admins": "ID администраторов",
     "tg_admins_placeholder": "12345678, 87654321",
     "wrong_tg_token_pattern": "Введите до 63 символов без пробелов",
     "wrong_tg_admins_pattern": "Введите числовые ID пользователей Telegram через запятую, без пробелов",
+    "wrong_tg_api_url_pattern": "Введите адрес, начинающийся с http или https, без пробелов, ? и # и без / в конце",
 
     "chats": "Разрешённые чаты",
     "no_chats": "Разрешённых чатов нет",
@@ -406,11 +428,14 @@ const clearChats = async () => {
     "relay_note_page": "Сериялық порттар",
 
     "telegram": "Telegram-бот",
+    "tg_api_url": "Bot API сервері",
+    "tg_api_url_placeholder": "https://api.telegram.org",
     "tg_token": "Бот токені",
     "tg_admins": "Әкімшілер ID",
     "tg_admins_placeholder": "12345678, 87654321",
     "wrong_tg_token_pattern": "Бос орынсыз 63 таңбаға дейін енгізіңіз",
     "wrong_tg_admins_pattern": "Telegram пайдаланушыларының сандық ID-ін үтір арқылы, бос орынсыз енгізіңіз",
+    "wrong_tg_api_url_pattern": "http немесе https деп басталатын мекенжайды бос орынсыз, ? және # белгілерінсіз, соңына / қоймай енгізіңіз",
 
     "chats": "Рұқсат етілген чаттар",
     "no_chats": "Рұқсат етілген чаттар жоқ",
@@ -441,11 +466,14 @@ const clearChats = async () => {
     "relay_note_page": "Porte seriali",
 
     "telegram": "Bot Telegram",
+    "tg_api_url": "Server Bot API",
+    "tg_api_url_placeholder": "https://api.telegram.org",
     "tg_token": "Token del bot",
     "tg_admins": "ID degli amministratori",
     "tg_admins_placeholder": "12345678, 87654321",
     "wrong_tg_token_pattern": "Inserisci fino a 63 caratteri senza spazi",
     "wrong_tg_admins_pattern": "Inserisci ID numerici di utenti Telegram separati da virgole, senza spazi",
+    "wrong_tg_api_url_pattern": "Inserisci un indirizzo che inizi con http:// o https://, senza spazi, ? o # e senza / finale",
 
     "chats": "Chat consentite",
     "no_chats": "Nessuna chat consentita",
@@ -476,11 +504,14 @@ const clearChats = async () => {
     "relay_note_page": "Serielle Schnittstellen",
 
     "telegram": "Telegram-Bot",
+    "tg_api_url": "Bot-API-Server",
+    "tg_api_url_placeholder": "https://api.telegram.org",
     "tg_token": "Bot-Token",
     "tg_admins": "Admin-IDs",
     "tg_admins_placeholder": "12345678, 87654321",
     "wrong_tg_token_pattern": "Geben Sie bis zu 63 Zeichen ohne Leerzeichen ein",
     "wrong_tg_admins_pattern": "Geben Sie numerische Telegram-Benutzer-IDs durch Kommas getrennt und ohne Leerzeichen ein",
+    "wrong_tg_api_url_pattern": "Geben Sie eine Adresse ein, die mit http:// oder https:// beginnt, ohne Leerzeichen, ? oder # und ohne abschließenden /",
 
     "chats": "Erlaubte Chats",
     "no_chats": "Keine erlaubten Chats",

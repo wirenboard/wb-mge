@@ -19,6 +19,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#include "config.h"
 #include "fp_lock.h"
 #include "fp_store.h"
 #include "setting_items.h"
@@ -28,10 +29,15 @@ static const char *TAG = "tg_bot";
 #define TG_BOT_TASK_STACK_SIZE      (8 * 1024)      // the TLS handshake runs on it
 #define TG_BOT_TASK_PRIORITY        3
 
-// Every URL but the bare origin carries the token, so none of them is ever logged.
-#define TG_BOT_API_ORIGIN           "https://api.telegram.org"
-#define TG_BOT_API_URL              TG_BOT_API_ORIGIN "/bot"
-#define TG_BOT_URL_MAX              192
+// Every request URL is "<tg_api_url>/bot<token>/<method>". Every URL but the bare server carries
+// the token, so none of them is ever logged. The buffer takes the longest server and token a
+// setting can hold and the longest method: getUpdates with every number at its widest, the NUL
+// counted in by sizeof.
+#define TG_BOT_API_PATH             "/bot"
+#define TG_BOT_METHOD_MAX           sizeof("/getUpdates?offset=-9223372036854775808" \
+                                           "&limit=-2147483648&timeout=-2147483648")
+#define TG_BOT_URL_MAX              ((SETTING_ITEM_MAX_STR_LEN - 1) + (sizeof(TG_BOT_API_PATH) - 1) + \
+                                     (SETTING_ITEM_MAX_STR_LEN - 1) + TG_BOT_METHOD_MAX)
 
 #define TG_BOT_POLL_TIMEOUT_S       25      // how long Telegram holds a getUpdates open
 #define TG_BOT_HTTP_TIMEOUT_MS      ((TG_BOT_POLL_TIMEOUT_S + 10) * 1000)
@@ -83,6 +89,7 @@ static esp_http_client_handle_t tg_bot_http;
 static char   *tg_bot_response;                         // TG_BOT_RESPONSE_MAX bytes, NUL-terminated
 static size_t  tg_bot_response_len;
 static bool    tg_bot_response_overflow;
+static char    tg_bot_server[SETTING_ITEM_MAX_STR_LEN]; // the Bot API server the polls use (tg_api_url)
 static char    tg_bot_token[SETTING_ITEM_MAX_STR_LEN];  // the token the polls use - never logged
 static bool    tg_bot_token_usable;
 static int64_t tg_bot_offset;                           // the next update_id to ask for
@@ -108,20 +115,24 @@ static esp_err_t tg_bot_http_event(esp_http_client_event_t *evt)
     return ESP_OK;
 }
 
-// One HTTPS request on the kept-alive connection: a GET when body is NULL, a JSON POST otherwise.
+// One request on the kept-alive connection: a GET when body is NULL, a JSON POST otherwise.
 // The response lands in tg_bot_response, the HTTP status in *status.
 static esp_err_t tg_bot_request(const char *url, const char *body, int *status)
 {
     if (tg_bot_http == NULL) {
+        // Made for the bare server, which carries no token: a server esp_http_client cannot parse
+        // is refused - and logged - here, before any URL with the token reaches it. The crt
+        // bundle is used by an https server only.
         esp_http_client_config_t config = {
-            .url = TG_BOT_API_ORIGIN,
+            .url = tg_bot_server,
             .timeout_ms = TG_BOT_HTTP_TIMEOUT_MS,
             .crt_bundle_attach = esp_crt_bundle_attach,
             .event_handler = tg_bot_http_event,
         };
         tg_bot_http = esp_http_client_init(&config);
         if (tg_bot_http == NULL) {
-            return ESP_ERR_NO_MEM;
+            ESP_LOGE(TAG, "No HTTP client for the Bot API server %s", tg_bot_server);
+            return ESP_FAIL;
         }
     }
 
@@ -153,6 +164,14 @@ static esp_err_t tg_bot_request(const char *url, const char *body, int *status)
     return ESP_OK;
 }
 
+// Whether snprintf's result says the whole request URL made it into its buffer. A cut URL is never
+// sent: it may end inside the token or name another method. TG_BOT_URL_MAX rules that out for
+// any server and token the settings can hold.
+static bool tg_bot_url_fits(int len)
+{
+    return ((len >= 0) && ((size_t)len < TG_BOT_URL_MAX));
+}
+
 static void tg_bot_send(const char *chat_id, const char *text)
 {
     cJSON *body = cJSON_CreateObject();
@@ -170,7 +189,12 @@ static void tg_bot_send(const char *chat_id, const char *text)
     }
 
     char url[TG_BOT_URL_MAX];
-    snprintf(url, sizeof(url), TG_BOT_API_URL "%s/sendMessage", tg_bot_token);
+    int url_len = snprintf(url, sizeof(url), "%s" TG_BOT_API_PATH "%s/sendMessage", tg_bot_server, tg_bot_token);
+    if (!tg_bot_url_fits(url_len)) {
+        free(json);
+        ESP_LOGE(TAG, "sendMessage to %s: the URL does not fit its buffer", chat_id);
+        return;
+    }
     int status = 0;
     esp_err_t err = tg_bot_request(url, json, &status);
     free(json);
@@ -199,17 +223,22 @@ static bool tg_bot_token_valid(const char *token)
     return true;
 }
 
-// Switches the polls to another token. Update ids belong to one bot, so the offset reached with
-// the old token means nothing to the new one, and the new bot's backlog is dropped as at boot.
-static void tg_bot_use_token(const char *token)
+// Switches the polls to another Bot API server or token. Update ids belong to one bot, and another
+// server may number them its own way, so the offset reached before means nothing after either
+// change, and the backlog is dropped as at boot.
+static void tg_bot_use_settings(const char *server, const char *token)
 {
+    snprintf(tg_bot_server, sizeof(tg_bot_server), "%s", server);
     snprintf(tg_bot_token, sizeof(tg_bot_token), "%s", token);
     tg_bot_offset = 0;
     tg_bot_backlog_dropped = false;
     tg_bot_token_usable = tg_bot_token_valid(token);
-    // A connection left open while the bot was idle may have been closed by the server since.
+    // The next request makes a new client: its scheme, port and Host header come from the server
+    // it is made for, and a connection left open while the bot was idle may have been closed by
+    // the server since.
     if (tg_bot_http != NULL) {
-        esp_http_client_close(tg_bot_http);
+        esp_http_client_cleanup(tg_bot_http);
+        tg_bot_http = NULL;
     }
 
     if (token[0] == '\0') {
@@ -217,7 +246,7 @@ static void tg_bot_use_token(const char *token)
     } else if (!tg_bot_token_usable) {
         ESP_LOGE(TAG, "The Telegram token has characters no bot token has: the bot is idle");
     } else {
-        ESP_LOGI(TAG, "Telegram token set, polling for updates");
+        ESP_LOGI(TAG, "Telegram token set, polling %s for updates", tg_bot_server);
     }
 }
 
@@ -480,17 +509,21 @@ static void tg_bot_send_boot_message(void)
 
 static esp_err_t tg_bot_poll(void)
 {
-    // The first poll after boot or a token change drops the backlog: Telegram keeps updates for a
-    // day, and an "open" sent while the device was off, or handled just before a reboot that came
-    // ahead of the poll confirming it, must not open the door now. It asks for the newest update
-    // only, which also makes Telegram forget the older ones, and takes that one as handled. It
-    // returns at once, so the boot message does not wait out a long poll either.
+    // The first poll after boot or a server or token change drops the backlog: Telegram keeps
+    // updates for a day, and an "open" sent while the device was off, or handled just before a
+    // reboot that came ahead of the poll confirming it, must not open the door now. It asks for the
+    // newest update only, which also makes Telegram forget the older ones, and takes that one as
+    // handled. It returns at once, so the boot message does not wait out a long poll either.
     bool drop = (!tg_bot_backlog_dropped);
     int timeout_s = drop ? 0 : TG_BOT_POLL_TIMEOUT_S;
     int64_t offset = drop ? TG_BOT_OFFSET_LAST : tg_bot_offset;
     char url[TG_BOT_URL_MAX];
-    snprintf(url, sizeof(url), TG_BOT_API_URL "%s/getUpdates?offset=%" PRId64 "&limit=%d&timeout=%d", tg_bot_token,
-             offset, TG_BOT_POLL_LIMIT, timeout_s);
+    int url_len = snprintf(url, sizeof(url), "%s" TG_BOT_API_PATH "%s/getUpdates?offset=%" PRId64
+                           "&limit=%d&timeout=%d", tg_bot_server, tg_bot_token, offset, TG_BOT_POLL_LIMIT, timeout_s);
+    if (!tg_bot_url_fits(url_len)) {
+        ESP_LOGE(TAG, "getUpdates: the URL does not fit its buffer");
+        return ESP_ERR_INVALID_SIZE;
+    }
 
     int status = 0;
     esp_err_t err = tg_bot_request(url, NULL, &status);
@@ -546,18 +579,23 @@ static esp_err_t tg_bot_poll(void)
 static void tg_bot_task(void *arg)
 {
     (void)arg;
+    char server[SETTING_ITEM_MAX_STR_LEN];
     char token[SETTING_ITEM_MAX_STR_LEN];
 
     while (1) {
-        // Both settings are read on every pass, so a change needs no restart hook.
+        // The settings are read on every pass, so a change needs no restart hook: it is picked up
+        // once the request under way, or the pause after it, is over.
+        if (setting_items_read(KEY_TG_API_URL, server) != ESP_OK) {
+            snprintf(server, sizeof(server), "%s", DEFAULT_TG_API_URL);
+        }
         if (setting_items_read(KEY_TG_TOKEN, token) != ESP_OK) {
             token[0] = '\0';
         }
         if (setting_items_read(KEY_TG_ADMINS, tg_bot_admins) != ESP_OK) {
             tg_bot_admins[0] = '\0';
         }
-        if (strcmp(token, tg_bot_token) != 0) {
-            tg_bot_use_token(token);
+        if ((strcmp(server, tg_bot_server) != 0) || (strcmp(token, tg_bot_token) != 0)) {
+            tg_bot_use_settings(server, token);
         }
 
         if (!tg_bot_token_usable) {

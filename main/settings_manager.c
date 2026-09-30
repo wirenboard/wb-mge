@@ -51,6 +51,7 @@ static const setting_mapping_t top_level_mappings[] = {
     {"lock_mode", KEY_LOCK_MODE},
     {"tg_token", KEY_TG_TOKEN},
     {"tg_admins", KEY_TG_ADMINS},
+    {"tg_api_url", KEY_TG_API_URL},
     {"mqtt_enabled", KEY_MQTT_ENABLED},
     {"mqtt_host", KEY_MQTT_HOST},
     {"mqtt_port", KEY_MQTT_PORT},

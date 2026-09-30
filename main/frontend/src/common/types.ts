@@ -246,9 +246,11 @@ export interface Settings {
   lock_channel: number;
   lock_pulse_ms: number;
   lock_mode: 'strike' | 'magnet';
-  // Telegram bot: its token and the admins, a comma-separated list of numeric Telegram user IDs.
+  // Telegram bot: its token, the admins (a comma-separated list of numeric Telegram user IDs) and
+  // the Bot API server it talks to, https://api.telegram.org unless that is blocked.
   tg_token: string;
   tg_admins: string;
+  tg_api_url: string;
   // MQTT: whether the device connects to a broker, where that broker is, what it logs in as, and
   // the identifier it appears under in /devices/<id>/... . An empty mqtt_id means the firmware
   // builds one from the model and the MAC; an empty mqtt_host means no broker is configured and

@@ -45,6 +45,7 @@ bool validate_lock_pulse_ms(const char *value);
 bool validate_lock_mode(const char *value);
 bool validate_tg_token(const char *value);
 bool validate_tg_admins(const char *value);
+bool validate_tg_api_url(const char *value);
 bool validate_mqtt_host(const char *value);
 bool validate_mqtt_credential(const char *value);
 bool validate_mqtt_id(const char *value);

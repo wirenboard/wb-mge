@@ -489,6 +489,74 @@ void test_validate_wifi_password(void)
     TEST_ASSERT_FALSE_MESSAGE(validate_wifi_password(wifi_pass_with_del), "Wi-Fi password with DEL character (0x7F) should be invalid");
 }
 
+// Test validate_tg_api_url function (the Telegram Bot API server)
+void test_validate_tg_api_url(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test validate_tg_api_url function");
+    LOG_MESSAGE();
+
+    static const struct {
+        const char *value;
+        bool valid;
+        const char *what;
+    } cases[] = {
+        // Servers the bot can talk to
+        {"https://api.telegram.org", true, "Telegram's own server"},
+        {"http://192.168.1.10:8081", true, "plain http with a port (self-hosted telegram-bot-api)"},
+        {"https://tg.example.com/bot-api", true, "a server with a path prefix"},
+        {"http://[fd00::1]:8081", true, "an IPv6 literal with a port"},
+        {"http://h", true, "a one-character host"},
+
+        // No server at all
+        {"", false, "the empty string"},
+
+        // Scheme
+        {"api.telegram.org", false, "a host without a scheme"},
+        {"ftp://api.telegram.org", false, "a scheme other than http and https"},
+        {"HTTPS://api.telegram.org", false, "an upper-case scheme"},
+        {"https:/api.telegram.org", false, "a scheme with one slash"},
+
+        // Host
+        {"https://", false, "https without a host"},
+        {"http://", false, "http without a host"},
+        {"https:///bot-api", false, "a path without a host"},
+        {"http://:8081", false, "a port without a host"},
+
+        // What the bot appends to the server must stay a path
+        {"https://api.telegram.org/", false, "a trailing slash"},
+        {"https://tg.example.com/bot-api/", false, "a trailing slash after a path"},
+        {"https://tg.example.com?a=b", false, "a query"},
+        {"https://tg.example.com#top", false, "a fragment"},
+
+        // Whitespace and bytes a URL has no room for
+        {"https://api.telegram .org", false, "a space"},
+        {" https://api.telegram.org", false, "a leading space"},
+        {"https://api.telegram.org\t", false, "a trailing tab"},
+        {"https://api.telegram.org\n", false, "a trailing newline"},
+        {"https://api.telegram.org\x7F", false, "DEL (0x7F)"},
+        {"https://\xD0\xB1\xD0\xBE\xD1\x82.example", false, "non-ASCII bytes"},
+    };
+
+    char message[TEST_BUFFER_SIZE];
+    for (size_t i = 0; i < (sizeof(cases) / sizeof(cases[0])); i++) {
+        snprintf(message, sizeof(message), "%s should be %s", cases[i].what, cases[i].valid ? "valid" : "invalid");
+        TEST_ASSERT_EQUAL_MESSAGE(cases[i].valid, validate_tg_api_url(cases[i].value), message);
+    }
+
+    TEST_ASSERT_FALSE_MESSAGE(validate_tg_api_url(NULL), "NULL should be invalid");
+
+    // Exactly SETTING_ITEM_MAX_STR_LEN - 1 characters is the whole room a setting value has
+    char url[SETTING_ITEM_MAX_STR_LEN + 1];
+    memset(url, 'a', SETTING_ITEM_MAX_STR_LEN);
+    memcpy(url, "https://", sizeof("https://") - 1);
+    url[SETTING_ITEM_MAX_STR_LEN - 1] = '\0';
+    TEST_ASSERT_TRUE_MESSAGE(validate_tg_api_url(url), "A URL filling the whole setting should be valid");
+    url[SETTING_ITEM_MAX_STR_LEN - 1] = 'a';
+    url[SETTING_ITEM_MAX_STR_LEN] = '\0';
+    TEST_ASSERT_FALSE_MESSAGE(validate_tg_api_url(url), "A URL one character longer than a setting should be invalid");
+}
+
 // Table-wide invariant: every entry of the settings table must be accepted by the real
 // validator bound to it. A key whose own default its own validator rejects is unusable
 // over the settings API — the device writes the value on first boot, exports it via
@@ -583,6 +651,7 @@ int main(void)
     RUN_TEST(test_validate_login);
     RUN_TEST(test_validate_password);
     RUN_TEST(test_validate_wifi_password);
+    RUN_TEST(test_validate_tg_api_url);
 
     RUN_TEST(test_setting_defaults_pass_their_validators);
 

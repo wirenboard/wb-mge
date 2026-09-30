@@ -25,6 +25,12 @@
 #define MAX_MQTT_STR_LEN                    63
 #define MAX_MQTT_ID_LEN                     63
 #define TG_ADMINS_SEPARATOR                 ','
+#define TG_API_URL_HTTP_PREFIX              "http://"
+#define TG_API_URL_HTTPS_PREFIX             "https://"
+#define TG_API_URL_PATH_SEPARATOR           '/'
+#define TG_API_URL_PORT_SEPARATOR           ':'
+#define TG_API_URL_QUERY_START              '?'
+#define TG_API_URL_FRAGMENT_START           '#'
 
 // A decimal integer in min..max and nothing else.
 static bool validate_int_range(const char *value, long min, long max)
@@ -536,6 +542,47 @@ bool validate_tg_admins(const char *value)
         }
     }
     return digit_seen;
+}
+
+// The Bot API server the bot talks to: "http://" or "https://" (lower case), a host, then
+// optionally a port and a path - Telegram's own server, a self-hosted telegram-bot-api (usually
+// plain http on port 8081) or a mirror. The bot appends "/bot<token>/<method>" to it, so a
+// trailing '/' is refused rather than doubled, and so are '?' and '#', which would turn that
+// path into a query or a fragment. Printable ASCII only and no spaces: a URL has no other bytes.
+bool validate_tg_api_url(const char *value)
+{
+    if (!value) {
+        return false;
+    }
+
+    size_t len = strlen(value);
+    if (len > MAX_TG_STR_LEN) {
+        return false;
+    }
+
+    const char *host = NULL;
+    if (strncmp(value, TG_API_URL_HTTPS_PREFIX, sizeof(TG_API_URL_HTTPS_PREFIX) - 1) == 0) {
+        host = value + (sizeof(TG_API_URL_HTTPS_PREFIX) - 1);
+    } else if (strncmp(value, TG_API_URL_HTTP_PREFIX, sizeof(TG_API_URL_HTTP_PREFIX) - 1) == 0) {
+        host = value + (sizeof(TG_API_URL_HTTP_PREFIX) - 1);
+    } else {
+        return false;
+    }
+    // The scheme is followed by a host, not by nothing, a path or a bare port.
+    if ((*host == '\0') || (*host == TG_API_URL_PATH_SEPARATOR) || (*host == TG_API_URL_PORT_SEPARATOR)) {
+        return false;
+    }
+    if (value[len - 1] == TG_API_URL_PATH_SEPARATOR) {
+        return false;
+    }
+
+    for (size_t i = 0; i < len; i++) {
+        char c = value[i];
+        if ((c <= ' ') || (c > '~') || (c == TG_API_URL_QUERY_START) || (c == TG_API_URL_FRAGMENT_START)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // The broker's address: a host name or an IP literal, or nothing at all - "no broker configured"
