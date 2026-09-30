@@ -112,49 +112,133 @@ const addNetwork = () => {
 
     <div v-if="data" class="main-body">
       <div class="grid-2">
-        <section class="card">
-          <form
-            @submit.prevent="updateSettings({
-              ethernet: {
-                dhcpc: data.ethernet.dhcpc,
-                ip_static: data.ethernet.ip_static,
-                mask_static: data.ethernet.mask_static,
-                gw_static: data.ethernet.gw_static,
-              }
-            })">
-            <div class="card-header">
-              <div class="title">{{ t('ethernet') }}</div>
-              <Button
-                type="submit"
-                :is-loading="isLoading && isChanged(['ethernet'])"
-                :disabled="isLoading || !isChanged(['ethernet'])"
-              >
-                {{ t('save') }}
-              </Button>
-            </div>
-            <div class="card-body">
-              <div class="field">
-                <label for="eth_dhcpc">{{ t('dhcp_client') }}</label>
-                <div class="network-switchEnd"><Switch id="eth_dhcpc" v-model="data.ethernet.dhcpc" /></div>
+        <!-- Ethernet and MQTT share a column, so the tall Wi-Fi card leaves no gap under Ethernet.
+             Without Wi-Fi the wrapper dissolves and the two cards sit side by side. -->
+        <div :class="data.wifi_perm_disable ? 'network-columnFlat' : 'stack'">
+          <section class="card">
+            <form
+              @submit.prevent="updateSettings({
+                ethernet: {
+                  dhcpc: data.ethernet.dhcpc,
+                  ip_static: data.ethernet.ip_static,
+                  mask_static: data.ethernet.mask_static,
+                  gw_static: data.ethernet.gw_static,
+                }
+              })">
+              <div class="card-header">
+                <div class="title">{{ t('ethernet') }}</div>
+                <Button
+                  type="submit"
+                  :is-loading="isLoading && isChanged(['ethernet'])"
+                  :disabled="isLoading || !isChanged(['ethernet'])"
+                >
+                  {{ t('save') }}
+                </Button>
               </div>
+              <div class="card-body">
+                <div class="field">
+                  <label for="eth_dhcpc">{{ t('dhcp_client') }}</label>
+                  <div class="network-switchEnd"><Switch id="eth_dhcpc" v-model="data.ethernet.dhcpc" /></div>
+                </div>
 
-              <template v-if="!data.ethernet.dhcpc">
+                <template v-if="!data.ethernet.dhcpc">
+                  <div class="field">
+                    <label for="eth_ip_static">{{ t('ip') }}</label>
+                    <IpInput id="eth_ip_static" v-model="data.ethernet.ip_static" :disabled="data.ethernet.dhcpc" name="eth_ip_static" />
+                  </div>
+                  <div class="field">
+                    <label for="eth_gw_static">{{ t('gateway') }}</label>
+                    <IpInput id="eth_gw_static" v-model="data.ethernet.gw_static" :disabled="data.ethernet.dhcpc" name="eth_gw_static" />
+                  </div>
+                  <div class="field">
+                    <label for="eth_mask_static">{{ t('mask') }}</label>
+                    <IpInput id="eth_mask_static" v-model="data.ethernet.mask_static" :disabled="data.ethernet.dhcpc" name="eth_mask_static" />
+                  </div>
+                </template>
+              </div>
+            </form>
+          </section>
+
+          <section class="card">
+            <form @submit.prevent="updateMqttSettings">
+              <div class="card-header">
+                <div class="title">{{ t('mqtt') }}</div>
+                <Button
+                  type="submit"
+                  :is-loading="isLoading && isChanged(mqttFields)"
+                  :disabled="isLoading || !isChanged(mqttFields)"
+                >
+                  {{ t('save') }}
+                </Button>
+              </div>
+              <div class="card-body">
                 <div class="field">
-                  <label for="eth_ip_static">{{ t('ip') }}</label>
-                  <IpInput id="eth_ip_static" v-model="data.ethernet.ip_static" :disabled="data.ethernet.dhcpc" name="eth_ip_static" />
+                  <label for="mqtt_enabled">{{ t('mqtt_enable') }}</label>
+                  <div class="network-switchEnd"><Switch id="mqtt_enabled" v-model="data.mqtt_enabled" /></div>
                 </div>
                 <div class="field">
-                  <label for="eth_gw_static">{{ t('gateway') }}</label>
-                  <IpInput id="eth_gw_static" v-model="data.ethernet.gw_static" :disabled="data.ethernet.dhcpc" name="eth_gw_static" />
+                  <label for="mqtt_host">{{ t('mqtt_host') }}</label>
+                  <input
+                    id="mqtt_host"
+                    v-model="data.mqtt_host"
+                    type="text"
+                    name="mqtt_host"
+                    class="mono"
+                    pattern="^[\x21-\x7E]{0,63}$"
+                    maxlength="63"
+                    :placeholder="t('mqtt_host_placeholder')"
+                    @input="(ev) => onCustomValidation(ev, t('wrong_mqtt_host_pattern'))"
+                  />
                 </div>
                 <div class="field">
-                  <label for="eth_mask_static">{{ t('mask') }}</label>
-                  <IpInput id="eth_mask_static" v-model="data.ethernet.mask_static" :disabled="data.ethernet.dhcpc" name="eth_mask_static" />
+                  <label for="mqtt_port">{{ t('mqtt_port') }}</label>
+                  <InputNumber id="mqtt_port" v-model="data.mqtt_port" name="mqtt_port" class="mono" min="1" max="65535" required />
                 </div>
-              </template>
-            </div>
-          </form>
-        </section>
+                <div class="field">
+                  <label for="mqtt_user">{{ t('mqtt_user') }}</label>
+                  <input
+                    id="mqtt_user"
+                    v-model="data.mqtt_user"
+                    type="text"
+                    name="mqtt_user"
+                    autocomplete="off"
+                    pattern="^[\x20-\x7E]{0,63}$"
+                    maxlength="63"
+                    @input="(ev) => onCustomValidation(ev, t('wrong_mqtt_credential_pattern'))"
+                  />
+                </div>
+                <div class="field">
+                  <label for="mqtt_pass">{{ t('mqtt_pass') }}</label>
+                  <PasswordInput
+                    id="mqtt_pass"
+                    v-model="data.mqtt_pass"
+                    name="mqtt_pass"
+                    autocomplete="new-password"
+                    pattern="^[\x20-\x7E]{0,63}$"
+                    maxlength="63"
+                    @input="(ev: Event) => onCustomValidation(ev, t('wrong_mqtt_credential_pattern'))"
+                  />
+                </div>
+                <!-- The id is pasted straight into /devices/<id>/... , so the characters MQTT
+                     gives a meaning of their own are refused here as well as by the firmware. -->
+                <div class="field">
+                  <label for="mqtt_id">{{ t('mqtt_id') }}</label>
+                  <input
+                    id="mqtt_id"
+                    v-model="data.mqtt_id"
+                    type="text"
+                    name="mqtt_id"
+                    class="mono"
+                    pattern="^[\x21-\x22\x24-\x2A\x2C-\x2E\x30-\x7E]{0,63}$"
+                    maxlength="63"
+                    :placeholder="t('mqtt_id_placeholder')"
+                    @input="(ev) => onCustomValidation(ev, t('wrong_mqtt_id_pattern'))"
+                  />
+                </div>
+              </div>
+            </form>
+          </section>
+        </div>
 
         <template v-if="!data.wifi_perm_disable">
         <section class="card">
@@ -327,86 +411,6 @@ const addNetwork = () => {
           </form>
         </section>
         </template>
-
-        <section class="card">
-          <form @submit.prevent="updateMqttSettings">
-            <div class="card-header">
-              <div class="title">{{ t('mqtt') }}</div>
-              <Button
-                type="submit"
-                :is-loading="isLoading && isChanged(mqttFields)"
-                :disabled="isLoading || !isChanged(mqttFields)"
-              >
-                {{ t('save') }}
-              </Button>
-            </div>
-            <div class="card-body">
-              <div class="field">
-                <label for="mqtt_enabled">{{ t('mqtt_enable') }}</label>
-                <div class="network-switchEnd"><Switch id="mqtt_enabled" v-model="data.mqtt_enabled" /></div>
-              </div>
-              <div class="field">
-                <label for="mqtt_host">{{ t('mqtt_host') }}</label>
-                <input
-                  id="mqtt_host"
-                  v-model="data.mqtt_host"
-                  type="text"
-                  name="mqtt_host"
-                  class="mono"
-                  pattern="^[\x21-\x7E]{0,63}$"
-                  maxlength="63"
-                  :placeholder="t('mqtt_host_placeholder')"
-                  @input="(ev) => onCustomValidation(ev, t('wrong_mqtt_host_pattern'))"
-                />
-              </div>
-              <div class="field">
-                <label for="mqtt_port">{{ t('mqtt_port') }}</label>
-                <InputNumber id="mqtt_port" v-model="data.mqtt_port" name="mqtt_port" class="mono" min="1" max="65535" required />
-              </div>
-              <div class="field">
-                <label for="mqtt_user">{{ t('mqtt_user') }}</label>
-                <input
-                  id="mqtt_user"
-                  v-model="data.mqtt_user"
-                  type="text"
-                  name="mqtt_user"
-                  autocomplete="off"
-                  pattern="^[\x20-\x7E]{0,63}$"
-                  maxlength="63"
-                  @input="(ev) => onCustomValidation(ev, t('wrong_mqtt_credential_pattern'))"
-                />
-              </div>
-              <div class="field">
-                <label for="mqtt_pass">{{ t('mqtt_pass') }}</label>
-                <PasswordInput
-                  id="mqtt_pass"
-                  v-model="data.mqtt_pass"
-                  name="mqtt_pass"
-                  autocomplete="new-password"
-                  pattern="^[\x20-\x7E]{0,63}$"
-                  maxlength="63"
-                  @input="(ev: Event) => onCustomValidation(ev, t('wrong_mqtt_credential_pattern'))"
-                />
-              </div>
-              <!-- The id is pasted straight into /devices/<id>/... , so the characters MQTT
-                   gives a meaning of their own are refused here as well as by the firmware. -->
-              <div class="field">
-                <label for="mqtt_id">{{ t('mqtt_id') }}</label>
-                <input
-                  id="mqtt_id"
-                  v-model="data.mqtt_id"
-                  type="text"
-                  name="mqtt_id"
-                  class="mono"
-                  pattern="^[\x21-\x22\x24-\x2A\x2C-\x2E\x30-\x7E]{0,63}$"
-                  maxlength="63"
-                  :placeholder="t('mqtt_id_placeholder')"
-                  @input="(ev) => onCustomValidation(ev, t('wrong_mqtt_id_pattern'))"
-                />
-              </div>
-            </div>
-          </form>
-        </section>
       </div>
     </div>
   </Layout>
@@ -415,6 +419,10 @@ const addNetwork = () => {
 <style>
 .network-switchEnd {
   justify-self: end;
+}
+
+.network-columnFlat {
+  display: contents;
 }
 
 .network-dropdown {
@@ -542,7 +550,7 @@ const addNetwork = () => {
     "mqtt": "MQTT",
     "mqtt_enable": "Қосу",
     "mqtt_host": "Брокер мекенжайы",
-    "mqtt_host_placeholder": "Хост атауы немесе IP-мекенжай",
+    "mqtt_host_placeholder": "Хост немесе IP",
     "mqtt_port": "Порт",
     "mqtt_user": "Логин",
     "mqtt_pass": "Құпия сөз",
@@ -576,7 +584,7 @@ const addNetwork = () => {
     "mqtt": "MQTT",
     "mqtt_enable": "Abilitato",
     "mqtt_host": "Indirizzo del broker",
-    "mqtt_host_placeholder": "Nome host o indirizzo IP",
+    "mqtt_host_placeholder": "Host o IP",
     "mqtt_port": "Porta",
     "mqtt_user": "Nome utente",
     "mqtt_pass": "Password",
@@ -610,7 +618,7 @@ const addNetwork = () => {
     "mqtt": "MQTT",
     "mqtt_enable": "Aktiviert",
     "mqtt_host": "Broker-Adresse",
-    "mqtt_host_placeholder": "Hostname oder IP-Adresse",
+    "mqtt_host_placeholder": "Host oder IP",
     "mqtt_port": "Port",
     "mqtt_user": "Benutzername",
     "mqtt_pass": "Passwort",

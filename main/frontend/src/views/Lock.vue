@@ -332,7 +332,7 @@ const clearChats = async () => {
     "telegram": "Telegram bot",
     "tg_token": "Bot token",
     "tg_admins": "Admin IDs",
-    "tg_admins_placeholder": "Numeric user IDs, comma-separated",
+    "tg_admins_placeholder": "12345678, 87654321",
     "wrong_tg_token_pattern": "Enter up to 63 characters without spaces",
     "wrong_tg_admins_pattern": "Enter numeric Telegram user IDs separated by commas, without spaces",
 
@@ -365,7 +365,7 @@ const clearChats = async () => {
     "telegram": "Telegram-бот",
     "tg_token": "Токен бота",
     "tg_admins": "ID администраторов",
-    "tg_admins_placeholder": "Числовые ID пользователей через запятую",
+    "tg_admins_placeholder": "12345678, 87654321",
     "wrong_tg_token_pattern": "Введите до 63 символов без пробелов",
     "wrong_tg_admins_pattern": "Введите числовые ID пользователей Telegram через запятую, без пробелов",
 
@@ -398,7 +398,7 @@ const clearChats = async () => {
     "telegram": "Telegram-бот",
     "tg_token": "Бот токені",
     "tg_admins": "Әкімшілер ID",
-    "tg_admins_placeholder": "Пайдаланушылардың сандық ID, үтір арқылы",
+    "tg_admins_placeholder": "12345678, 87654321",
     "wrong_tg_token_pattern": "Бос орынсыз 63 таңбаға дейін енгізіңіз",
     "wrong_tg_admins_pattern": "Telegram пайдаланушыларының сандық ID-ін үтір арқылы, бос орынсыз енгізіңіз",
 
@@ -431,7 +431,7 @@ const clearChats = async () => {
     "telegram": "Bot Telegram",
     "tg_token": "Token del bot",
     "tg_admins": "ID degli amministratori",
-    "tg_admins_placeholder": "ID numerici degli utenti, separati da virgole",
+    "tg_admins_placeholder": "12345678, 87654321",
     "wrong_tg_token_pattern": "Inserisci fino a 63 caratteri senza spazi",
     "wrong_tg_admins_pattern": "Inserisci ID numerici di utenti Telegram separati da virgole, senza spazi",
 
@@ -464,7 +464,7 @@ const clearChats = async () => {
     "telegram": "Telegram-Bot",
     "tg_token": "Bot-Token",
     "tg_admins": "Admin-IDs",
-    "tg_admins_placeholder": "Numerische Benutzer-IDs, durch Kommas getrennt",
+    "tg_admins_placeholder": "12345678, 87654321",
     "wrong_tg_token_pattern": "Geben Sie bis zu 63 Zeichen ohne Leerzeichen ein",
     "wrong_tg_admins_pattern": "Geben Sie numerische Telegram-Benutzer-IDs durch Kommas getrennt und ohne Leerzeichen ein",
 
