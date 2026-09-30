@@ -353,6 +353,10 @@ or a mirror. It takes `http://` or `https://`, a host, an optional port and path
 `/`; the bot requests `<tg_api_url>/bot<token>/<method>`. Plain `http://` sends the token
 unencrypted. The bot picks a change of the server, like one of the token, up without a restart,
 once the request under way or the pause after it is over, and drops the updates still queued.
+A bot moved to a self-hosted server must first be logged out of the cloud one (Bot API `logOut`,
+called from a machine that can reach api.telegram.org), or its updates may not arrive; it cannot
+log back in to the cloud server for 10 minutes after that. A mirror of api.telegram.org needs
+none of this.
 
 **One serial flash first.** Users and fingers live in their own NVS partition, `fp_nvs`, which
 `partitions_table.csv` adds. An OTA update never rewrites the partition table, so a device must

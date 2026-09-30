@@ -93,7 +93,7 @@ static char    tg_bot_server[SETTING_ITEM_MAX_STR_LEN]; // the Bot API server th
 static char    tg_bot_token[SETTING_ITEM_MAX_STR_LEN];  // the token the polls use - never logged
 static bool    tg_bot_token_usable;
 static int64_t tg_bot_offset;                           // the next update_id to ask for
-static bool    tg_bot_backlog_dropped;                  // false until the first poll with this token
+static bool    tg_bot_backlog_dropped;                  // false until the first poll with this server and token
 static bool    tg_bot_booted;                           // the boot message has been sent
 static char    tg_bot_admins[SETTING_ITEM_MAX_STR_LEN];
 static char    tg_bot_reply[TG_BOT_REPLY_MAX];
