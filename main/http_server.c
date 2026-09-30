@@ -21,7 +21,7 @@
 #include "setting_items.h"
 #include "sys_info.h"
 
-#define MAX_URI_HANDLERS                    26          // 25 endpoints below (two SDR-only, one COVERAGE_BUILD-only)
+#define MAX_URI_HANDLERS                    26          // 26 endpoints below (three SDR-only, one COVERAGE_BUILD-only)
 #define STACK_SIZE                          (1024 * 6)
 #define MAX_OPEN_SOCKETS                    12          // Increased to allow simultaneous connections from at least 2-3 devices
 
@@ -296,6 +296,12 @@ static const httpd_uri_t sdr_scan_get = {
     .handler = sdr_http_scan_get_handler,
     .user_ctx = NULL,
 };
+static const httpd_uri_t sdr_networks_get = {
+    .uri = "/sdr/networks",
+    .method = HTTP_GET,
+    .handler = sdr_http_networks_get_handler,
+    .user_ctx = NULL,
+};
 #endif
 
 
@@ -340,10 +346,14 @@ esp_err_t http_server_init_port(uint16_t port)
     snprintf(s_etag_js,   sizeof(s_etag_js),   "\"%s-js\"",   build_id);
     snprintf(s_etag_css,  sizeof(s_etag_css),  "\"%s-css\"",  build_id);
 
+#if !WB_SDR_ENABLED
+    // Not in an SDR build: the SDR scans for networks itself, and this module's task would take the results
+    // on WIFI_EVENT_SCAN_DONE. Its handlers refuse while it is not initialised.
     if (wifi_scan_init() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize WiFi scan module");
         return ESP_FAIL;
     }
+#endif
 
     if (auth_init() != ESP_OK) {
         ESP_LOGE(TAG, "Failed to initialize authentication module");
@@ -379,6 +389,7 @@ esp_err_t http_server_init_port(uint16_t port)
 #if WB_SDR_ENABLED
         httpd_register_uri_handler(http_server, &sdr_info_get);
         httpd_register_uri_handler(http_server, &sdr_scan_get);
+        httpd_register_uri_handler(http_server, &sdr_networks_get);
 #endif
 #ifdef COVERAGE_BUILD
         coverage_dump_register_handlers(http_server);

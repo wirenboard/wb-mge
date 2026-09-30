@@ -70,7 +70,8 @@ export const api = async <T>(url: string, options: Options = {}): Promise<T> => 
 
 // api() for endpoints that answer with raw bytes. There is no envelope check: a refusal from such an
 // endpoint always comes with a 4xx/5xx status, which the shared mapping above already rejects on.
-export const apiBinary = async (url: string, options: Options = {}): Promise<ArrayBuffer> =>
+// The headers come along for endpoints that report side values in them.
+export const apiBinary = async (url: string, options: Options = {}): Promise<{ body: ArrayBuffer; headers: Headers }> =>
   ky(requestUrl(url), { timeout: DEFAULT_TIMEOUT_MS, ...options })
-    .arrayBuffer()
+    .then(async (response) => ({ body: await response.arrayBuffer(), headers: response.headers }))
     .catch(mapRequestError);

@@ -12,11 +12,13 @@ interface SdrInfo {
   start_mhz: number;
   stop_mhz: number;
   bin_khz: number;
+  dwell_max_ms: number;
 }
 
 // Query of GET /sdr/scan. A type alias rather than an interface, so it passes as ky's searchParams.
 type ScanParams = {
   gain: number;
+  dwell_ms: number;
 };
 
 // A whole device scan: bin i is centred at startMhz + i * binMhz.
@@ -26,16 +28,43 @@ interface Frame {
   binMhz: number;
 }
 
+// The display row being collected: the per-bin maximum of its scans so far.
+interface Row {
+  peak: Int8Array;
+  startedAt: number;
+}
+
 interface WifiChannel {
   number: number;
   mhz: number;
 }
 
+type SecondaryChannel = 'none' | 'above' | 'below';
+
+interface WifiNetwork {
+  ssid: string;
+  bssid: string;
+  channel: number;
+  second: SecondaryChannel;
+  rssi: number;
+}
+
 const DEFAULT_START_MHZ = 2400;
 const DEFAULT_STOP_MHZ = 2500;
-const DEFAULT_GAIN = 60;
+const DEFAULT_GAIN = 40;
 const GAIN_AGC = -1;
+const GAIN_HEADER = 'X-Sdr-Gain';
+const DWELL_OPTIONS_MS = [0, 50, 100, 200, 500, 1000, 2000];
+const SWEEP_OPTIONS_MS = [0, 250, 500, 1000, 2000, 5000];
+const DEFAULT_DWELL_MS = 0;
+const DEFAULT_SWEEP_MS = 0;
+// The device listens for the dwell time at each of the two frequencies a scan tunes to.
+const SCAN_TUNINGS = 2;
+const SCAN_BASE_TIMEOUT_MS = 5500;
+const NETWORKS_TIMEOUT_MS = 10000;
 const KHZ_PER_MHZ = 1000;
+const MS_PER_S = 1000;
+const CURSOR_DECIMALS = 2;
 const FLOOR_MIN_DB = -140;
 const FLOOR_MAX_DB = -40;
 const DEFAULT_FLOOR_DB = -100;
@@ -59,18 +88,44 @@ const CHANNEL_TICK_PX = 4;
 const CHANNEL_ROW_PX = 18;
 const FREQ_ROW_PX = 18;
 const AXIS_HEIGHT_PX = CHANNEL_ROW_PX + FREQ_ROW_PX;
+const CURSOR_COLOR = 'rgba(255, 255, 255, 0.7)';
+const CURSOR_TEXT_COLOR = '#ffffff';
+const CURSOR_BOX_PAD_PX = 2;
 
 const WIFI_CHANNEL_1_MHZ = 2412;
 const WIFI_CHANNEL_STEP_MHZ = 5;
-const WIFI_REGULAR_CHANNELS = 13;
+const WIFI_CHANNEL_14 = 14;
 const WIFI_CHANNEL_14_MHZ = 2484;
-const WIFI_CHANNELS: ReadonlyArray<WifiChannel> = [
-  ...Array.from({ length: WIFI_REGULAR_CHANNELS }, (_, index) => ({
-    number: index + 1,
-    mhz: WIFI_CHANNEL_1_MHZ + (WIFI_CHANNEL_STEP_MHZ * index),
-  })),
-  { number: WIFI_REGULAR_CHANNELS + 1, mhz: WIFI_CHANNEL_14_MHZ },
-];
+
+const wifiChannelMhz = (channel: number): number => ((channel === WIFI_CHANNEL_14)
+  ? WIFI_CHANNEL_14_MHZ
+  : WIFI_CHANNEL_1_MHZ + (WIFI_CHANNEL_STEP_MHZ * (channel - 1)));
+
+const WIFI_CHANNELS: ReadonlyArray<WifiChannel> = Array.from({ length: WIFI_CHANNEL_14 }, (_, index) => ({
+  number: index + 1,
+  mhz: wifiChannelMhz(index + 1),
+}));
+
+const NETWORK_WIDTH_MHZ = 20;
+const NETWORK_WIDE_WIDTH_MHZ = 40;
+// The top edge of a network's trapezoid is this much narrower than its base on each side.
+const NETWORK_SHOULDER_MHZ = 2;
+// A 40 MHz network is centred between its primary channel and the secondary one.
+const NETWORK_CENTRE_SHIFT_MHZ: Record<SecondaryChannel, number> = { none: 0, above: 10, below: -10 };
+const NETWORK_RSSI_MIN_DBM = -100;
+const NETWORK_RSSI_MAX_DBM = -20;
+const NETWORK_FILL_ALPHA = 0.18;
+const NETWORK_PALETTE = ['#ff6b6b', '#4dabf7', '#ffa94d', '#b197fc', '#3bc9db', '#ffd43b', '#f783ac'];
+const BSSID_HASH_MULTIPLIER = 31;
+
+// The same BSSID keeps its colour from one scan of networks to the next.
+const networkColor = (bssid: string): string => {
+  let hash = 0;
+  for (let index = 0; index < bssid.length; index++) {
+    hash = ((hash * BSSID_HASH_MULTIPLIER) + bssid.charCodeAt(index)) >>> 0;
+  }
+  return NETWORK_PALETTE[hash % NETWORK_PALETTE.length];
+};
 
 const buildWaterfallLut = (): Uint8ClampedArray => {
   const lut = new Uint8ClampedArray(LUT_SIZE * 3);
@@ -102,7 +157,7 @@ const gridStepDb = (range: number): number => {
   return range <= 80 ? 10 : 20;
 };
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 const info = ref<SdrInfo>();
 // The fields hold what was typed; the plots show the last pair that passed validation.
@@ -110,20 +165,37 @@ const startMhz = ref(DEFAULT_START_MHZ);
 const stopMhz = ref(DEFAULT_STOP_MHZ);
 const scanStartMhz = ref(DEFAULT_START_MHZ);
 const scanStopMhz = ref(DEFAULT_STOP_MHZ);
-// With AGC every sweep step picks its own gain and the stitched spectrum shows steps, hence manual by default.
-const agc = ref(false);
+const agc = ref(true);
+// Under AGC this follows the gain the device reports, so switching AGC off keeps that gain as the manual one.
 const gain = ref(DEFAULT_GAIN);
+const dwellMs = ref(DEFAULT_DWELL_MS);
+const sweepMs = ref(DEFAULT_SWEEP_MS);
 const floorDb = ref(DEFAULT_FLOOR_DB);
 const rangeDb = ref(DEFAULT_RANGE_DB);
 const isRunning = ref(false);
 const errorKey = ref('');
+const isScanningNetworks = ref(false);
+const networksErrorKey = ref('');
 
 const spectrumCanvas = ref<HTMLCanvasElement>();
 const waterfallCanvas = ref<HTMLCanvasElement>();
+const overlayCanvas = ref<HTMLCanvasElement>();
 
 let lastFrame: Frame | null = null;
+let pendingRow: Row | null = null;
+let networks: WifiNetwork[] = [];
+// Pointer position over the plots in CSS pixels, null while the pointer is elsewhere.
+let cursorX: number | null = null;
 let loop: Promise<void> | null = null;
 let resizeObserver: ResizeObserver | null = null;
+
+const dwellOptions = computed((): number[] =>
+  DWELL_OPTIONS_MS.filter((ms) => !info.value || (ms <= info.value.dwell_max_ms)));
+
+const dwellLabel = (ms: number): string => (ms ? t('value_ms', { value: ms }) : t('dwell_single'));
+
+const sweepLabel = (ms: number): string =>
+  (ms ? t('value_s', { value: (ms / MS_PER_S).toLocaleString(locale.value) }) : t('sweep_every'));
 
 // v-model.number leaves an empty or unparsable field as a string, which the integer check rejects.
 const spanError = computed((): string => {
@@ -147,9 +219,12 @@ const spanError = computed((): string => {
 
 const scanParams = (): ScanParams => ({
   gain: agc.value ? GAIN_AGC : gain.value,
+  dwell_ms: dwellMs.value,
 });
 
-const isSameScan = (a: ScanParams, b: ScanParams): boolean => a.gain === b.gain;
+const isSameScan = (a: ScanParams, b: ScanParams): boolean => (a.gain === b.gain) && (a.dwell_ms === b.dwell_ms);
+
+const scanTimeoutMs = (params: ScanParams): number => (SCAN_TUNINGS * params.dwell_ms) + SCAN_BASE_TIMEOUT_MS;
 
 const expectedBins = (limits: SdrInfo): number =>
   Math.round(((limits.stop_mhz - limits.start_mhz) * KHZ_PER_MHZ) / limits.bin_khz);
@@ -245,6 +320,53 @@ const drawFrequencyAxis = (ctx: CanvasRenderingContext2D, width: number, plotHei
   }
 };
 
+// Each network is a trapezoid over its channel, as tall as its RSSI on a fixed dBm scale that ignores the
+// floor and range sliders, with its SSID and RSSI above it.
+const drawNetworks = (ctx: CanvasRenderingContext2D, width: number, plotHeight: number) => {
+  const start = scanStartMhz.value;
+  const stop = scanStopMhz.value;
+  const xOf = (mhz: number): number => ((mhz - start) * width) / (stop - start);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, width, plotHeight);
+  ctx.clip();
+  ctx.textAlign = 'center';
+  for (const network of networks) {
+    const centreMhz = wifiChannelMhz(network.channel) + NETWORK_CENTRE_SHIFT_MHZ[network.second];
+    const halfBaseMhz = ((network.second === 'none') ? NETWORK_WIDTH_MHZ : NETWORK_WIDE_WIDTH_MHZ) / 2;
+    const halfTopMhz = halfBaseMhz - NETWORK_SHOULDER_MHZ;
+    if (((centreMhz + halfBaseMhz) <= start) || ((centreMhz - halfBaseMhz) >= stop)) {
+      continue;
+    }
+    const level = (network.rssi - NETWORK_RSSI_MIN_DBM) / (NETWORK_RSSI_MAX_DBM - NETWORK_RSSI_MIN_DBM);
+    const top = plotHeight * (1 - Math.min(1, Math.max(0, level)));
+    const color = networkColor(network.bssid);
+
+    ctx.beginPath();
+    ctx.moveTo(xOf(centreMhz - halfBaseMhz), plotHeight);
+    ctx.lineTo(xOf(centreMhz - halfTopMhz), top);
+    ctx.lineTo(xOf(centreMhz + halfTopMhz), top);
+    ctx.lineTo(xOf(centreMhz + halfBaseMhz), plotHeight);
+    ctx.closePath();
+    ctx.globalAlpha = NETWORK_FILL_ALPHA;
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = color;
+    ctx.stroke();
+
+    const label = `${network.ssid || t('hidden_network')} ${network.rssi} ${t('unit_dbm')}`;
+    const halfLabelWidth = ctx.measureText(label).width / 2;
+    const labelX = Math.min(width - halfLabelWidth, Math.max(halfLabelWidth, xOf(centreMhz)));
+    // A label above a trapezoid that reaches the top would be cut off by the canvas edge.
+    const isBelow = top < (LABEL_FONT_PX + LABEL_PAD_PX);
+    ctx.textBaseline = isBelow ? 'top' : 'bottom';
+    ctx.fillText(label, labelX, isBelow ? (top + 2) : (top - 2));
+  }
+  ctx.restore();
+};
+
 const drawSpectrum = () => {
   const canvas = spectrumCanvas.value;
   const ctx = canvas?.getContext('2d');
@@ -279,6 +401,8 @@ const drawSpectrum = () => {
     ctx.textBaseline = isBelow ? 'top' : 'bottom';
     ctx.fillText(String(db), LABEL_PAD_PX, isBelow ? (y + 2) : (y - 2));
   }
+
+  drawNetworks(ctx, width, plotHeight);
 
   if (lastFrame) {
     const peaks = columnPeaks(lastFrame, scanStartMhz.value, scanStopMhz.value, width);
@@ -336,23 +460,97 @@ const paintWaterfallRow = (frame: Frame) => {
   ctx.putImageData(row, 0, 0);
 };
 
+// The cursor lives on its own layer over both plots, so it moves without a new scan and never lands in the
+// scrolling waterfall image.
+const drawCursor = () => {
+  const canvas = overlayCanvas.value;
+  const ctx = canvas?.getContext('2d');
+  if (!canvas || !ctx || !canvas.clientWidth || !canvas.clientHeight) {
+    return;
+  }
+  const width = canvas.clientWidth;
+  const height = canvas.clientHeight;
+  ctx.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  if (cursorX === null) {
+    return;
+  }
+
+  const x = Math.min(width - 1, Math.round(cursorX)) + 0.5;
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = CURSOR_COLOR;
+  ctx.beginPath();
+  ctx.moveTo(x, 0);
+  ctx.lineTo(x, height);
+  ctx.stroke();
+
+  const start = scanStartMhz.value;
+  const mhz = start + ((x * (scanStopMhz.value - start)) / width);
+  const label = `${mhz.toLocaleString(locale.value, {
+    minimumFractionDigits: CURSOR_DECIMALS,
+    maximumFractionDigits: CURSOR_DECIMALS,
+    useGrouping: false,
+  })} ${t('unit_mhz')}`;
+  ctx.font = `${LABEL_FONT_PX}px ${getComputedStyle(canvas).fontFamily}`;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  const labelWidth = ctx.measureText(label).width;
+  // The readout sits right of the line, or left of it where it would run off the canvas.
+  const labelX = ((x + LABEL_PAD_PX + labelWidth) > width) ? (x - LABEL_PAD_PX - labelWidth) : (x + LABEL_PAD_PX);
+  ctx.fillStyle = BACKGROUND_COLOR;
+  ctx.fillRect(labelX - CURSOR_BOX_PAD_PX, LABEL_PAD_PX - CURSOR_BOX_PAD_PX,
+    labelWidth + (2 * CURSOR_BOX_PAD_PX), LABEL_FONT_PX + (2 * CURSOR_BOX_PAD_PX));
+  ctx.fillStyle = CURSOR_TEXT_COLOR;
+  ctx.fillText(label, labelX, LABEL_PAD_PX);
+};
+
+// Folds a scan into the current row; returns the row's per-bin maximum once the sweep time has run out,
+// counted from the request of the row's first scan.
+const collectRow = (dbfs: Int8Array, requestedAt: number): Int8Array | null => {
+  if (!pendingRow) {
+    pendingRow = { peak: dbfs, startedAt: requestedAt };
+  } else {
+    for (let bin = 0; bin < dbfs.length; bin++) {
+      pendingRow.peak[bin] = Math.max(pendingRow.peak[bin], dbfs[bin]);
+    }
+  }
+  if ((performance.now() - pendingRow.startedAt) < sweepMs.value) {
+    return null;
+  }
+  const { peak } = pendingRow;
+  pendingRow = null;
+  return peak;
+};
+
 const scanLoop = async () => {
   while (isRunning.value && info.value) {
     const limits = info.value;
     const params = scanParams();
+    const requestedAt = performance.now();
     try {
-      const buffer = await apiBinary('sdr/scan', { searchParams: params });
-      // A sweep requested before the last gain change no longer matches the controls.
+      const { body, headers } = await apiBinary('sdr/scan', {
+        searchParams: params,
+        timeout: scanTimeoutMs(params),
+      });
+      // A sweep requested before the last gain or dwell change no longer matches the controls.
       if (!isRunning.value || !isSameScan(params, scanParams())) {
         continue;
       }
-      const dbfs = new Int8Array(buffer);
+      const dbfs = new Int8Array(body);
       const expected = expectedBins(limits);
       // The device ends the body early when a capture fails mid-sweep.
       if (dbfs.length !== expected) {
         throw new Error(`SDR scan returned ${dbfs.length} bins instead of ${expected}`);
       }
-      lastFrame = { dbfs, startMhz: limits.start_mhz, binMhz: limits.bin_khz / KHZ_PER_MHZ };
+      const usedGain = Number.parseInt(headers.get(GAIN_HEADER) ?? '', 10);
+      if ((params.gain === GAIN_AGC) && Number.isInteger(usedGain)) {
+        gain.value = usedGain;
+      }
+      const peak = collectRow(dbfs, requestedAt);
+      if (!peak) {
+        continue;
+      }
+      lastFrame = { dbfs: peak, startMhz: limits.start_mhz, binMhz: limits.bin_khz / KHZ_PER_MHZ };
       drawSpectrum();
       paintWaterfallRow(lastFrame);
     } catch (err) {
@@ -367,6 +565,8 @@ const scanLoop = async () => {
 
 const start = () => {
   errorKey.value = '';
+  // A row left unfinished by Stop would otherwise close at once with maxima from before the pause.
+  pendingRow = null;
   isRunning.value = true;
   // After Stop the previous loop may still be waiting for its last sweep; it then simply carries
   // on, so a quick Stop/Start never puts two requests in flight.
@@ -381,12 +581,42 @@ const stop = () => {
   isRunning.value = false;
 };
 
+// A failed scan of networks clears the previous result as well: it no longer describes the air.
+const scanNetworks = async () => {
+  networksErrorKey.value = '';
+  isScanningNetworks.value = true;
+  try {
+    networks = await api<WifiNetwork[]>('sdr/networks', { timeout: NETWORKS_TIMEOUT_MS });
+  } catch (err) {
+    console.error('Wi-Fi network scan failed', err);
+    networks = [];
+    networksErrorKey.value = errorKeyFor(err, 'error_networks');
+  } finally {
+    isScanningNetworks.value = false;
+  }
+  drawSpectrum();
+};
+
+const onPlotsPointerMove = (event: PointerEvent) => {
+  const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect();
+  cursorX = Math.min(bounds.width, Math.max(0, event.clientX - bounds.left));
+  drawCursor();
+};
+
+const onPlotsPointerLeave = () => {
+  cursorX = null;
+  drawCursor();
+};
+
 const onResize = () => {
   if (spectrumCanvas.value && fitCanvas(spectrumCanvas.value)) {
     drawSpectrum();
   }
   if (waterfallCanvas.value && fitCanvas(waterfallCanvas.value)) {
     clearWaterfall();
+  }
+  if (overlayCanvas.value && fitCanvas(overlayCanvas.value)) {
+    drawCursor();
   }
 };
 
@@ -402,12 +632,19 @@ watch([startMhz, stopMhz, info], () => {
 watch([scanStartMhz, scanStopMhz], () => {
   clearWaterfall();
   drawSpectrum();
+  drawCursor();
 });
 watch([floorDb, rangeDb], () => drawSpectrum());
 
+// A gain or dwell change discards the partial row. The gain reported under AGC lands in `gain` as well, but the
+// requested gain stays at AGC then, so those updates keep the row.
+watch([() => scanParams().gain, () => scanParams().dwell_ms], () => {
+  pendingRow = null;
+});
+
 onMounted(async () => {
   resizeObserver = new ResizeObserver(onResize);
-  for (const canvas of [spectrumCanvas.value, waterfallCanvas.value]) {
+  for (const canvas of [spectrumCanvas.value, waterfallCanvas.value, overlayCanvas.value]) {
     if (canvas) {
       resizeObserver.observe(canvas);
     }
@@ -439,14 +676,19 @@ onBeforeUnmount(() => {
         <section class="card">
           <div class="card-header">
             <div class="title">{{ t('receiver') }}</div>
-            <Button
-              type="button"
-              :variant="isRunning ? 'outline' : 'primary'"
-              :disabled="!info || (!isRunning && !!spanError)"
-              @click="isRunning ? stop() : start()"
-            >
-              {{ isRunning ? t('stop') : t('start') }}
-            </Button>
+            <div class="sdr-actions">
+              <Button type="button" variant="outline" :disabled="isScanningNetworks" @click="scanNetworks">
+                {{ isScanningNetworks ? t('scanning_networks') : t('scan_networks') }}
+              </Button>
+              <Button
+                type="button"
+                :variant="isRunning ? 'outline' : 'primary'"
+                :disabled="!info || (!isRunning && !!spanError)"
+                @click="isRunning ? stop() : start()"
+              >
+                {{ isRunning ? t('stop') : t('start') }}
+              </Button>
+            </div>
           </div>
           <div class="card-body sdr-controls">
             <div class="field">
@@ -488,8 +730,15 @@ onBeforeUnmount(() => {
                 <span class="mono sdr-value">{{ gain }}</span>
               </div>
             </div>
+            <div class="field">
+              <label for="sdr_dwell">{{ t('dwell') }}</label>
+              <select id="sdr_dwell" v-model="dwellMs">
+                <option v-for="ms in dwellOptions" :key="ms" :value="ms">{{ dwellLabel(ms) }}</option>
+              </select>
+            </div>
             <div v-if="spanError" class="sdr-error" role="alert">{{ spanError }}</div>
             <div v-if="errorKey" class="sdr-error" role="alert">{{ t(errorKey) }}</div>
+            <div v-if="networksErrorKey" class="sdr-error" role="alert">{{ t(networksErrorKey) }}</div>
           </div>
         </section>
 
@@ -526,6 +775,12 @@ onBeforeUnmount(() => {
                 <span class="mono sdr-value">{{ rangeDb }}</span>
               </div>
             </div>
+            <div class="field">
+              <label for="sdr_sweep">{{ t('sweep') }}</label>
+              <select id="sdr_sweep" v-model="sweepMs">
+                <option v-for="ms in SWEEP_OPTIONS_MS" :key="ms" :value="ms">{{ sweepLabel(ms) }}</option>
+              </select>
+            </div>
           </div>
         </section>
       </div>
@@ -535,8 +790,11 @@ onBeforeUnmount(() => {
           <div class="title">{{ t('plots') }}</div>
         </div>
         <div class="card-body sdr-plots">
-          <canvas ref="spectrumCanvas" class="sdr-spectrum" role="img" :aria-label="t('spectrum')" />
-          <canvas ref="waterfallCanvas" class="sdr-waterfall" role="img" :aria-label="t('waterfall')" />
+          <div class="sdr-stack" @pointermove="onPlotsPointerMove" @pointerleave="onPlotsPointerLeave">
+            <canvas ref="spectrumCanvas" class="sdr-spectrum" role="img" :aria-label="t('spectrum')" />
+            <canvas ref="waterfallCanvas" class="sdr-waterfall" role="img" :aria-label="t('waterfall')" />
+            <canvas ref="overlayCanvas" class="sdr-overlay" aria-hidden="true" />
+          </div>
         </div>
       </section>
     </div>
@@ -544,6 +802,11 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.sdr-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .sdr-controls .field {
   grid-template-columns: minmax(120px, 1fr) minmax(0, 240px);
 }
@@ -579,10 +842,22 @@ onBeforeUnmount(() => {
   padding-top: 14px;
 }
 
+.sdr-stack {
+  position: relative;
+}
+
 .sdr-spectrum,
 .sdr-waterfall {
   display: block;
   width: 100%;
+}
+
+.sdr-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 
 .sdr-spectrum {
@@ -615,12 +890,23 @@ onBeforeUnmount(() => {
     "range": "Dynamic range, dB",
     "start": "Start",
     "stop": "Stop",
+    "dwell": "Dwell per frequency",
+    "dwell_single": "Single capture",
+    "sweep": "Sweep time",
+    "sweep_every": "Every scan",
+    "scan_networks": "Scan networks",
+    "scanning_networks": "Scanning…",
+    "hidden_network": "Hidden network",
     "unit_mhz": "MHz",
+    "unit_dbm": "dBm",
+    "value_ms": "{value} ms",
+    "value_s": "{value} s",
     "error_span_integer": "Enter the frequencies in whole MHz",
     "error_span_limits": "The frequencies must lie within {min}–{max} MHz",
     "error_span_order": "The start frequency must be below the stop frequency",
     "error_info": "Could not read the receiver parameters from the device",
     "error_capture": "Could not get the spectrum from the device",
+    "error_networks": "Could not scan the Wi-Fi networks",
     "error_rejected": "The device rejected the scan parameters",
     "error_timeout": "The device did not answer in time",
     "error_unauthorized": "The session has expired, log in again"
@@ -642,12 +928,23 @@ onBeforeUnmount(() => {
     "range": "Динамический диапазон, дБ",
     "start": "Запустить",
     "stop": "Остановить",
+    "dwell": "Время на частоте",
+    "dwell_single": "Один захват",
+    "sweep": "Время развёртки",
+    "sweep_every": "Каждое сканирование",
+    "scan_networks": "Сканировать сети",
+    "scanning_networks": "Сканирование…",
+    "hidden_network": "Скрытая сеть",
     "unit_mhz": "МГц",
+    "unit_dbm": "дБм",
+    "value_ms": "{value} мс",
+    "value_s": "{value} с",
     "error_span_integer": "Укажите частоты целым числом МГц",
     "error_span_limits": "Частоты должны быть в пределах {min}–{max} МГц",
     "error_span_order": "Начальная частота должна быть ниже конечной",
     "error_info": "Не удалось получить параметры приёмника",
     "error_capture": "Не удалось получить спектр с устройства",
+    "error_networks": "Не удалось просканировать сети Wi-Fi",
     "error_rejected": "Устройство отклонило параметры сканирования",
     "error_timeout": "Устройство не ответило вовремя",
     "error_unauthorized": "Сессия истекла, войдите снова"
@@ -669,12 +966,23 @@ onBeforeUnmount(() => {
     "range": "Динамикалық диапазон, dB",
     "start": "Іске қосу",
     "stop": "Тоқтату",
+    "dwell": "Жиілікті тыңдау уақыты",
+    "dwell_single": "Бір рет түсіру",
+    "sweep": "Бір жолдың уақыты",
+    "sweep_every": "Әр сканерлеу",
+    "scan_networks": "Желілерді сканерлеу",
+    "scanning_networks": "Сканерлеу…",
+    "hidden_network": "Жасырын желі",
     "unit_mhz": "МГц",
+    "unit_dbm": "dBm",
+    "value_ms": "{value} мс",
+    "value_s": "{value} с",
     "error_span_integer": "Жиіліктерді бүтін МГц санымен енгізіңіз",
     "error_span_limits": "Жиіліктер {min}–{max} МГц аралығында болуы керек",
     "error_span_order": "Бастапқы жиілік соңғы жиіліктен төмен болуы керек",
     "error_info": "Қабылдағыш параметрлерін алу мүмкін болмады",
     "error_capture": "Құрылғыдан спектрді алу мүмкін болмады",
+    "error_networks": "Wi-Fi желілерін сканерлеу мүмкін болмады",
     "error_rejected": "Құрылғы сканерлеу параметрлерін қабылдамады",
     "error_timeout": "Құрылғы уақытында жауап бермеді",
     "error_unauthorized": "Сеанс мерзімі аяқталды, қайта кіріңіз"
@@ -696,12 +1004,23 @@ onBeforeUnmount(() => {
     "range": "Gamma dinamica, dB",
     "start": "Avvia",
     "stop": "Ferma",
+    "dwell": "Permanenza per frequenza",
+    "dwell_single": "Cattura singola",
+    "sweep": "Tempo di scansione",
+    "sweep_every": "Ogni scansione",
+    "scan_networks": "Cerca reti",
+    "scanning_networks": "Ricerca…",
+    "hidden_network": "Rete nascosta",
     "unit_mhz": "MHz",
+    "unit_dbm": "dBm",
+    "value_ms": "{value} ms",
+    "value_s": "{value} s",
     "error_span_integer": "Inserisci le frequenze in MHz interi",
     "error_span_limits": "Le frequenze devono essere comprese tra {min} e {max} MHz",
     "error_span_order": "La frequenza iniziale deve essere inferiore a quella finale",
     "error_info": "Impossibile leggere i parametri del ricevitore",
     "error_capture": "Impossibile ottenere lo spettro dal dispositivo",
+    "error_networks": "Impossibile cercare le reti Wi-Fi",
     "error_rejected": "Il dispositivo ha rifiutato i parametri di scansione",
     "error_timeout": "Il dispositivo non ha risposto in tempo",
     "error_unauthorized": "La sessione è scaduta, accedi di nuovo"
@@ -723,12 +1042,23 @@ onBeforeUnmount(() => {
     "range": "Dynamikbereich, dB",
     "start": "Starten",
     "stop": "Stoppen",
+    "dwell": "Verweildauer pro Frequenz",
+    "dwell_single": "Einzelerfassung",
+    "sweep": "Sweep-Zeit",
+    "sweep_every": "Jeder Scan",
+    "scan_networks": "Netzwerke suchen",
+    "scanning_networks": "Suche…",
+    "hidden_network": "Verborgenes Netzwerk",
     "unit_mhz": "MHz",
+    "unit_dbm": "dBm",
+    "value_ms": "{value} ms",
+    "value_s": "{value} s",
     "error_span_integer": "Frequenzen in ganzen MHz angeben",
     "error_span_limits": "Die Frequenzen müssen zwischen {min} und {max} MHz liegen",
     "error_span_order": "Die Startfrequenz muss unter der Stoppfrequenz liegen",
     "error_info": "Die Empfängerparameter konnten nicht gelesen werden",
     "error_capture": "Vom Gerät konnte kein Spektrum empfangen werden",
+    "error_networks": "WLAN-Netzwerke konnten nicht gesucht werden",
     "error_rejected": "Das Gerät hat die Scan-Parameter abgelehnt",
     "error_timeout": "Das Gerät hat nicht rechtzeitig geantwortet",
     "error_unauthorized": "Die Sitzung ist abgelaufen, bitte erneut anmelden"

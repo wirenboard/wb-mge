@@ -76,6 +76,12 @@ static const char *TAG = "sdr_radio";
 static int sdr_radio_gain_max = 0;
 static unsigned sdr_radio_tuned_mhz = 0;                // 0: not tuned by this module yet
 
+// Active scan with the driver's default per-channel timing. Hidden networks occupy the band like any other.
+static const wifi_scan_config_t sdr_radio_scan_config = {
+    .show_hidden = true,
+    .scan_type = WIFI_SCAN_TYPE_ACTIVE,
+};
+
 
 static void sdr_radio_prepare_rx(void)
 {
@@ -105,14 +111,10 @@ static void sdr_radio_tune(unsigned freq_mhz)
 
 static void sdr_radio_apply_gain(int gain)
 {
-    if (gain == SDR_RADIO_GAIN_AGC) {
-        REG_CLR_BIT(SDR_RADIO_RX_GAIN_REG, SDR_RADIO_RX_GAIN_FORCE);
-    } else {
-        uint32_t value = REG_READ(SDR_RADIO_RX_GAIN_REG);
-        REG_WRITE(SDR_RADIO_RX_GAIN_REG, ((value & SDR_RADIO_RX_GAIN_KEEP_M) |
-                                          ((uint32_t)gain << SDR_RADIO_RX_GAIN_VALUE_S) |
-                                          SDR_RADIO_RX_GAIN_FORCE));
-    }
+    uint32_t value = REG_READ(SDR_RADIO_RX_GAIN_REG);
+    REG_WRITE(SDR_RADIO_RX_GAIN_REG, ((value & SDR_RADIO_RX_GAIN_KEEP_M) |
+                                      ((uint32_t)gain << SDR_RADIO_RX_GAIN_VALUE_S) |
+                                      SDR_RADIO_RX_GAIN_FORCE));
 }
 
 static void sdr_radio_filter_apply(unsigned saved[SDR_RADIO_FILTER_REG_COUNT])
@@ -150,7 +152,6 @@ esp_err_t sdr_radio_init(void)
     sdr_radio_prepare_rx();
     sdr_radio_gain_max = (int)((REG_READ(SDR_RADIO_RX_GAIN_REG) >> SDR_RADIO_RX_GAIN_MAX_S) &
                                SDR_RADIO_RX_GAIN_MAX_V);
-    REG_CLR_BIT(SDR_RADIO_RX_GAIN_REG, SDR_RADIO_RX_GAIN_FORCE);
 
     ESP_LOGI(TAG, "SDR radio ready, gain_max %d", sdr_radio_gain_max);
     return ESP_OK;
@@ -226,4 +227,42 @@ esp_err_t sdr_radio_capture(unsigned freq_mhz, int gain, const uint32_t **words)
 
     *words = (const uint32_t *)SDR_RADIO_DUMP_START;
     return ESP_OK;
+}
+
+
+esp_err_t sdr_radio_scan_networks(wifi_ap_record_t *records, uint16_t *count)
+{
+    // Captures leave a forced fixed gain behind; the Wi-Fi receiver needs its own AGC back to hear beacons
+    // at any level. The next capture forces its gain again.
+    REG_CLR_BIT(SDR_RADIO_RX_GAIN_REG, SDR_RADIO_RX_GAIN_FORCE);
+
+    // Scanning needs the station interface, which the NULL mode of raw capture does not have
+    esp_err_t ret = esp_wifi_set_promiscuous(false);
+    if (ret == ESP_OK) {
+        ret = esp_wifi_set_mode(WIFI_MODE_STA);
+    }
+    if (ret == ESP_OK) {
+        ret = esp_wifi_scan_start(&sdr_radio_scan_config, true);
+    }
+    if (ret == ESP_OK) {
+        ret = esp_wifi_scan_get_ap_records(count, records);
+    }
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Network scan failed: %s", esp_err_to_name(ret));
+    }
+
+    // Back to raw capture whatever failed above. The scan hopped channels and reset the receive path,
+    // so the next capture must run set_chanfreq() and sdr_radio_prepare_rx() again.
+    esp_err_t mode_ret = esp_wifi_set_mode(WIFI_MODE_NULL);
+    esp_err_t promiscuous_ret = esp_wifi_set_promiscuous(true);
+    sdr_radio_tuned_mhz = 0;
+    if ((mode_ret != ESP_OK) || (promiscuous_ret != ESP_OK)) {
+        ESP_LOGE(TAG, "Failed to restore raw capture after the network scan: mode %s, promiscuous %s",
+                 esp_err_to_name(mode_ret), esp_err_to_name(promiscuous_ret));
+    }
+
+    if (ret == ESP_OK) {
+        ret = (mode_ret != ESP_OK) ? mode_ret : promiscuous_ret;
+    }
+    return ret;
 }
