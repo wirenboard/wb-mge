@@ -324,11 +324,14 @@ static void fp_acs_scan(void)
     }
     fp_acs_record_event(FP_ACS_SOURCE_FINGERPRINT, result, who, (who != NULL), score);
 
-    // UNVERIFIED: the datasheet does not say whether ImageBuffer still holds the captured image
-    // after Img2Tz and Search have run on it; the ImgBufStat bit of the status register suggests
-    // it can stop being valid. The upload comes last so that it can never delay the door. If the
-    // images shown turn out stale or empty, this order is the first suspect.
-    fp_acs_upload_image();
+    // After Img2Tz, ImageBuffer holds the thinned ridge map, not the captured image (seen on the
+    // device). Uploading before Img2Tz would hold the door for the upload, so the image shown is a
+    // fresh capture of the finger still on the sensor, taken once the door is opening; a finger
+    // already lifted leaves the previous image in place.
+    uint8_t image_code = R503_CODE_OK;
+    if (fp_acs_io_ok(r503_gen_img(&image_code), "GenImg") && (image_code == R503_CODE_OK)) {
+        fp_acs_upload_image();
+    }
     fp_acs_awaiting_lift = true;
 }
 
