@@ -82,6 +82,7 @@ const mock_setting_item_t expected_items[] = {
     {"lock_channel", "1", SETTING_ITEM_TYPE_INT},
     {"lock_pulse_ms", "1000", SETTING_ITEM_TYPE_INT},
     {"lock_mode", "strike", SETTING_ITEM_TYPE_STRING},
+    {"lock_exit_input", "off", SETTING_ITEM_TYPE_STRING},
     {"tg_token", "", SETTING_ITEM_TYPE_STRING},
     {"tg_admins", "", SETTING_ITEM_TYPE_STRING},
     {"tg_api_url", "https://api.telegram.org", SETTING_ITEM_TYPE_STRING},

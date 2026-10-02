@@ -281,6 +281,9 @@ static bool fp_http_status_lock(cJSON *root)
     }
     bool ok = (cJSON_AddBoolToObject(object, "on", fp_lock_relay_on()) != NULL);
     ok = (cJSON_AddBoolToObject(object, "online", fp_lock_relay_online()) != NULL) && ok;
+    esp_err_t config_err = fp_lock_config_error();
+    ok = fp_http_add_nullable_string(object, "config_error", (config_err != ESP_OK), esp_err_to_name(config_err))
+         && ok;
     return ok;
 }
 

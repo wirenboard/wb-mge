@@ -175,6 +175,12 @@ bool validate_lock_mode(const char *value)
     return true;
 }
 
+bool validate_lock_exit_input(const char *value)
+{
+    (void)value;
+    return true;
+}
+
 bool validate_tg_token(const char *value)
 {
     (void)value;

@@ -209,6 +209,7 @@ static const mock_type_entry_t type_table[] = {
     { "lock_channel",       SETTING_ITEM_TYPE_INT,    "1"                 },
     { "lock_pulse_ms",      SETTING_ITEM_TYPE_INT,    "1000"              },
     { "lock_mode",          SETTING_ITEM_TYPE_STRING, "strike"            },
+    { "lock_exit_input",    SETTING_ITEM_TYPE_STRING, "off"               },
     { "tg_token",           SETTING_ITEM_TYPE_STRING, ""                  },
     { "tg_admins",          SETTING_ITEM_TYPE_STRING, ""                  },
     { "tg_api_url",         SETTING_ITEM_TYPE_STRING, "https://api.telegram.org" },

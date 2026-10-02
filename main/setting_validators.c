@@ -18,6 +18,9 @@
 #define LOCK_CHANNEL_MAX                    8
 #define LOCK_PULSE_MS_MIN                   100
 #define LOCK_PULSE_MS_MAX                   60000
+// The exit button's input on the relay module: one digit, inputs 1..6 of a WB-MR6C.
+#define LOCK_EXIT_INPUT_MIN                 '1'
+#define LOCK_EXIT_INPUT_MAX                 '6'
 // The whole room a setting value has (SETTING_ITEM_MAX_STR_LEN - 1).
 #define MAX_TG_STR_LEN                      63
 // The whole room a setting value has, as above. The device id is held to the same bound because
@@ -477,6 +480,18 @@ bool validate_lock_mode(const char *value)
         return true;
     }
     return false;
+}
+
+// The relay module input the exit button is wired to: "off" or a single digit 1..6, nothing else.
+bool validate_lock_exit_input(const char *value)
+{
+    if (!value) {
+        return false;
+    }
+    if (strncmp(value, LOCK_EXIT_INPUT_OFF_STR, SETTING_ITEM_MAX_STR_LEN) == 0) {
+        return true;
+    }
+    return ((value[0] >= LOCK_EXIT_INPUT_MIN) && (value[0] <= LOCK_EXIT_INPUT_MAX) && (value[1] == '\0'));
 }
 
 // Printable ASCII of a bounded length, the empty string included. Shared by the Telegram token

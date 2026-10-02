@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useConfirm } from '@/common/confirm';
 import {
@@ -12,7 +12,7 @@ import {
   useFpStatus,
 } from '@/common/fpAcs';
 import { useSettings } from '@/common/settings';
-import type { FpTgChat } from '@/common/types';
+import type { FpTgChat, LockExitInput } from '@/common/types';
 import Button from '@/components/Button.vue';
 import Heading from '@/components/Heading.vue';
 import InputNumber from '@/components/InputNumber.vue';
@@ -25,8 +25,19 @@ const { t } = useI18n();
 const { data, isChanged, isLoading, updateSettings } = useSettings();
 const { confirmDialog } = useConfirm();
 
-const lockFields = ['lock_mode', 'lock_addr', 'lock_channel', 'lock_pulse_ms'];
+const lockFields = ['lock_mode', 'lock_addr', 'lock_channel', 'lock_pulse_ms', 'lock_exit_input'];
 const telegramFields = ['tg_api_url', 'tg_token', 'tg_admins'];
+
+const EXIT_INPUTS: LockExitInput[] = ['1', '2', '3', '4', '5', '6'];
+
+// lock.config_error -> i18n key, the way fpErrorMessage() maps the device's errors: a code with no
+// entry is shown as the device sent it.
+const RELAY_CONFIG_ERROR_MESSAGES: Record<string, string> = {
+  ESP_ERR_INVALID_RESPONSE: 'relay_config_refused',
+  ESP_ERR_TIMEOUT: 'relay_config_timeout',
+};
+// No configuration tried since boot yet: nothing to report.
+const RELAY_CONFIG_NOT_TRIED = 'ESP_ERR_NOT_FINISHED';
 
 // Each card posts its own keys and nothing else, the way every other settings card does.
 const saveLock = () => updateSettings({
@@ -34,6 +45,7 @@ const saveLock = () => updateSettings({
   lock_addr: data.value!.lock_addr,
   lock_channel: data.value!.lock_channel,
   lock_pulse_ms: data.value!.lock_pulse_ms,
+  lock_exit_input: data.value!.lock_exit_input,
 });
 
 const saveTelegram = () => updateSettings({
@@ -43,6 +55,14 @@ const saveTelegram = () => updateSettings({
 });
 
 const { status, startPolling, stopPolling } = useFpStatus(ref(false));
+
+const relayConfigError = computed(() => {
+  const code = status.value?.lock.config_error;
+  if (!code || code === RELAY_CONFIG_NOT_TRIED) {
+    return '';
+  }
+  return t(RELAY_CONFIG_ERROR_MESSAGES[code] ?? code);
+});
 
 onMounted(startPolling);
 onBeforeUnmount(stopPolling);
@@ -121,10 +141,13 @@ const clearChats = async () => {
           <form @submit.prevent="saveLock">
             <div class="card-header">
               <div class="card-title-wrap">
-                <div class="card-title-row">
+                <div class="card-title-row lock-titleRow">
                   <div class="title">{{ t('relay') }}</div>
                   <span v-if="status?.lock.online" class="pill ok"><span class="dot" />{{ t('relay_online') }}</span>
                   <span v-else-if="status" class="pill danger"><span class="dot" />{{ t('relay_offline') }}</span>
+                  <span v-if="relayConfigError" class="pill danger">
+                    <span class="dot" />{{ t('relay_config_error', { error: relayConfigError }) }}
+                  </span>
                 </div>
                 <div class="sub">{{ t('relay_sub') }}</div>
               </div>
@@ -167,6 +190,15 @@ const clearChats = async () => {
                   max="60000"
                   required
                 />
+              </div>
+              <div class="field">
+                <label for="lock_exit_input">{{ t('lock_exit_input') }}</label>
+                <select id="lock_exit_input" v-model="data.lock_exit_input" name="lock_exit_input">
+                  <option value="off">{{ t('lock_exit_input_off') }}</option>
+                  <option v-for="input in EXIT_INPUTS" :key="input" :value="input">
+                    {{ t('lock_exit_input_n', { n: input }) }}
+                  </option>
+                </select>
               </div>
               <i18n-t keypath="relay_note" tag="p" class="lock-note">
                 <template #page>
@@ -301,6 +333,10 @@ const clearChats = async () => {
 </template>
 
 <style scoped>
+.lock-titleRow {
+  flex-wrap: wrap;
+}
+
 .lock-note {
   margin: 12px 0 4px;
   color: var(--text-muted);
@@ -347,6 +383,9 @@ const clearChats = async () => {
     "relay_sub": "Wiren Board Modbus relay module",
     "relay_online": "Online",
     "relay_offline": "Offline",
+    "relay_config_error": "Not configured: {error}",
+    "relay_config_refused": "the module answers with an error (relay firmware older than 1.28?)",
+    "relay_config_timeout": "no answer from the module",
     "relay_switch": "Relay",
     "lock_mode": "Lock type",
     "lock_mode_strike": "Strike: on = open",
@@ -354,6 +393,9 @@ const clearChats = async () => {
     "lock_addr": "Modbus address",
     "lock_channel": "Relay channel",
     "lock_pulse_ms": "Pulse length, ms",
+    "lock_exit_input": "Exit button",
+    "lock_exit_input_off": "Not connected",
+    "lock_exit_input_n": "Input {n}",
     "relay_note": "The relay module is connected to RS-485 port 1. The line parameters of that port are set on the {page} page.",
     "relay_note_page": "Serial ports",
 
@@ -387,6 +429,9 @@ const clearChats = async () => {
     "relay_sub": "Модуль реле Wiren Board с Modbus",
     "relay_online": "На связи",
     "relay_offline": "Нет связи",
+    "relay_config_error": "Не настроено: {error}",
+    "relay_config_refused": "модуль отвечает ошибкой (прошивка модуля реле ниже 1.28?)",
+    "relay_config_timeout": "нет ответа от модуля",
     "relay_switch": "Реле",
     "lock_mode": "Тип замка",
     "lock_mode_strike": "Защёлка: вкл = открыто",
@@ -394,6 +439,9 @@ const clearChats = async () => {
     "lock_addr": "Modbus-адрес",
     "lock_channel": "Канал реле",
     "lock_pulse_ms": "Длительность импульса, мс",
+    "lock_exit_input": "Кнопка выхода",
+    "lock_exit_input_off": "Не подключена",
+    "lock_exit_input_n": "Вход {n}",
     "relay_note": "Модуль реле подключается к порту RS-485 1. Параметры линии этого порта задаются на странице «{page}».",
     "relay_note_page": "Последовательные порты",
 
@@ -427,6 +475,9 @@ const clearChats = async () => {
     "relay_sub": "Wiren Board Modbus реле модулі",
     "relay_online": "Байланыста",
     "relay_offline": "Байланыс жоқ",
+    "relay_config_error": "Бапталмаған: {error}",
+    "relay_config_refused": "модуль қатемен жауап береді (реле модулінің микробағдарламасы 1.28 нұсқасынан төмен бе?)",
+    "relay_config_timeout": "модульден жауап жоқ",
     "relay_switch": "Реле",
     "lock_mode": "Құлып түрі",
     "lock_mode_strike": "Ілгек: қосулы = ашық",
@@ -434,6 +485,9 @@ const clearChats = async () => {
     "lock_addr": "Modbus мекенжайы",
     "lock_channel": "Реле арнасы",
     "lock_pulse_ms": "Импульс ұзақтығы, мс",
+    "lock_exit_input": "Шығу батырмасы",
+    "lock_exit_input_off": "Қосылмаған",
+    "lock_exit_input_n": "{n}-кіріс",
     "relay_note": "Реле модулі RS-485 1-портына қосылады. Бұл порттың желі параметрлері «{page}» бетінде орнатылады.",
     "relay_note_page": "Сериялық порттар",
 
@@ -467,6 +521,9 @@ const clearChats = async () => {
     "relay_sub": "Modulo relè Modbus Wiren Board",
     "relay_online": "Online",
     "relay_offline": "Offline",
+    "relay_config_error": "Non configurato: {error}",
+    "relay_config_refused": "il modulo risponde con un errore (firmware del relè anteriore alla 1.28?)",
+    "relay_config_timeout": "nessuna risposta dal modulo",
     "relay_switch": "Relè",
     "lock_mode": "Tipo di serratura",
     "lock_mode_strike": "Incontro: attivo = aperta",
@@ -474,6 +531,9 @@ const clearChats = async () => {
     "lock_addr": "Indirizzo Modbus",
     "lock_channel": "Canale del relè",
     "lock_pulse_ms": "Durata dell'impulso, ms",
+    "lock_exit_input": "Pulsante di uscita",
+    "lock_exit_input_off": "Non collegato",
+    "lock_exit_input_n": "Ingresso {n}",
     "relay_note": "Il modulo relè è collegato alla porta RS-485 1. I parametri di linea di quella porta si impostano nella pagina {page}.",
     "relay_note_page": "Porte seriali",
 
@@ -507,6 +567,9 @@ const clearChats = async () => {
     "relay_sub": "Wiren Board Modbus-Relaismodul",
     "relay_online": "Online",
     "relay_offline": "Offline",
+    "relay_config_error": "Nicht konfiguriert: {error}",
+    "relay_config_refused": "das Modul antwortet mit einem Fehler (Relais-Firmware älter als 1.28?)",
+    "relay_config_timeout": "keine Antwort vom Modul",
     "relay_switch": "Relais",
     "lock_mode": "Schlosstyp",
     "lock_mode_strike": "Türöffner: an = offen",
@@ -514,6 +577,9 @@ const clearChats = async () => {
     "lock_addr": "Modbus-Adresse",
     "lock_channel": "Relaiskanal",
     "lock_pulse_ms": "Impulsdauer, ms",
+    "lock_exit_input": "Austrittstaster",
+    "lock_exit_input_off": "Nicht angeschlossen",
+    "lock_exit_input_n": "Eingang {n}",
     "relay_note": "Das Relaismodul ist an RS-485-Port 1 angeschlossen. Die Leitungsparameter dieses Ports werden auf der Seite „{page}“ eingestellt.",
     "relay_note_page": "Serielle Schnittstellen",
 

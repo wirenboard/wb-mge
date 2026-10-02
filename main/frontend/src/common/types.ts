@@ -120,8 +120,14 @@ export interface FpStatus {
     height: number;
   } | null;
   lock: {
-    on: boolean; // the relay as of the last coil write that went through, pulses included
+    on: boolean; // the relay as of the last successful coil write (pulses included) or idle-probe read
     online: boolean; // the relay module answered the last write or idle probe
+    // null once the last reconciliation (every 5 s without a lock request while the module answers,
+    // and on a lock settings change) found the relay module holding its timer and exit button
+    // configuration, with no other input acting on the channel; else the esp_err name of the first
+    // read or write that failed: "ESP_ERR_INVALID_RESPONSE" a Modbus exception, as from a firmware
+    // older than 1.28.0, or a damaged frame, "ESP_ERR_TIMEOUT" no answer, "ESP_ERR_NOT_FINISHED" no try since boot yet
+    config_error: string | null;
   };
   telegram: {
     enabled: boolean; // a bot token is set
@@ -195,6 +201,8 @@ export type WiFiMode = 'none' | 'ap' | 'sta';
 
 export type UpdateChannel = 'stable' | 'testing';
 
+export type LockExitInput = 'off' | '1' | '2' | '3' | '4' | '5' | '6';
+
 export interface RsSettings {
   term: boolean;
   fail_safe: boolean;
@@ -248,11 +256,14 @@ export interface Settings {
   rs485_2: RsSettings;
   // Lock: the Modbus relay that drives it (address 1..247 on RS-485 port 1, channel 1..8), how
   // long an opening lasts (100..60000 ms) and which relay state opens it: 'strike' - relay on
-  // opens (electric strike), 'magnet' - relay on locks (electromagnet).
+  // opens (electric strike), 'magnet' - relay on locks (electromagnet). lock_exit_input is the
+  // relay module input the exit button is wired to, 'off' for none: the device has the module itself
+  // put the channel in the open state on its closing.
   lock_addr: number;
   lock_channel: number;
   lock_pulse_ms: number;
   lock_mode: 'strike' | 'magnet';
+  lock_exit_input: LockExitInput;
   // Telegram bot: its token, the admins (a comma-separated list of numeric Telegram user IDs) and
   // the Bot API server it talks to, https://api.telegram.org unless that is blocked.
   tg_token: string;

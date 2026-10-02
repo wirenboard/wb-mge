@@ -943,8 +943,9 @@ paths:
                   lock:
                     type: object
                     properties:
-                      'on': { type: boolean, description: "The lock relay (not the door: see lock_mode) as of the last coil write that succeeded, pulses included; false after boot until a write succeeds" }
+                      'on': { type: boolean, description: "The lock relay (not the door: see lock_mode) as of the last coil write that succeeded (pulses included) or the last coil read made after 5 s without a lock request, whichever came last: the read also sees the relay module's timer switching the relay by itself. false after boot until a write or a read succeeds" }
                       online: { type: boolean, description: "Whether the relay module answered the last exchange: a coil write, or the coil read made after 5 s without a lock request; false after boot until it answers" }
+                      config_error: { type: [string, 'null'], description: "null once the relay module was found holding its whole configuration: the channel's timer (function 6 \"on for a time\" for a strike, 7 \"off for a time\" for a magnet, lock_pulse_ms in 0.1 s) and, with lock_exit_input set, that input's leading-edge action on the channel and its mode, with no other input acting on the channel. The configuration is reconciled, not just written: the device reads these registers back and writes only the ones that differ - every 5 s without a lock request while the module answers, and on every change of lock_addr, lock_channel, lock_mode, lock_pulse_ms or lock_exit_input, before the relay is put in the locked state. Otherwise the esp_err name of the first read or write that failed in the last reconciliation: \"ESP_ERR_INVALID_RESPONSE\" when the module answered with a Modbus exception, as one with a firmware older than 1.28.0 does, or with a damaged frame, \"ESP_ERR_TIMEOUT\" when it did not answer; \"ESP_ERR_NOT_FINISHED\" after boot until the first try. The release of the channel given up on a change of lock_addr or lock_channel (its timer function and the leading-edge actions of all inputs on it cleared, then the relay switched off) is made once, best effort, and does not show here" }
                   telegram:
                     type: object
                     properties:
@@ -957,7 +958,7 @@ paths:
   /fp/lock:
     post:
       summary: Switch the lock relay by hand
-      description: "Queued to the lock task and run after a pulse under way; the new state shows in GET /fp/status under lock. on is the relay state itself, whatever lock_mode says. Setting the state that opens the lock (on: true for strike, on: false for magnet) holds it, and openings are skipped while it is held; setting the other state releases the hold. A change of lock_addr, lock_channel or lock_mode also releases it. Not kept across a reboot: the relay starts in the locked state."
+      description: "Queued to the lock task and run after a pulse under way; the new state shows in GET /fp/status under lock. on is the relay state itself, whatever lock_mode says. Setting the state that opens the lock (on: true for strike, on: false for magnet) holds it unless the last reconciliation found the relay module's channel timer matching the settings (it did whenever lock.config_error is null): openings are skipped while it is held, and setting the other state, a change of lock_addr, lock_channel or lock_mode, or a reconciliation that finds the timer matching releases it. With the timer matching the module closes the relay by itself after lock_pulse_ms, and nothing is held. Not kept across a reboot: the relay starts in the locked state."
       requestBody:
         required: true
         content:
@@ -1510,6 +1511,11 @@ components:
           enum: [strike, magnet]
           default: strike
           description: "Which relay state opens the lock: strike - relay on opens (electric strike); magnet - relay on locks (electromagnet)"
+        lock_exit_input:
+          type: string
+          enum: ['off', '1', '2', '3', '4', '5', '6']
+          default: 'off'
+          description: "Input of the relay module the exit button is wired to, or off for none. The device writes it into the module: the closing of that input puts lock_channel in the open state, and the channel's timer puts it back after lock_pulse_ms (rounded up to 0.1 s), with no help from this device. The timer is written whatever this setting is. No other input acts on lock_channel: the device reconciles the module on the change and every 5 s without a lock request, so an input given up has its action on the channel cleared by the next reconciliation that goes through; it keeps its input mode (4). On a change of lock_addr or lock_channel the actions on the old channel are cleared once, best effort. See config_error under lock in GET /fp/status"
         tg_token:
           type: string
           maxLength: 63

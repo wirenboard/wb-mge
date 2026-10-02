@@ -50,12 +50,14 @@
 #define DEFAULT_UPDATE_CHANNEL              UPDATE_CHANNEL_STABLE_STR
 
 // Fingerprint access control (main/fp_acs/): the relay of the lock - unit id on RS-485 port 1,
-// channel counted from 1 -, how long an opening lasts and which relay state opens the door (an
-// electric strike: relay ON opens it, as before the setting existed).
+// channel counted from 1 -, how long an opening lasts, which relay state opens the door (an
+// electric strike: relay ON opens it, as before the setting existed) and the module input the
+// exit button is wired to (none).
 #define DEFAULT_LOCK_ADDR           "1"
 #define DEFAULT_LOCK_CHANNEL        "1"
 #define DEFAULT_LOCK_PULSE_MS       "1000"
 #define DEFAULT_LOCK_MODE           LOCK_MODE_STRIKE_STR
+#define DEFAULT_LOCK_EXIT_INPUT     LOCK_EXIT_INPUT_OFF_STR
 
 // Telegram bot: no token means no bot; the admins are numeric Telegram user ids; the Bot API
 // server is Telegram's own unless it is blocked where the device runs.

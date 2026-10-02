@@ -243,6 +243,7 @@ static const setting_item_t setting_items[] = {
     {KEY_LOCK_CHANNEL, DEFAULT_LOCK_CHANNEL, validate_lock_channel, SETTING_ITEM_TYPE_INT},
     {KEY_LOCK_PULSE_MS, DEFAULT_LOCK_PULSE_MS, validate_lock_pulse_ms, SETTING_ITEM_TYPE_INT},
     {KEY_LOCK_MODE, DEFAULT_LOCK_MODE, validate_lock_mode, SETTING_ITEM_TYPE_STRING},
+    {KEY_LOCK_EXIT_INPUT, DEFAULT_LOCK_EXIT_INPUT, validate_lock_exit_input, SETTING_ITEM_TYPE_STRING},
     {KEY_TG_TOKEN, DEFAULT_TG_TOKEN, validate_tg_token, SETTING_ITEM_TYPE_STRING},
     {KEY_TG_ADMINS, DEFAULT_TG_ADMINS, validate_tg_admins, SETTING_ITEM_TYPE_STRING},
     {KEY_TG_API_URL, DEFAULT_TG_API_URL, validate_tg_api_url, SETTING_ITEM_TYPE_STRING},

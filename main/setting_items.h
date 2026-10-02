@@ -64,6 +64,7 @@
 #define KEY_LOCK_CHANNEL            "lock_channel"
 #define KEY_LOCK_PULSE_MS           "lock_pulse_ms"
 #define KEY_LOCK_MODE               "lock_mode"
+#define KEY_LOCK_EXIT_INPUT         "lock_exit_input"
 #define KEY_TG_TOKEN                "tg_token"
 #define KEY_TG_ADMINS               "tg_admins"
 #define KEY_TG_API_URL              "tg_api_url"
@@ -117,6 +118,9 @@
 // powered to open (relay ON = open); an electromagnet is powered to hold the door (relay ON = locked).
 #define LOCK_MODE_STRIKE_STR        "strike"
 #define LOCK_MODE_MAGNET_STR        "magnet"
+
+// The relay module input the exit button is wired to: "off" (no button) or "1".."6".
+#define LOCK_EXIT_INPUT_OFF_STR     "off"
 
 // Setting types - used for type checking and JSON mapping
 typedef enum {
