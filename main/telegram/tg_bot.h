@@ -12,8 +12,9 @@
  * The first successful poll sends "Lock door controller booted" to every admin.
  *
  * Every granted fingerprint opening is reported to tg_notify_chat as "Door opened: <user name>
- * (fingerprint)", right after the getUpdates under way returns - within about 5 s - or, after a
- * failed one, once the 10 s pause after it is over. Nothing is sent while tg_notify_chat is empty
+ * (fingerprint)", right after the getUpdates under way returns, failed or not - within about 5 s -
+ * and one queued during the 10 s pause after a failed getUpdates once that pause is over. A report
+ * is sent once: one the server does not take is lost. Nothing is sent while tg_notify_chat is empty
  * or the bot has no usable token: those openings are dropped, not sent later.
  *
  * Commands:

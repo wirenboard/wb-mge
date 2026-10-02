@@ -30,16 +30,16 @@
  * repeated closing write. Before each request it re-reads the unit id, the channel, the mode, the
  * pulse length and the exit button's input and compares them with the ones it last applied. On a
  * change of the unit id or the channel it first releases the channel it no longer uses: clears its
- * timer function and the leading-edge actions of all the inputs on it, once and whatever the writes
- * return (that module may be gone), then switches it OFF. On any change it then reconciles the
- * module with the new settings, and on a change of the unit id, the channel or the mode it puts the
- * relay it now uses in the closed state - after the reconciliation, so that state is not written
- * under the channel's old timer function; when it did not go through or the channel's timer is not
- * yet found matching, that closing write is repeated as above, the idle pass reconciling first - and
- * drops a manual hold. A settings
- * save also queues that comparison on its own (fp_lock_settings_changed()), so a new target or mode
- * takes effect at once rather than at the next request: after a switch from "strike" to "magnet"
- * the magnet would stay unpowered, the door open. The pulse length is read at every opening.
+ * timer function and the leading-edge actions of all the inputs on it, then switches it OFF - each
+ * write once, the first that gets no answer ending the release (that module may be gone). On any
+ * change it then reconciles the module with the new settings, and on a change of the unit id, the
+ * channel or the mode it puts the relay it now uses in the closed state - after the reconciliation,
+ * so that state is not written under the channel's old timer function; when it did not go through
+ * or the channel's timer is not yet found matching, that closing write is repeated as above, the
+ * idle pass reconciling first - and drops a manual hold. A settings save also queues that
+ * comparison on its own (fp_lock_settings_changed()), so a new target or mode takes effect at once
+ * rather than at the next request: after a switch from "strike" to "magnet" the magnet would stay
+ * unpowered, the door open. The pulse length is read at every opening.
  */
 
 #include <stdbool.h>
