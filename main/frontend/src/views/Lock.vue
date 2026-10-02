@@ -216,6 +216,9 @@ const clearChats = async () => {
                 <div class="title">{{ t('telegram') }}</div>
                 <template v-if="status?.telegram.enabled">
                   <span v-if="status.telegram.online" class="pill ok"><span class="dot" />{{ t('tg_online') }}</span>
+                  <span v-else-if="status.telegram.error" class="pill danger">
+                    <span class="dot" />{{ t('tg_offline_reason', { error: status.telegram.error }) }}
+                  </span>
                   <span v-else class="pill danger"><span class="dot" />{{ t('tg_offline') }}</span>
                 </template>
               </div>
@@ -402,6 +405,7 @@ const clearChats = async () => {
     "telegram": "Telegram bot",
     "tg_online": "Online",
     "tg_offline": "Offline",
+    "tg_offline_reason": "Offline: {error}",
     "tg_api_url": "Bot API server",
     "tg_api_url_placeholder": "https://api.telegram.org",
     "tg_token": "Bot token",
@@ -448,6 +452,7 @@ const clearChats = async () => {
     "telegram": "Telegram-бот",
     "tg_online": "На связи",
     "tg_offline": "Нет связи",
+    "tg_offline_reason": "Нет связи: {error}",
     "tg_api_url": "Сервер Bot API",
     "tg_api_url_placeholder": "https://api.telegram.org",
     "tg_token": "Токен бота",
@@ -494,6 +499,7 @@ const clearChats = async () => {
     "telegram": "Telegram-бот",
     "tg_online": "Байланыста",
     "tg_offline": "Байланыс жоқ",
+    "tg_offline_reason": "Байланыс жоқ: {error}",
     "tg_api_url": "Bot API сервері",
     "tg_api_url_placeholder": "https://api.telegram.org",
     "tg_token": "Бот токені",
@@ -540,6 +546,7 @@ const clearChats = async () => {
     "telegram": "Bot Telegram",
     "tg_online": "Online",
     "tg_offline": "Offline",
+    "tg_offline_reason": "Offline: {error}",
     "tg_api_url": "Server Bot API",
     "tg_api_url_placeholder": "https://api.telegram.org",
     "tg_token": "Token del bot",
@@ -586,6 +593,7 @@ const clearChats = async () => {
     "telegram": "Telegram-Bot",
     "tg_online": "Online",
     "tg_offline": "Offline",
+    "tg_offline_reason": "Offline: {error}",
     "tg_api_url": "Bot-API-Server",
     "tg_api_url_placeholder": "https://api.telegram.org",
     "tg_token": "Bot-Token",
