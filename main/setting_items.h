@@ -68,6 +68,7 @@
 #define KEY_TG_TOKEN                "tg_token"
 #define KEY_TG_ADMINS               "tg_admins"
 #define KEY_TG_API_URL              "tg_api_url"
+#define KEY_TG_NOTIFY_CHAT          "tg_notify_chat"
 
 // MQTT. What the client needs to reach a Wiren Board controller's broker and what to call
 // itself there. An empty mqtt_id means "the model name and the MAC", which is what a device

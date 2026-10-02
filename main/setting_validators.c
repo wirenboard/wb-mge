@@ -28,6 +28,8 @@
 #define MAX_MQTT_STR_LEN                    63
 #define MAX_MQTT_ID_LEN                     63
 #define TG_ADMINS_SEPARATOR                 ','
+#define TG_CHAT_ID_MINUS                    '-'
+#define TG_CHAT_ID_MAX_DIGITS               19          // a signed 64-bit integer, as the Bot API has chat ids
 #define TG_API_URL_HTTP_PREFIX              "http://"
 #define TG_API_URL_HTTPS_PREFIX             "https://"
 #define TG_API_URL_PATH_SEPARATOR           '/'
@@ -557,6 +559,30 @@ bool validate_tg_admins(const char *value)
         }
     }
     return digit_seen;
+}
+
+// The chat the bot reports fingerprint openings to, or nothing when they are not reported: a
+// decimal Telegram chat id, with a '-' in front for groups and channels.
+bool validate_tg_notify_chat(const char *value)
+{
+    if (!value) {
+        return false;
+    }
+    if (value[0] == '\0') {
+        return true;
+    }
+
+    const char *digits = (value[0] == TG_CHAT_ID_MINUS) ? (value + 1) : value;
+    size_t len = strlen(digits);
+    if ((len == 0) || (len > TG_CHAT_ID_MAX_DIGITS)) {
+        return false;
+    }
+    for (size_t i = 0; i < len; i++) {
+        if ((digits[i] < '0') || (digits[i] > '9')) {
+            return false;
+        }
+    }
+    return true;
 }
 
 // The Bot API server the bot talks to: "http://" or "https://" (lower case), a host, then

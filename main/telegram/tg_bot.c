@@ -17,6 +17,7 @@
 #include "esp_http_client.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 
 #include "config.h"
@@ -39,7 +40,9 @@ static const char *TAG = "tg_bot";
 #define TG_BOT_URL_MAX              ((SETTING_ITEM_MAX_STR_LEN - 1) + (sizeof(TG_BOT_API_PATH) - 1) + \
                                      (SETTING_ITEM_MAX_STR_LEN - 1) + TG_BOT_METHOD_MAX)
 
-#define TG_BOT_POLL_TIMEOUT_S       25      // how long Telegram holds a getUpdates open
+// How long Telegram holds a getUpdates open. Queued notifications go out once it returns, so this
+// is also about the longest one waits.
+#define TG_BOT_POLL_TIMEOUT_S       5
 #define TG_BOT_HTTP_TIMEOUT_MS      ((TG_BOT_POLL_TIMEOUT_S + 10) * 1000)
 #define TG_BOT_OFFSET_LAST          (-1)    // getUpdates offset: only the newest update, the rest are forgotten
 // One update per poll: an update too big for the response buffer is then known to be that one,
@@ -56,6 +59,9 @@ static const char *TAG = "tg_bot";
 
 #define TG_BOT_ID_MAX               24      // a decimal Telegram id, sign included
 #define TG_BOT_REPLY_MAX            2048
+
+#define TG_BOT_NOTIFY_QUEUE_LENGTH  4       // fingerprint openings waiting for the poll under way to return
+#define TG_BOT_NOTIFY_NAME_SIZE     (FP_STORE_NAME_MAX + 1)     // a queued user name, NUL included
 
 _Static_assert(TG_BOT_ID_MAX > (FP_STORE_TG_CHAT_ID_MAX + 1), "a chat id cut to TG_BOT_ID_MAX must stay too long");
 #define TG_BOT_UPDATE_ID_KEY        "\"update_id\":"
@@ -99,7 +105,12 @@ static int64_t tg_bot_offset;                           // the next update_id to
 static bool    tg_bot_backlog_dropped;                  // false until the first poll with this server and token
 static bool    tg_bot_booted;                           // the boot message has been sent
 static char    tg_bot_admins[SETTING_ITEM_MAX_STR_LEN];
+static char    tg_bot_notify_chat[SETTING_ITEM_MAX_STR_LEN];    // tg_notify_chat; empty: openings are not reported
 static char    tg_bot_reply[TG_BOT_REPLY_MAX];
+
+// The user names of granted fingerprint openings, queued by the sensor task and sent by the bot
+// task. Created by tg_bot_start() before the bot task; NULL until then.
+static QueueHandle_t tg_bot_notify_queue;
 
 // The status tg_bot_get_status() reports: written by the bot task, read by the web server. The
 // flags use the atomic builtins; the reason, a string, is copied in and out under the spinlock.
@@ -583,6 +594,20 @@ static void tg_bot_send_boot_message(void)
     }
 }
 
+// Sends every queued fingerprint opening to tg_notify_chat. The queue is emptied either way: with
+// no chat set or no usable token the openings are dropped, not sent once there is one.
+static void tg_bot_flush_notifications(void)
+{
+    char name[TG_BOT_NOTIFY_NAME_SIZE];
+    while (xQueueReceive(tg_bot_notify_queue, name, 0) == pdTRUE) {
+        if ((tg_bot_notify_chat[0] == '\0') || (!tg_bot_token_usable)) {
+            continue;
+        }
+        snprintf(tg_bot_reply, sizeof(tg_bot_reply), "Door opened: %s (fingerprint)", name);
+        tg_bot_send(tg_bot_notify_chat, tg_bot_reply);
+    }
+}
+
 static esp_err_t tg_bot_poll(void)
 {
     // The first poll after boot or a server or token change drops the backlog: Telegram keeps
@@ -671,14 +696,26 @@ static void tg_bot_task(void *arg)
         if (setting_items_read(KEY_TG_ADMINS, tg_bot_admins) != ESP_OK) {
             tg_bot_admins[0] = '\0';
         }
+        if (setting_items_read(KEY_TG_NOTIFY_CHAT, tg_bot_notify_chat) != ESP_OK) {
+            tg_bot_notify_chat[0] = '\0';
+        }
         if ((strcmp(server, tg_bot_server) != 0) || (strcmp(token, tg_bot_token) != 0)) {
             tg_bot_use_settings(server, token);
         }
 
         if (!tg_bot_token_usable) {
+            tg_bot_flush_notifications();   // drops them: there is nothing to send them with
             vTaskDelay(pdMS_TO_TICKS(TG_BOT_IDLE_MS));
-        } else if (tg_bot_poll() != ESP_OK) {
-            vTaskDelay(pdMS_TO_TICKS(TG_BOT_RETRY_MS));
+        } else {
+            // The notifications go out right after every poll, whatever came of it: an opening
+            // queued while a poll is under way waits for that poll alone.
+            esp_err_t err = tg_bot_poll();
+            tg_bot_flush_notifications();
+            if (err != ESP_OK) {
+                vTaskDelay(pdMS_TO_TICKS(TG_BOT_RETRY_MS));
+                // An opening queued during the pause goes out now, not after the next poll too.
+                tg_bot_flush_notifications();
+            }
         }
     }
 }
@@ -691,10 +728,34 @@ void tg_bot_start(void)
         ESP_LOGE(TAG, "No memory for the response buffer: the Telegram bot is off");
         return;
     }
-    if (xTaskCreate(tg_bot_task, "tg_bot", TG_BOT_TASK_STACK_SIZE, NULL, TG_BOT_TASK_PRIORITY, NULL) != pdPASS) {
-        ESP_LOGE(TAG, "Failed to create the bot task: the Telegram bot is off");
+    QueueHandle_t queue = xQueueCreate(TG_BOT_NOTIFY_QUEUE_LENGTH, TG_BOT_NOTIFY_NAME_SIZE);
+    if (queue == NULL) {
+        ESP_LOGE(TAG, "No memory for the notification queue: the Telegram bot is off");
         heap_caps_free(tg_bot_response);
         tg_bot_response = NULL;
+        return;
+    }
+    // The sensor task is already running and may queue to it from here on.
+    __atomic_store_n(&tg_bot_notify_queue, queue, __ATOMIC_SEQ_CST);
+    if (xTaskCreate(tg_bot_task, "tg_bot", TG_BOT_TASK_STACK_SIZE, NULL, TG_BOT_TASK_PRIORITY, NULL) != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create the bot task: the Telegram bot is off");
+        // Not deleted: the sensor task may be sending to it right now.
+        __atomic_store_n(&tg_bot_notify_queue, NULL, __ATOMIC_SEQ_CST);
+        heap_caps_free(tg_bot_response);
+        tg_bot_response = NULL;
+    }
+}
+
+void tg_bot_notify_fp_open(const char *user_name)
+{
+    QueueHandle_t queue = __atomic_load_n(&tg_bot_notify_queue, __ATOMIC_SEQ_CST);
+    if (queue == NULL) {
+        return;
+    }
+    char name[TG_BOT_NOTIFY_NAME_SIZE];
+    snprintf(name, sizeof(name), "%s", user_name);
+    if (xQueueSend(queue, name, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "Notification queue full: the opening by \"%s\" is not reported", name);
     }
 }
 

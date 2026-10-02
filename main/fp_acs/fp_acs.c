@@ -18,6 +18,7 @@
 #include "fp_log.h"
 #include "fp_store.h"
 #include "r503.h"
+#include "tg_bot.h"
 
 static const char *TAG = "fp_acs";
 
@@ -364,6 +365,7 @@ static void fp_acs_scan(void)
 
     if (result == FP_ACS_RESULT_GRANTED) {
         (void)fp_lock_open();
+        tg_bot_notify_fp_open(user.name);   // queued for the bot task: no wait on the network
         fp_acs_led(R503_LED_FLASHING, R503_LED_GREEN);
     } else {
         fp_acs_led(R503_LED_FLASHING, R503_LED_RED);

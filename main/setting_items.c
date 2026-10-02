@@ -247,6 +247,7 @@ static const setting_item_t setting_items[] = {
     {KEY_TG_TOKEN, DEFAULT_TG_TOKEN, validate_tg_token, SETTING_ITEM_TYPE_STRING},
     {KEY_TG_ADMINS, DEFAULT_TG_ADMINS, validate_tg_admins, SETTING_ITEM_TYPE_STRING},
     {KEY_TG_API_URL, DEFAULT_TG_API_URL, validate_tg_api_url, SETTING_ITEM_TYPE_STRING},
+    {KEY_TG_NOTIFY_CHAT, DEFAULT_TG_NOTIFY_CHAT, validate_tg_notify_chat, SETTING_ITEM_TYPE_STRING},
 
     // MQTT: where the broker is and what this device calls itself on it.
     {KEY_MQTT_ENABLED, DEFAULT_MQTT_ENABLED, validate_bool, SETTING_ITEM_TYPE_BOOL},

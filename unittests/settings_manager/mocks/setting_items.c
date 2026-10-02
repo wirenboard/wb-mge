@@ -213,6 +213,7 @@ static const mock_type_entry_t type_table[] = {
     { "tg_token",           SETTING_ITEM_TYPE_STRING, ""                  },
     { "tg_admins",          SETTING_ITEM_TYPE_STRING, ""                  },
     { "tg_api_url",         SETTING_ITEM_TYPE_STRING, "https://api.telegram.org" },
+    { "tg_notify_chat",     SETTING_ITEM_TYPE_STRING, ""                  },
     { "mqtt_enabled",       SETTING_ITEM_TYPE_BOOL,   "false"             },
     { "mqtt_host",          SETTING_ITEM_TYPE_STRING, ""                  },
     { "mqtt_port",          SETTING_ITEM_TYPE_INT,    "1883"              },
