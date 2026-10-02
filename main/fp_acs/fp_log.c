@@ -123,7 +123,7 @@ static void fp_log_from_blob(const fp_log_blob_t *blob, fp_log_entry_t *entry)
 static bool fp_log_blob_valid(const fp_log_blob_t *blob, uint32_t slot)
 {
     return ((blob->version == FP_LOG_BLOB_VERSION) && (blob->seq >= FP_LOG_FIRST_SEQ) &&
-            (fp_log_slot(blob->seq) == slot) && (blob->source <= FP_ACS_SOURCE_TELEGRAM) &&
+            (fp_log_slot(blob->seq) == slot) && (blob->source <= FP_ACS_SOURCE_MQTT) &&
             (blob->result <= FP_ACS_RESULT_UNKNOWN) &&
             (memchr(blob->user_name, '\0', sizeof(blob->user_name)) != NULL) &&
             (memchr(blob->chat, '\0', sizeof(blob->chat)) != NULL));

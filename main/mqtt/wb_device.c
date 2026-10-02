@@ -15,6 +15,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_mac.h"
+#include "fp_lock.h"
 #include "fp_store.h"
 
 static const char *TAG = "wb_device";
@@ -40,6 +41,10 @@ static const char *TAG = "wb_device";
 #define WB_SWITCH_LEN               1
 #define WB_SWITCH_MAX               1
 
+// The panel presses a pushbutton by sending "1".
+#define WB_PUSHBUTTON_PRESS         "1"
+#define WB_PUSHBUTTON_LEN           1
+
 // user_<id>, id 1..FP_STORE_USERS_MAX: at most three digits, no leading zero.
 #define WB_USER_CONTROL_PREFIX      "user_"
 #define WB_USER_CONTROL_MAX_LEN     16
@@ -57,7 +62,8 @@ _Static_assert(WB_DEVICE_VALUE_MAX_LEN > FP_STORE_NAME_MAX, "a user name must fi
  * rule triggered by it reads the other three as they are for the same event.
  */
 typedef enum {
-    WB_CONTROL_SENSOR_ONLINE = 0,
+    WB_CONTROL_OPEN = 0,
+    WB_CONTROL_SENSOR_ONLINE,
     WB_CONTROL_LAST_RESULT,
     WB_CONTROL_LAST_USER,
     WB_CONTROL_LAST_SOURCE,
@@ -76,11 +82,17 @@ typedef struct {
 
 typedef struct {
     const char       *name;
+    bool              pushbutton;   // writable and stateless: a meta and an /on topic, no value
     wb_control_desc_t desc;
 } wb_control_t;
 
-// Indexed by wb_control_id_t. Every one of them is read-only.
+// Indexed by wb_control_id_t. Every one of them but the pushbutton is read-only.
 static const wb_control_t controls[WB_CONTROL_COUNT] = {
+    [WB_CONTROL_OPEN] = {
+        .name = "open",
+        .pushbutton = true,
+        .desc = { .type = "pushbutton", .title_en = "Open door", .title_ru = "Открыть дверь" },
+    },
     [WB_CONTROL_SENSOR_ONLINE] = {
         .name = "sensor_online",
         .desc = { .type = "switch", .has_range = true, .max = WB_SWITCH_MAX,
@@ -278,7 +290,7 @@ static void wb_device_format_value(wb_control_id_t id, bool online, bool has_eve
 
 static void wb_device_publish_control_meta(wb_control_id_t id)
 {
-    char *meta = wb_device_control_meta_json(&controls[id].desc, true, (int)id + 1);
+    char *meta = wb_device_control_meta_json(&controls[id].desc, (!controls[id].pushbutton), (int)id + 1);
     if (meta == NULL) {
         ESP_LOGE(TAG, "Failed to build the meta of control %s", controls[id].name);
         return;
@@ -309,6 +321,9 @@ static void wb_device_publish_controls(bool all)
 
         if (all) {
             wb_device_publish_control_meta(id);
+        }
+        if (controls[id].pushbutton) {
+            continue;
         }
 
         char value[WB_DEVICE_VALUE_MAX_LEN];
@@ -545,10 +560,41 @@ static uint8_t wb_device_user_from_topic(const char *topic, int topic_len)
     return (uint8_t)id;
 }
 
+// True when the topic is the command topic of the fixed control id: /devices/<id>/controls/<name>/on.
+static bool wb_device_is_command_topic(wb_control_id_t id, const char *topic, int topic_len)
+{
+    char expected[WB_DEVICE_TOPIC_MAX_LEN];
+    if (wb_device_build_topic(expected, sizeof(expected), device_id, controls[id].name, WB_TOPIC_COMMAND) != ESP_OK) {
+        return false;
+    }
+    size_t len = strlen(expected);
+    return (((size_t)topic_len == len) && (strncmp(topic, expected, len) == 0));
+}
+
+// Opens the door as the Telegram bot does, and records the press as a granted attempt even when the
+// lock did not take the request, as the bot records its own.
+static esp_err_t wb_device_press_open(const char *payload, int payload_len)
+{
+    if ((payload_len != WB_PUSHBUTTON_LEN) || (strncmp(payload, WB_PUSHBUTTON_PRESS, WB_PUSHBUTTON_LEN) != 0)) {
+        ESP_LOGW(TAG, "A pushbutton takes 1, the door is not opened");
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!fp_lock_open()) {
+        ESP_LOGW(TAG, "The lock did not take the request: an opening is already under way, "
+                      "or its task is not running");
+    }
+    fp_acs_report_mqtt_event();
+    return ESP_OK;
+}
+
 esp_err_t wb_device_handle_command(const char *topic, int topic_len, const char *payload, int payload_len)
 {
     if ((topic == NULL) || (payload == NULL) || (topic_len <= 0)) {
         return ESP_ERR_INVALID_ARG;
+    }
+
+    if (wb_device_is_command_topic(WB_CONTROL_OPEN, topic, topic_len)) {
+        return wb_device_press_open(payload, payload_len);
     }
 
     uint8_t id = wb_device_user_from_topic(topic, topic_len);

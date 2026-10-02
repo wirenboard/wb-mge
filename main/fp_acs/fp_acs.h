@@ -55,6 +55,7 @@
 typedef enum {
     FP_ACS_SOURCE_FINGERPRINT,
     FP_ACS_SOURCE_TELEGRAM,
+    FP_ACS_SOURCE_MQTT,         // the open pushbutton of the MQTT device
 } fp_acs_source_t;
 
 typedef enum {
@@ -72,7 +73,7 @@ typedef struct {
     char            user_name[FP_STORE_NAME_MAX + 1];   // empty when nobody
     bool            has_score;                          // a fingerprint match of a known user
     uint16_t        score;
-    char            chat[FP_ACS_CHAT_MAX + 1];          // the Telegram chat's title, or its id; empty for a fingerprint
+    char            chat[FP_ACS_CHAT_MAX + 1];          // the Telegram chat's title, or its id; empty otherwise
 } fp_acs_event_t;
 
 typedef enum {
@@ -128,6 +129,9 @@ bool fp_acs_get_last_event(fp_acs_event_t *out);
 // (its title, or its id when it has none) and is cut to FP_ACS_CHAT_MAX bytes at a UTF-8 character
 // boundary. Opening the lock is the caller's (fp_lock_open()).
 void fp_acs_report_telegram_event(fp_acs_result_t result, uint8_t user_id, const char *chat);
+// Records a press of the MQTT open pushbutton as the last event: granted, with no user and no
+// chat. Opening the lock is the caller's (fp_lock_open()).
+void fp_acs_report_mqtt_event(void);
 
 // The three requests below are queued to the sensor task and return at once; their outcome
 // shows in the status (enrollment) and in users_rev (deletions).

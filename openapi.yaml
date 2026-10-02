@@ -1002,7 +1002,7 @@ paths:
   /fp/log:
     get:
       summary: The access log, newest first
-      description: "Every opening attempt, from the sensor and from the Telegram bot, granted or not. The last 200 are kept in the fp_nvs partition, so the log survives reboots and power loss; without that partition it is kept in RAM only, until the next reboot. A new attempt shows in GET /fp/status as a change of last_event.seq."
+      description: "Every opening attempt, from the sensor, from the Telegram bot and from the MQTT open pushbutton, granted or not. The last 200 are kept in the fp_nvs partition, so the log survives reboots and power loss; without that partition it is kept in RAM only, until the next reboot. A new attempt shows in GET /fp/status as a change of last_event.seq."
       responses:
         '200':
           description: Log
@@ -1289,24 +1289,24 @@ components:
       properties:
         seq: { type: integer, description: "The attempt's seq in GET /fp/log: grows by one with every attempt and keeps growing across reboots (restarts at 1 after a reboot only on a device without the fp_nvs partition)" }
         uptime_s: { type: integer, description: "Device uptime at the event" }
-        source: { type: string, enum: [fingerprint, telegram] }
+        source: { type: string, enum: [fingerprint, telegram, mqtt], description: "fingerprint: the sensor; telegram: the Telegram bot; mqtt: a press of the open pushbutton of the MQTT device (\"1\" to /devices/<id>/controls/open/on, <id> as in mqtt_id), always granted, with no user and no chat" }
         result: { type: string, enum: [granted, denied, unknown] }
         user_id: { type: [integer, 'null'] }
         user_name: { type: [string, 'null'] }
         score: { type: [integer, 'null'], description: "Match score of a known user's fingerprint" }
-        chat: { type: [string, 'null'], description: "The Telegram chat the attempt came from: its title (groups, supergroups and channels), or its id when it has none; cut to 31 bytes of UTF-8 at a character boundary. null for a fingerprint" }
+        chat: { type: [string, 'null'], description: "The Telegram chat the attempt came from: its title (groups, supergroups and channels), or its id when it has none; cut to 31 bytes of UTF-8 at a character boundary. null for a fingerprint and for mqtt" }
 
     FpLogEntry:
       type: object
       properties:
         seq: { type: integer, minimum: 1, description: "Grows by one with every attempt and keeps growing across reboots; the same number as last_event.seq in GET /fp/status" }
         time: { type: [integer, 'null'], description: "UTC unix seconds, from the clock SNTP (pool.ntp.org) sets; null for an attempt made before the clock was set after a boot" }
-        source: { type: string, enum: [fingerprint, telegram] }
+        source: { type: string, enum: [fingerprint, telegram, mqtt], description: "fingerprint: the sensor; telegram: the Telegram bot; mqtt: a press of the open pushbutton of the MQTT device (\"1\" to /devices/<id>/controls/open/on, <id> as in mqtt_id), always granted, with no user and no chat" }
         result: { type: string, enum: [granted, denied, unknown] }
         user_id: { type: [integer, 'null'] }
         user_name: { type: [string, 'null'], description: "The user's name at the time of the attempt" }
         score: { type: [integer, 'null'], description: "Match score of a known user's fingerprint" }
-        chat: { type: [string, 'null'], description: "The Telegram chat the attempt came from: its title (groups, supergroups and channels), or its id when it has none; cut to 31 bytes of UTF-8 at a character boundary. null for a fingerprint" }
+        chat: { type: [string, 'null'], description: "The Telegram chat the attempt came from: its title (groups, supergroups and channels), or its id when it has none; cut to 31 bytes of UTF-8 at a character boundary. null for a fingerprint and for mqtt" }
 
     FpTgChat:
       type: object

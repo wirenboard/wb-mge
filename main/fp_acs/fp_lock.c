@@ -48,7 +48,7 @@ typedef struct {
 static QueueHandle_t fp_lock_queue;
 
 // True from the moment an open request is taken until its pulse has ended (or was skipped); read and written through
-// the atomic builtins, since fp_lock_open() is called from the sensor task and the bot alike.
+// the atomic builtins, since fp_lock_open() is called from the sensor task, the bot and the MQTT task alike.
 static bool fp_lock_busy;
 
 // The relay as of the last coil write that succeeded: written by the lock task, read by the web

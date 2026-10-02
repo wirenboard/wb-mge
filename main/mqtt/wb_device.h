@@ -16,10 +16,12 @@
  *     /devices/<id>/controls/<c>/on           command from the panel, NEVER retained
  *
  * The controls:
+ *     open            pushbutton, writable a write of "1" opens the door, as the Telegram bot does,
+ *                                          and is recorded as a granted attempt; it has no value
  *     sensor_online   switch, read-only    the sensor answers
  *     last_result     text, read-only      granted | denied | unknown, empty before the first event
  *     last_user       text, read-only      the user of the last event, empty when nobody
- *     last_source     text, read-only      fingerprint | telegram, empty before the first event
+ *     last_source     text, read-only      fingerprint | telegram | mqtt, empty before the first event
  *     event_count     value, read-only     the sequence number of the last event (0: none yet);
  *                                          it moves on every attempt, so a rule can trigger on it
  *     user_<id>       switch, read-write   one per user of the store, titled with the user's
@@ -89,8 +91,9 @@ void wb_device_publish_changed(void);
 // Handle one message from a /devices/<id>/controls/<c>/on topic. Returns ESP_OK when the
 // command was accepted and applied, ESP_ERR_NOT_FOUND when the topic is not a command topic of
 // this device (or names a read-only control, or a user that does not exist), and
-// ESP_ERR_INVALID_ARG when the payload is not "0" or "1". The strings need not be
-// null-terminated: both lengths are explicit, which is how esp-mqtt hands them over.
+// ESP_ERR_INVALID_ARG when the payload is not one the control takes: "0" or "1" for a user's
+// switch, "1" for the open pushbutton. The strings need not be null-terminated: both lengths are
+// explicit, which is how esp-mqtt hands them over.
 esp_err_t wb_device_handle_command(const char *topic, int topic_len, const char *payload, int payload_len);
 
 // Forget what has been published, so the next wb_device_publish_all() is a full republish. Which

@@ -203,7 +203,7 @@ static void fp_acs_copy_chat(char out[FP_ACS_CHAT_MAX + 1], const char *chat)
     out[len] = '\0';
 }
 
-// chat is the Telegram chat's label, NULL for a fingerprint. Returns the seq the event got.
+// chat is the Telegram chat's label, NULL for any other source. Returns the seq the event got.
 static uint32_t fp_acs_record_event(fp_acs_source_t source, fp_acs_result_t result, const fp_store_user_t *user,
                                     bool has_score, uint16_t score, const char *chat)
 {
@@ -228,8 +228,8 @@ static uint32_t fp_acs_record_event(fp_acs_source_t source, fp_acs_result_t resu
     // sees the new seq finds the record in the log as well.
     uint32_t log_seq = fp_log_append(&event);
 
-    // The sensor task and the bot both get here, and the seq is handed out under the log's mutex, not
-    // this one: an event that lost the race to publish must not replace a newer one.
+    // The sensor task, the bot and the MQTT task all get here, and the seq is handed out under the log's
+    // mutex, not this one: an event that lost the race to publish must not replace a newer one.
     fp_acs_lock();
     event.seq = (log_seq != 0) ? log_seq : (fp_acs_last_event.seq + 1);
     if (event.seq > fp_acs_last_event.seq) {
@@ -741,6 +741,14 @@ void fp_acs_report_telegram_event(fp_acs_result_t result, uint8_t user_id, const
     fp_acs_record_event(FP_ACS_SOURCE_TELEGRAM, result, known ? &user : NULL, false, 0, chat);
 }
 
+void fp_acs_report_mqtt_event(void)
+{
+    if (fp_acs_mutex == NULL) {
+        return;
+    }
+    fp_acs_record_event(FP_ACS_SOURCE_MQTT, FP_ACS_RESULT_GRANTED, NULL, false, 0, NULL);
+}
+
 fp_acs_req_t fp_acs_enroll_start(uint8_t user_id)
 {
     if (fp_acs_mutex == NULL) {
@@ -854,7 +862,11 @@ size_t fp_acs_copy_image(uint8_t *out, size_t out_size, uint32_t *seq)
 
 const char *fp_acs_source_str(fp_acs_source_t source)
 {
-    return (source == FP_ACS_SOURCE_TELEGRAM) ? "telegram" : "fingerprint";
+    switch (source) {
+    case FP_ACS_SOURCE_TELEGRAM: return "telegram";
+    case FP_ACS_SOURCE_MQTT:     return "mqtt";
+    default:                     return "fingerprint";
+    }
 }
 
 const char *fp_acs_result_str(fp_acs_result_t result)

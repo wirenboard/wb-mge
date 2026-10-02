@@ -1,10 +1,11 @@
 #pragma once
 
 /*
- * The access log: every opening attempt, granted or not, from the sensor and from the Telegram
- * bot. A ring of FP_LOG_CAPACITY records in namespace "fp_log" of the "fp_nvs" partition (one
- * blob per slot, "e<slot>", slot = seq % FP_LOG_CAPACITY, and the u32 "next"), so it survives
- * reboots and power loss, with a RAM copy in PSRAM that every read is served from.
+ * The access log: every opening attempt, granted or not, from the sensor, from the Telegram bot
+ * and from the MQTT open pushbutton. A ring of FP_LOG_CAPACITY records in namespace "fp_log" of
+ * the "fp_nvs" partition (one blob per slot, "e<slot>", slot = seq % FP_LOG_CAPACITY, and the u32
+ * "next"), so it survives reboots and power loss, with a RAM copy in PSRAM that every read is
+ * served from.
  *
  * seq is persistent and keeps growing across reboots, and it is the seq the event gets in GET
  * /fp/status as well. Records are stamped with the wall clock that SNTP sets, or with
@@ -37,7 +38,7 @@ typedef struct {
     char            user_name[FP_STORE_NAME_MAX + 1];   // the name at the time; empty when nobody
     bool            has_score;
     uint16_t        score;
-    char            chat[FP_ACS_CHAT_MAX + 1];          // the Telegram chat's title, or its id; empty for a fingerprint
+    char            chat[FP_ACS_CHAT_MAX + 1];          // the Telegram chat's title, or its id; empty otherwise
 } fp_log_entry_t;
 
 // Loads the log from NVS. Call once, after fp_store_init(), which mounts the partition.

@@ -62,7 +62,7 @@ export interface Info {
 
 export type FpEnrollState = 'idle' | 'place' | 'lift' | 'processing' | 'done' | 'error' | 'cancelled';
 
-export type FpEventSource = 'fingerprint' | 'telegram';
+export type FpEventSource = 'fingerprint' | 'telegram' | 'mqtt';
 
 export type FpEventResult = 'granted' | 'denied' | 'unknown';
 
@@ -74,7 +74,7 @@ export interface FpEvent {
   user_id: number | null;
   user_name: string | null;
   score: number | null;
-  chat: string | null; // the Telegram chat's title, or its id; null for a fingerprint
+  chat: string | null; // the Telegram chat's title, or its id; null otherwise
 }
 
 // A record of GET /fp/log. seq keeps growing across reboots; last_event.seq is the same number.
@@ -86,7 +86,7 @@ export interface FpLogEntry {
   user_id: number | null;
   user_name: string | null; // the name at the time of the attempt
   score: number | null;
-  chat: string | null; // the Telegram chat's title, or its id; null for a fingerprint
+  chat: string | null; // the Telegram chat's title, or its id; null otherwise
 }
 
 // GET /fp/log: newest first

@@ -23,6 +23,7 @@ const RESULT_PILL_CLASSES: Record<FpEventResult, string> = {
 const SOURCE_KEYS: Record<FpEventSource, string> = {
   fingerprint: 'source_fingerprint',
   telegram: 'source_telegram',
+  mqtt: 'source_mqtt',
 };
 
 const { t, locale } = useI18n();
@@ -152,6 +153,7 @@ watch(lastEventSeq, (seq) => {
     "col_result": "Result",
     "source_fingerprint": "Fingerprint",
     "source_telegram": "Telegram",
+    "source_mqtt": "MQTT",
     "source_chat": "{source} · {chat}",
     "result_granted": "Granted",
     "result_denied": "Denied",
@@ -171,6 +173,7 @@ watch(lastEventSeq, (seq) => {
     "col_result": "Результат",
     "source_fingerprint": "Отпечаток",
     "source_telegram": "Telegram",
+    "source_mqtt": "MQTT",
     "source_chat": "{source} · {chat}",
     "result_granted": "Разрешён",
     "result_denied": "Запрещён",
@@ -190,6 +193,7 @@ watch(lastEventSeq, (seq) => {
     "col_result": "Нәтиже",
     "source_fingerprint": "Саусақ ізі",
     "source_telegram": "Telegram",
+    "source_mqtt": "MQTT",
     "source_chat": "{source} · {chat}",
     "result_granted": "Рұқсат етілді",
     "result_denied": "Тыйым салынды",
@@ -209,6 +213,7 @@ watch(lastEventSeq, (seq) => {
     "col_result": "Esito",
     "source_fingerprint": "Impronta",
     "source_telegram": "Telegram",
+    "source_mqtt": "MQTT",
     "source_chat": "{source} · {chat}",
     "result_granted": "Consentito",
     "result_denied": "Negato",
@@ -228,6 +233,7 @@ watch(lastEventSeq, (seq) => {
     "col_result": "Ergebnis",
     "source_fingerprint": "Fingerabdruck",
     "source_telegram": "Telegram",
+    "source_mqtt": "MQTT",
     "source_chat": "{source} · {chat}",
     "result_granted": "Gewährt",
     "result_denied": "Verweigert",

@@ -249,6 +249,12 @@ static void mqtt_wb_event_handler(void *handler_args, esp_event_base_t base, int
         if ((event->topic == NULL) || (event->current_data_offset != 0)) {
             break;
         }
+        // A retained /on is the broker replaying an old command on subscribe (a live delivery
+        // carries RETAIN=0); replaying "open" would unlock the door on every reconnect.
+        if (event->retain) {
+            ESP_LOGW(TAG, "Retained command on %.*s ignored", event->topic_len, event->topic);
+            break;
+        }
 
         mqtt_wb_event_t command = { .type = MQTT_WB_EVENT_COMMAND };
         if ((event->topic_len <= 0) || ((size_t)event->topic_len >= sizeof(command.topic)) ||
