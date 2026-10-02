@@ -1528,6 +1528,12 @@ components:
           pattern: '^https?://[!-"$-.0-9;->@-~]([!-"$->@-~]*[!-"$-.0->@-~])?$'
           default: "https://api.telegram.org"
           description: "Telegram Bot API server the bot talks to: http:// or https://, a host, an optional port and path, no trailing '/', '?' or '#'; the bot requests <tg_api_url>/bot<token>/<method>. Set it to a self-hosted telegram-bot-api server (usually http://host:8081) or a mirror where api.telegram.org is blocked. Plain http sends the token unencrypted. A change is picked up without a restart, once the request under way or the pause after it is over, and drops the updates still queued, as a token change does"
+        tg_notify_chat:
+          type: string
+          maxLength: 20
+          pattern: '^(-?[0-9]{1,19})?$'
+          default: ""
+          description: "Telegram chat id the bot reports every granted fingerprint opening to, as \"Door opened: <user name> (fingerprint)\"; group and channel ids start with '-'. Empty: nothing is reported. Openings through Telegram or MQTT, and denied or unknown fingers, are not reported. The message goes out once the getUpdates under way returns - within about 5 s - or, after a failed one, once the 10 s pause after it is over; nothing is sent while the bot has no usable token"
         mqtt_enabled: { type: boolean, default: false }
         mqtt_host:
           type: string

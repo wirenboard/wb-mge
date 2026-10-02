@@ -58,10 +58,12 @@
 #define DEFAULT_LOCK_MODE           LOCK_MODE_STRIKE_STR
 
 // Telegram bot: no token means no bot; the admins are numeric Telegram user ids; the Bot API
-// server is Telegram's own unless it is blocked where the device runs.
+// server is Telegram's own unless it is blocked where the device runs; no chat to notify means
+// fingerprint openings are not reported.
 #define DEFAULT_TG_TOKEN            ""
 #define DEFAULT_TG_ADMINS           ""
 #define DEFAULT_TG_API_URL          "https://api.telegram.org"
+#define DEFAULT_TG_NOTIFY_CHAT      ""
 
 // MQTT. Off out of the box with nothing configured: a device that has never been told about a
 // broker must not go looking for one. The empty id means "build one from the model and the MAC".

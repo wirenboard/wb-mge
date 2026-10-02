@@ -4,12 +4,17 @@
  * The Telegram bot of the fingerprint access control, with the behaviour of the pp-lock
  * controller it replaces.
  *
- * One task long-polls getUpdates over HTTP(S) on the Bot API server tg_api_url and answers with
- * sendMessage. The server, the token (tg_token) and the admins (tg_admins: numeric Telegram user
- * ids separated by commas) are read from the settings on every poll, so a change applies to the
- * next poll without a restart; a change of server or token drops the pending updates, as a boot
- * does. An empty token leaves the bot idle. The first successful poll sends "Lock door controller
- * booted" to every admin.
+ * One task long-polls getUpdates over HTTP(S) on the Bot API server tg_api_url, 5 s at a time, and
+ * answers with sendMessage. The server, the token (tg_token), the admins (tg_admins: numeric
+ * Telegram user ids separated by commas) and the chat to notify (tg_notify_chat) are read from the
+ * settings on every poll, so a change applies to the next poll without a restart; a change of
+ * server or token drops the pending updates, as a boot does. An empty token leaves the bot idle.
+ * The first successful poll sends "Lock door controller booted" to every admin.
+ *
+ * Every granted fingerprint opening is reported to tg_notify_chat as "Door opened: <user name>
+ * (fingerprint)", right after the getUpdates under way returns - within about 5 s - or, after a
+ * failed one, once the 10 s pause after it is over. Nothing is sent while tg_notify_chat is empty
+ * or the bot has no usable token: those openings are dropped, not sent later.
  *
  * Commands:
  *   /activate [chat_id [name]]   admins: let a chat (default: this one) open the door
@@ -31,6 +36,11 @@
 // Starts the bot task. Call once, after network_init(); the task waits for a token and for the
 // network by itself.
 void tg_bot_start(void);
+
+// Queues the report of a granted fingerprint opening by user_name, for the bot task to send to
+// tg_notify_chat. Never blocks, so the sensor task can call it. The report is dropped when the
+// queue is full, with a log line, and before tg_bot_start() has created the queue.
+void tg_bot_notify_fp_open(const char *user_name);
 
 // The bot as GET /fp/status reports it. Callable from any task.
 //   enabled  a token is set (tg_token not empty).

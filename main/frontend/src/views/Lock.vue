@@ -26,7 +26,7 @@ const { data, isChanged, isLoading, updateSettings } = useSettings();
 const { confirmDialog } = useConfirm();
 
 const lockFields = ['lock_mode', 'lock_addr', 'lock_channel', 'lock_pulse_ms'];
-const telegramFields = ['tg_api_url', 'tg_token', 'tg_admins'];
+const telegramFields = ['tg_api_url', 'tg_token', 'tg_admins', 'tg_notify_chat'];
 
 // Each card posts its own keys and nothing else, the way every other settings card does.
 const saveLock = () => updateSettings({
@@ -40,6 +40,7 @@ const saveTelegram = () => updateSettings({
   tg_api_url: data.value!.tg_api_url,
   tg_token: data.value!.tg_token,
   tg_admins: data.value!.tg_admins,
+  tg_notify_chat: data.value!.tg_notify_chat,
 });
 
 const { status, startPolling, stopPolling } = useFpStatus(ref(false));
@@ -238,6 +239,21 @@ const clearChats = async () => {
                   @input="(ev) => onCustomValidation(ev, t('wrong_tg_admins_pattern'))"
                 />
               </div>
+              <div class="field">
+                <label for="tg_notify_chat">{{ t('tg_notify_chat') }}</label>
+                <input
+                  id="tg_notify_chat"
+                  v-model="data.tg_notify_chat"
+                  type="text"
+                  name="tg_notify_chat"
+                  class="mono"
+                  pattern="^(-?[0-9]{1,19})?$"
+                  maxlength="20"
+                  :placeholder="t('tg_notify_chat_placeholder')"
+                  @input="(ev) => onCustomValidation(ev, t('wrong_chat_id_pattern'))"
+                />
+              </div>
+              <p class="lock-note">{{ t('tg_notify_chat_note') }}</p>
             </div>
           </form>
 
@@ -368,6 +384,9 @@ const clearChats = async () => {
     "wrong_tg_token_pattern": "Enter up to 63 characters without spaces",
     "wrong_tg_admins_pattern": "Enter numeric Telegram user IDs separated by commas, without spaces",
     "wrong_tg_api_url_pattern": "Enter an address starting with http:// or https://, without spaces, ? or #, and without a trailing /",
+    "tg_notify_chat": "Notification chat ID",
+    "tg_notify_chat_placeholder": "-1001234567890",
+    "tg_notify_chat_note": "The bot reports every door opening by fingerprint to this chat, with the user's name. Leave the field empty to turn the reports off.",
 
     "chats": "Allowed chats",
     "no_chats": "No allowed chats",
@@ -408,6 +427,9 @@ const clearChats = async () => {
     "wrong_tg_token_pattern": "Введите до 63 символов без пробелов",
     "wrong_tg_admins_pattern": "Введите числовые ID пользователей Telegram через запятую, без пробелов",
     "wrong_tg_api_url_pattern": "Введите адрес, начинающийся с http или https, без пробелов, ? и # и без / в конце",
+    "tg_notify_chat": "ID чата для уведомлений",
+    "tg_notify_chat_placeholder": "-1001234567890",
+    "tg_notify_chat_note": "Бот сообщает в этот чат о каждом открытии двери по отпечатку пальца и называет пользователя. Оставьте поле пустым, чтобы отключить уведомления.",
 
     "chats": "Разрешённые чаты",
     "no_chats": "Разрешённых чатов нет",
@@ -448,6 +470,9 @@ const clearChats = async () => {
     "wrong_tg_token_pattern": "Бос орынсыз 63 таңбаға дейін енгізіңіз",
     "wrong_tg_admins_pattern": "Telegram пайдаланушыларының сандық ID-ін үтір арқылы, бос орынсыз енгізіңіз",
     "wrong_tg_api_url_pattern": "http немесе https деп басталатын мекенжайды бос орынсыз, ? және # белгілерінсіз, соңына / қоймай енгізіңіз",
+    "tg_notify_chat": "Хабарландыру чатының ID",
+    "tg_notify_chat_placeholder": "-1001234567890",
+    "tg_notify_chat_note": "Бот осы чатқа есік саусақ ізімен ашылған сайын пайдаланушының атын көрсетіп хабарлайды. Хабарландыруларды өшіру үшін өрісті бос қалдырыңыз.",
 
     "chats": "Рұқсат етілген чаттар",
     "no_chats": "Рұқсат етілген чаттар жоқ",
@@ -488,6 +513,9 @@ const clearChats = async () => {
     "wrong_tg_token_pattern": "Inserisci fino a 63 caratteri senza spazi",
     "wrong_tg_admins_pattern": "Inserisci ID numerici di utenti Telegram separati da virgole, senza spazi",
     "wrong_tg_api_url_pattern": "Inserisci un indirizzo che inizi con http:// o https://, senza spazi, ? o # e senza / finale",
+    "tg_notify_chat": "ID chat per le notifiche",
+    "tg_notify_chat_placeholder": "-1001234567890",
+    "tg_notify_chat_note": "Il bot segnala in questa chat ogni apertura della porta tramite impronta digitale, con il nome dell'utente. Lascia il campo vuoto per disattivare le notifiche.",
 
     "chats": "Chat consentite",
     "no_chats": "Nessuna chat consentita",
@@ -528,6 +556,9 @@ const clearChats = async () => {
     "wrong_tg_token_pattern": "Geben Sie bis zu 63 Zeichen ohne Leerzeichen ein",
     "wrong_tg_admins_pattern": "Geben Sie numerische Telegram-Benutzer-IDs durch Kommas getrennt und ohne Leerzeichen ein",
     "wrong_tg_api_url_pattern": "Geben Sie eine Adresse ein, die mit http:// oder https:// beginnt, ohne Leerzeichen, ? oder # und ohne abschließenden /",
+    "tg_notify_chat": "Chat-ID für Benachrichtigungen",
+    "tg_notify_chat_placeholder": "-1001234567890",
+    "tg_notify_chat_note": "Der Bot meldet in diesem Chat jede Türöffnung per Fingerabdruck mit dem Namen des Benutzers. Lassen Sie das Feld leer, um die Meldungen abzuschalten.",
 
     "chats": "Erlaubte Chats",
     "no_chats": "Keine erlaubten Chats",
