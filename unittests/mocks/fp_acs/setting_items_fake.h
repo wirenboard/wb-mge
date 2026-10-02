@@ -14,3 +14,6 @@ void mock_settings_unset(const char *key);
 void mock_settings_reset(void);
 // Calls to setting_items_read() and setting_items_read_int() since the last reset.
 extern int mock_settings_reads;
+// What setting_items_save() returns, ESP_OK after a reset; on ESP_OK it stores the value as
+// mock_settings_set() does.
+extern esp_err_t mock_settings_save_result;

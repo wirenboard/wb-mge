@@ -18,6 +18,7 @@ static mock_setting_t mock_settings[MOCK_SETTINGS_MAX];
 static size_t         mock_settings_count;
 
 int mock_settings_reads = 0;
+esp_err_t mock_settings_save_result = ESP_OK;
 
 static mock_setting_t *mock_settings_find(const char *key)
 {
@@ -56,6 +57,15 @@ void mock_settings_reset(void)
     memset(mock_settings, 0, sizeof(mock_settings));
     mock_settings_count = 0;
     mock_settings_reads = 0;
+    mock_settings_save_result = ESP_OK;
+}
+
+esp_err_t setting_items_save(const char *key, const char *value)
+{
+    if (mock_settings_save_result == ESP_OK) {
+        mock_settings_set(key, value);
+    }
+    return mock_settings_save_result;
 }
 
 esp_err_t setting_items_read(const char *key, char *value)

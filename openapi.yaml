@@ -1539,7 +1539,7 @@ components:
           maxLength: 20
           pattern: '^(-?[0-9]{1,19})?$'
           default: ""
-          description: "Telegram chat id the bot reports every granted fingerprint opening to, as \"Door opened: <user name> (fingerprint)\"; group and channel ids start with '-'. Empty: nothing is reported. Openings through Telegram or MQTT, and denied or unknown fingers, are not reported. The message goes out once the getUpdates under way returns - within about 5 s - or, after a failed one, once the 10 s pause after it is over; nothing is sent while the bot has no usable token"
+          description: "Telegram chat id the bot reports every granted fingerprint opening to, as \"Door opened: <user name> (fingerprint)\"; group and channel ids start with '-'. Empty: nothing is reported. Openings through Telegram or MQTT, and denied or unknown fingers, are not reported. The message goes out once the getUpdates under way returns - within about 5 s - or, after a failed one, once the 10 s pause after it is over; nothing is sent while the bot has no usable token. When Telegram upgrades the group named here to a supergroup, which gets a new id, the bot saves that id here itself, from the service message it receives in the group. An upgrade is missed only when its message is in the backlog the bot drops at boot or on a change of tg_api_url or tg_token"
         mqtt_enabled: { type: boolean, default: false }
         mqtt_host:
           type: string

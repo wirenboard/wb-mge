@@ -15,7 +15,10 @@
  * (fingerprint)", right after the getUpdates under way returns, failed or not - within about 5 s -
  * and one queued during the 10 s pause after a failed getUpdates once that pause is over. A report
  * is sent once: one the server does not take is lost. Nothing is sent while tg_notify_chat is empty
- * or the bot has no usable token: those openings are dropped, not sent later.
+ * or the bot has no usable token: those openings are dropped, not sent later. When Telegram upgrades
+ * the group tg_notify_chat names to a supergroup, which gets a new id, the bot saves that id as
+ * tg_notify_chat itself, from the service message it receives in the group. An upgrade is missed
+ * only when its message is in the backlog the bot drops at boot or on a change of server or token.
  *
  * Commands:
  *   /activate [chat_id [name]]   admins: let a chat (default: this one) open the door

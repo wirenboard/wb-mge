@@ -543,6 +543,30 @@ static bool tg_bot_json_id(const cJSON *item, char *buf, size_t len)
     return true;
 }
 
+// A group Telegram upgrades to a supergroup gets a new id, and the old one takes no more messages.
+// The service message announcing it - migrate_to_chat_id, in the old group, delivered to a bot
+// whatever its privacy mode - moves tg_notify_chat to the new id when it named the old group. An
+// upgrade is missed only when its message is in the backlog dropped at boot or on a server or token
+// change; one made while a poll failed waits on the server for the next poll.
+static void tg_bot_follow_migration(const char *chat_id, const cJSON *message)
+{
+    if (strcmp(chat_id, tg_bot_notify_chat) != 0) {
+        return;
+    }
+    char new_id[TG_BOT_ID_MAX];
+    if (!tg_bot_json_id(cJSON_GetObjectItemCaseSensitive(message, "migrate_to_chat_id"), new_id, sizeof(new_id))) {
+        return;
+    }
+    esp_err_t err = setting_items_save(KEY_TG_NOTIFY_CHAT, new_id);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Group %s became supergroup %s, but saving that as tg_notify_chat failed: %s", chat_id,
+                 new_id, esp_err_to_name(err));
+        return;
+    }
+    snprintf(tg_bot_notify_chat, sizeof(tg_bot_notify_chat), "%s", new_id);
+    ESP_LOGI(TAG, "Group %s became supergroup %s: openings are reported there now", chat_id, new_id);
+}
+
 static void tg_bot_handle_update(const cJSON *update)
 {
     const cJSON *message = cJSON_GetObjectItemCaseSensitive(update, "message");
@@ -554,6 +578,9 @@ static void tg_bot_handle_update(const cJSON *update)
 
     char chat_id[TG_BOT_ID_MAX];
     bool has_chat = tg_bot_json_id(cJSON_GetObjectItemCaseSensitive(chat, "id"), chat_id, sizeof(chat_id));
+    if (has_chat) {
+        tg_bot_follow_migration(chat_id, message);
+    }
     if ((!cJSON_IsString(text)) || (!has_chat)) {
         return;
     }

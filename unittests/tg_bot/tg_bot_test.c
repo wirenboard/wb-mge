@@ -982,6 +982,70 @@ static void test_reports_without_a_usable_token_are_dropped(void)
 }
 
 
+// ── Notify chat upgraded to a supergroup ─────────────────────────────────────────────────
+
+#define TG_BOT_TEST_OLD_GROUP       "-5196631654"
+#define TG_BOT_TEST_NEW_GROUP       "-1004327052848"
+
+// Hands the bot the service message Telegram sends in a group it upgrades to a supergroup.
+static void tg_bot_test_migration(const char *chat_id, const char *new_id)
+{
+    char body[256];
+    snprintf(body, sizeof(body),
+             "{\"update_id\":1,\"message\":{\"message_id\":9,\"chat\":{\"id\":%s,\"title\":\"Office\","
+             "\"type\":\"group\"},\"date\":1700000000,\"migrate_to_chat_id\":%s}}", chat_id, new_id);
+    cJSON *update = cJSON_Parse(body);
+    TEST_ASSERT_NOT_NULL(update);
+    tg_bot_handle_update(update);
+    cJSON_Delete(update);
+}
+
+static void test_notify_chat_follows_its_group_to_the_supergroup(void)
+{
+    snprintf(tg_bot_notify_chat, sizeof(tg_bot_notify_chat), "%s", TG_BOT_TEST_OLD_GROUP);
+    tg_bot_test_migration(TG_BOT_TEST_OLD_GROUP, TG_BOT_TEST_NEW_GROUP);
+
+    char saved[SETTING_ITEM_MAX_STR_LEN] = {0};
+    TEST_ASSERT_EQUAL(ESP_OK, setting_items_read(KEY_TG_NOTIFY_CHAT, saved));
+    TEST_ASSERT_EQUAL_STRING(TG_BOT_TEST_NEW_GROUP, saved);
+    TEST_ASSERT_EQUAL_INT(0, esp_http_fake_request_count);
+
+    tg_bot_notify_fp_open("Anna");
+    tg_bot_flush_notifications();
+    (void)tg_bot_test_reply_text();
+    TEST_ASSERT_EQUAL_STRING(TG_BOT_TEST_NEW_GROUP, tg_bot_test_chat);
+}
+
+static void test_upgrade_of_another_group_leaves_the_notify_chat(void)
+{
+    snprintf(tg_bot_notify_chat, sizeof(tg_bot_notify_chat), "%s", TG_BOT_TEST_NOTIFY_CHAT);
+    tg_bot_test_migration(TG_BOT_TEST_OLD_GROUP, TG_BOT_TEST_NEW_GROUP);
+
+    char saved[SETTING_ITEM_MAX_STR_LEN] = {0};
+    TEST_ASSERT_EQUAL(ESP_ERR_NOT_FOUND, setting_items_read(KEY_TG_NOTIFY_CHAT, saved));
+    TEST_ASSERT_EQUAL_STRING(TG_BOT_TEST_NOTIFY_CHAT, tg_bot_notify_chat);
+}
+
+static void test_upgrade_with_no_notify_chat_sets_none(void)
+{
+    tg_bot_test_migration(TG_BOT_TEST_OLD_GROUP, TG_BOT_TEST_NEW_GROUP);
+
+    char saved[SETTING_ITEM_MAX_STR_LEN] = {0};
+    TEST_ASSERT_EQUAL(ESP_ERR_NOT_FOUND, setting_items_read(KEY_TG_NOTIFY_CHAT, saved));
+    TEST_ASSERT_EQUAL_STRING("", tg_bot_notify_chat);
+}
+
+static void test_upgrade_not_saved_keeps_the_old_chat_and_says_so(void)
+{
+    mock_settings_save_result = ESP_FAIL;
+    snprintf(tg_bot_notify_chat, sizeof(tg_bot_notify_chat), "%s", TG_BOT_TEST_OLD_GROUP);
+    tg_bot_test_migration(TG_BOT_TEST_OLD_GROUP, TG_BOT_TEST_NEW_GROUP);
+
+    TEST_ASSERT_EQUAL_STRING(TG_BOT_TEST_OLD_GROUP, tg_bot_notify_chat);
+    TEST_ASSERT_NOT_NULL(mock_log_find("saving that as tg_notify_chat failed"));
+}
+
+
 // ── The task ─────────────────────────────────────────────────────────────────────────────
 
 static void tg_bot_test_hook_set_token(void)
@@ -1186,6 +1250,10 @@ int main(void)
     RUN_TEST(test_reports_beyond_four_waiting_are_dropped_with_a_log_line);
     RUN_TEST(test_reports_without_a_notify_chat_are_dropped_not_sent_later);
     RUN_TEST(test_reports_without_a_usable_token_are_dropped);
+    RUN_TEST(test_notify_chat_follows_its_group_to_the_supergroup);
+    RUN_TEST(test_upgrade_of_another_group_leaves_the_notify_chat);
+    RUN_TEST(test_upgrade_with_no_notify_chat_sets_none);
+    RUN_TEST(test_upgrade_not_saved_keeps_the_old_chat_and_says_so);
 
     RUN_TEST(test_task_without_a_token_idles_and_rereads_the_settings);
     RUN_TEST(test_task_never_sends_a_malformed_token);
