@@ -3,6 +3,7 @@ import { type Ref, ref, shallowRef } from 'vue';
 import { useAlerts } from '@/common/alert';
 import { hasSession } from '@/common/session';
 import type {
+  FpEnrollState,
   FpLockRequest,
   FpLogResponse,
   FpStatus,
@@ -55,6 +56,11 @@ const FP_ERROR_MESSAGES: Record<string, string> = {
 
 // An i18n key, or the device's own string when there is none: either way a t() argument.
 export const fpErrorMessage = (deviceError: string): string => FP_ERROR_MESSAGES[deviceError] ?? deviceError;
+
+const FP_ENROLL_ACTIVE_STATES: FpEnrollState[] = ['place', 'lift', 'processing'];
+
+// An enrollment under way; any other state is the outcome of the last one, or idle when none ran.
+export const isFpEnrollActive = (state: FpEnrollState): boolean => FP_ENROLL_ACTIVE_STATES.includes(state);
 
 // Page-scoped: every call owns its own state, and the page starts it on mount and stops it on unmount.
 // `fast` switches the period from 1 s to the 500 ms an enrollment is followed at.

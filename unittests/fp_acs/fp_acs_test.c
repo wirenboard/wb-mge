@@ -735,9 +735,15 @@ static void test_enrollment_takes_five_placements_and_stores_in_the_lowest_free_
     fp_acs_test_push_takes(5);
     fp_acs_run_enroll(FP_ACS_TEST_OTHER_USER);
 
-    // The last take is uploaded before Img2Tz turns ImageBuffer into a ridge map.
-    TEST_ASSERT_EQUAL_STRING("Led2.3 GenImg Img2Tz1 GenImg GenImg Img2Tz2 GenImg GenImg Img2Tz3 GenImg GenImg Img2Tz4 "
-                             "GenImg GenImg UpImage Img2Tz5 GenImg RegModel Store1 Led3.4", trace_get());
+    // Every step sets the ring: breathing blue (Led1.2) asks for the finger, flashing purple (Led2.3)
+    // marks the processing, flashing green (Led2.4) asks to lift it. The last take is uploaded before
+    // Img2Tz turns ImageBuffer into a ridge map. Done ends on the idle light, solid green (Led3.4).
+    TEST_ASSERT_EQUAL_STRING("Led1.2 GenImg Led2.3 Img2Tz1 Led2.4 GenImg "
+                             "Led1.2 GenImg Led2.3 Img2Tz2 Led2.4 GenImg "
+                             "Led1.2 GenImg Led2.3 Img2Tz3 Led2.4 GenImg "
+                             "Led1.2 GenImg Led2.3 Img2Tz4 Led2.4 GenImg "
+                             "Led1.2 GenImg Led2.3 UpImage Img2Tz5 Led2.4 GenImg "
+                             "Led2.3 RegModel Store1 Led3.4", trace_get());
     fp_acs_status_t status;
     fp_acs_get_status(&status);
     TEST_ASSERT_EQUAL_INT(FP_ACS_ENROLL_STATE_DONE, status.enroll.state);

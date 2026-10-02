@@ -10,14 +10,15 @@ import {
   deleteFpUser,
   fetchFpImage,
   fetchFpUsers,
-  fpErrorMessage,
+  isFpEnrollActive,
   saveFpUser,
   startFpEnroll,
   useFpStatus,
 } from '@/common/fpAcs';
-import type { FpEnrollState, FpEventResult, FpEventSource, FpUser, FpUserRequest, Uptime } from '@/common/types';
+import type { FpEventResult, FpEventSource, FpUser, FpUserRequest, GrayImage, Uptime } from '@/common/types';
 import { useUptime } from '@/common/uptime';
 import Button from '@/components/Button.vue';
+import EnrollDialog from '@/components/EnrollDialog.vue';
 import FingerprintImage from '@/components/FingerprintImage.vue';
 import Heading from '@/components/Heading.vue';
 import Info from '@/components/Info.vue';
@@ -39,32 +40,19 @@ interface UserDraft {
   allow_tg: boolean;
 }
 
-interface GrayImage {
-  pixels: Uint8Array;
-  width: number;
-  height: number;
-}
-
 const DASH = '—';
 const MS_PER_S = 1000;
 const S_PER_MIN = 60;
 const S_PER_H = 3600;
 const S_PER_D = 86400;
 const DURATION_UNITS_SHOWN = 2;
+const IMAGE_NO_EVENT = 0; // the event_seq of an enrollment take
 
 const USER_FLAGS: UserFlag[] = ['enabled', 'allow_fp', 'allow_tg'];
 const USER_FLAG_KEYS: Record<UserFlag, string> = {
   enabled: 'user_enabled',
   allow_fp: 'user_allow_fp',
   allow_tg: 'user_allow_tg',
-};
-const ENROLL_ACTIVE_STATES: FpEnrollState[] = ['place', 'lift', 'processing'];
-const ENROLL_STATE_KEYS: Record<string, string> = {
-  idle: 'enroll_idle',
-  place: 'enroll_place',
-  lift: 'enroll_lift',
-  processing: 'enroll_processing',
-  cancelled: 'enroll_cancelled',
 };
 const RESULT_KEYS: Record<FpEventResult, string> = {
   granted: 'result_granted',
@@ -87,8 +75,9 @@ const { showAlert } = useAlerts();
 const { confirmDialog } = useConfirm();
 const { uptime } = useUptime();
 
-// Opened by "Add finger" or by an enrollment started elsewhere (MQTT, another browser); it stays
-// open on the outcome until closed, and while it is open the status is polled at the enrollment rate.
+// The enrollment dialog: opened by every enrollment that starts, from "Add finger" or from elsewhere
+// (MQTT, another browser); it stays open on the outcome until closed, and while it is open the status
+// is polled at the enrollment rate.
 const enrollOpen = ref(false);
 const { status, failed, startPolling, stopPolling } = useFpStatus(enrollOpen);
 
@@ -160,10 +149,11 @@ const lastEventAge = computed(() => {
 });
 
 // The image is re-read only when its seq changes. The seq is remembered only once the read
-// succeeded, so a failed read is retried on the next status answer.
+// succeeded, so a failed read is retried on the next status answer. imageSeq and imageEventSeq
+// describe the pixels in hand, not the status: what is shown is decided by them.
 const image = shallowRef<GrayImage | null>(null);
+const imageSeq = ref<number | null>(null);
 const imageEventSeq = ref<number | null>(null);
-let imageSeq: number | null = null;
 let imageLoading = false;
 watch(() => status.value?.image, async (info) => {
   if (info === undefined) {
@@ -172,16 +162,16 @@ watch(() => status.value?.image, async (info) => {
   if (info === null) {
     image.value = null;
     imageEventSeq.value = null;
-    imageSeq = null;
+    imageSeq.value = null;
     return;
   }
-  if ((info.seq === imageSeq) || imageLoading) {
+  if ((info.seq === imageSeq.value) || imageLoading) {
     return;
   }
   imageLoading = true;
   try {
     const pixels = await fetchFpImage();
-    imageSeq = info.seq;
+    imageSeq.value = info.seq;
     imageEventSeq.value = info.event_seq;
     image.value = pixels ? { pixels, width: info.width, height: info.height } : null;
   } catch (err) {
@@ -287,64 +277,61 @@ const removeFinger = async (slot: number) => {
   mutate(() => deleteFpFinger(slot));
 };
 
-const enroll = computed(() => status.value?.enroll);
-const enrollActive = computed(() => !!enroll.value && ENROLL_ACTIVE_STATES.includes(enroll.value.state));
-const enrollUser = computed(() => users.value.find((user) => user.id === enroll.value?.user_id));
+const editorTitle = computed(() => ((draft.value?.id === undefined) ? t('new_user') : t('edit_user')));
 
-// An enrollment started elsewhere opens the editor on its user. The record is watched too: on page
-// load the status reporting the enrollment comes before the users list. A form already open is left
-// as it is, so nothing typed into it is lost.
-watch([enrollActive, enrollUser], ([active, user]) => {
-  if (!active) {
-    return;
-  }
-  enrollOpen.value = true;
-  if (user && !draft.value) {
-    draft.value = toDraft(user);
-  }
-});
-
-const enrollUserName = computed(() => enrollUser.value?.name ?? DASH);
-
-const editorOpen = computed(() => !!draft.value || enrollOpen.value);
-
-const editorTitle = computed(() => {
-  if (!draft.value) {
-    return t('enroll_title');
-  }
-  return (draft.value.id === undefined) ? t('new_user') : t('edit_user');
-});
-
-// A running enrollment is followed and cancelled in the editor, so it stays open until the
-// enrollment is cancelled or finishes.
 const closeEditor = () => {
-  if (enrollActive.value) {
-    return;
-  }
   draft.value = null;
-  enrollOpen.value = false;
 };
 
-const enrollMessage = computed(() => {
-  const value = enroll.value;
-  if (!value) {
-    return '';
-  }
-  if (value.state === 'done') {
-    return t('enroll_done', { slot: value.slot ?? DASH });
-  }
-  if (value.state === 'error') {
-    return t('enroll_error', { error: value.error ? t(fpErrorMessage(value.error)) : DASH });
-  }
-  return enumLabel(ENROLL_STATE_KEYS, value.state);
+const enroll = computed(() => status.value?.enroll);
+const enrollActive = computed(() => !!enroll.value && isFpEnrollActive(enroll.value.state));
+const enrollUser = computed(() => users.value.find((user) => user.id === enroll.value?.user_id));
+
+// The image seq the status reported when the dialog took up the enrollment it shows. A take with a
+// higher seq was made during that enrollment; any other image is older, possibly of someone else's
+// finger, and the dialog never shows it. The device uploads only the last take, so nothing is shown
+// before that take either.
+const enrollImageBaseSeq = ref(0);
+const enrollImage = computed(() => {
+  const seq = imageSeq.value;
+  // At "place" on the last step that take is not made yet: any image is an older one.
+  const lastTake = !!enroll.value && (enroll.value.step >= enroll.value.steps) && (enroll.value.state !== 'place');
+  const taken = (imageEventSeq.value === IMAGE_NO_EVENT) && (seq !== null) && (seq > enrollImageBaseSeq.value);
+  return (lastTake && taken) ? image.value : null;
 });
 
+// Every enrollment that starts, here or elsewhere (MQTT, another browser), opens the dialog, or takes
+// over the one still open on the previous outcome. An editor already open stays under it as it is.
+// Two enrollments can follow each other between two polls (a tab in the background polls nothing),
+// so a new one is also told by its user or its step changing back while the status stays active.
+watch(
+  [enrollActive, () => enroll.value?.user_id, () => enroll.value?.step],
+  ([active, userId, step], [wasActive, prevUserId, prevStep]) => {
+    if (!active) {
+      return;
+    }
+    if ((!wasActive) || (userId !== prevUserId) || ((step ?? 0) < (prevStep ?? 0))) {
+      enrollImageBaseSeq.value = status.value?.image?.seq ?? 0;
+      enrollOpen.value = true;
+    }
+  },
+);
+
 const addFinger = async (user: FpUser) => {
-  if (await mutate(() => startFpEnroll(user.id))) {
-    enrollOpen.value = true;
-    // Poll at once at the enrollment rate; a status answer read before the start is dropped.
-    startPolling();
+  if (!(await mutate(() => startFpEnroll(user.id)))) {
+    return;
   }
+  // The device has put the enrollment at its first take as it accepted the start, but the status in
+  // hand may have been read before that and still show the previous outcome: it is moved to where
+  // the device is, which opens the dialog, until the next answer replaces it.
+  if (status.value) {
+    status.value = {
+      ...status.value,
+      enroll: { ...status.value.enroll, state: 'place', user_id: user.id, step: 1, slot: null, error: null },
+    };
+  }
+  // Poll at once at the enrollment rate; a status answer read before the start is dropped.
+  startPolling();
 };
 
 const cancelEnroll = () => mutate(cancelFpEnroll);
@@ -452,12 +439,10 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
           </div>
         </section>
 
-        <Modal :open="editorOpen" @close="closeEditor">
+        <Modal :open="draft !== null" @close="closeEditor">
           <template #title>{{ editorTitle }}</template>
           <template #actions>
-            <Button type="button" variant="outline" :disabled="enrollActive" @click="closeEditor">
-              {{ t('close') }}
-            </Button>
+            <Button type="button" variant="outline" @click="closeEditor">{{ t('close') }}</Button>
             <Button v-if="draft" type="submit" form="user_form" :is-loading="busy" :disabled="busy">
               {{ t('save') }}
             </Button>
@@ -512,32 +497,17 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
               </li>
             </ul>
           </div>
-
-          <div v-if="enrollOpen && enroll" class="sub-section">
-            <div class="access-sectionHeader">
-              <!-- Without the form the modal title already says this, and its Close does the same. -->
-              <div v-if="draft" class="sub-section-label">{{ t('enroll_title') }}</div>
-              <Button v-if="enrollActive" type="button" variant="danger" :disabled="busy" @click="cancelEnroll">
-                {{ t('cancel') }}
-              </Button>
-              <Button v-else-if="draft" type="button" variant="outline" @click="enrollOpen = false">
-                {{ t('close') }}
-              </Button>
-            </div>
-            <div class="access-event">
-              <div class="access-eventInfo">
-                <InfoRow :label="t('event_user')">{{ enrollUserName }}</InfoRow>
-                <InfoRow v-if="enrollActive" :label="t('enroll_progress')">
-                  <span class="mono">{{ t('enroll_step', { n: enroll.step, m: enroll.steps }) }}</span>
-                </InfoRow>
-                <p class="access-enrollMessage" :class="{ 'access-enrollMessageError': enroll.state === 'error' }">
-                  {{ enrollMessage }}
-                </p>
-              </div>
-              <FingerprintImage v-if="image" class="access-image" v-bind="image" :label="t('image_label')" />
-            </div>
-          </div>
         </Modal>
+
+        <EnrollDialog
+          :open="enrollOpen"
+          :enroll="status.enroll"
+          :user-name="enrollUser?.name ?? null"
+          :image="enrollImage"
+          :busy="busy"
+          @cancel="cancelEnroll"
+          @close="enrollOpen = false"
+        />
       </template>
     </div>
   </Layout>
@@ -618,16 +588,6 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
 .access-finger:last-child {
   border-bottom: 0;
 }
-
-.access-enrollMessage {
-  margin: 12px 0 4px;
-  font-size: 14px;
-  font-weight: 500;
-}
-
-.access-enrollMessageError {
-  color: var(--danger-color);
-}
 </style>
 
 <i18n>
@@ -685,18 +645,6 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
     "no_fingers": "No fingers enrolled",
     "finger_slot": "Slot {slot}",
     "delete_finger_confirm": "Delete the fingerprint in slot {slot}?",
-
-    "enroll_title": "Adding a finger",
-    "enroll_progress": "Step",
-    "enroll_step": "{n} of {m}",
-    "enroll_idle": "Waiting for the sensor…",
-    "enroll_place": "Place the finger on the sensor",
-    "enroll_lift": "Lift the finger",
-    "enroll_processing": "Processing…",
-    "enroll_done": "Finger added to slot {slot}",
-    "enroll_error": "Enrollment failed: {error}",
-    "enroll_cancelled": "Enrollment cancelled",
-    "cancel": "Cancel",
 
     "dur_d": "{n} d",
     "dur_h": "{n} h",
@@ -757,18 +705,6 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
     "finger_slot": "Ячейка {slot}",
     "delete_finger_confirm": "Удалить отпечаток из ячейки {slot}?",
 
-    "enroll_title": "Запись пальца",
-    "enroll_progress": "Шаг",
-    "enroll_step": "{n} из {m}",
-    "enroll_idle": "Ожидание датчика…",
-    "enroll_place": "Приложите палец к датчику",
-    "enroll_lift": "Уберите палец",
-    "enroll_processing": "Обработка…",
-    "enroll_done": "Палец записан в ячейку {slot}",
-    "enroll_error": "Не удалось записать палец: {error}",
-    "enroll_cancelled": "Запись отменена",
-    "cancel": "Отменить",
-
     "dur_d": "{n} д",
     "dur_h": "{n} ч",
     "dur_min": "{n} мин",
@@ -827,18 +763,6 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
     "no_fingers": "Жазылған саусақтар жоқ",
     "finger_slot": "Ұяшық {slot}",
     "delete_finger_confirm": "{slot} ұяшығындағы саусақ ізін жою керек пе?",
-
-    "enroll_title": "Саусақты жазу",
-    "enroll_progress": "Қадам",
-    "enroll_step": "{n} / {m}",
-    "enroll_idle": "Датчикті күту…",
-    "enroll_place": "Саусақты датчикке қойыңыз",
-    "enroll_lift": "Саусақты алыңыз",
-    "enroll_processing": "Өңделуде…",
-    "enroll_done": "Саусақ {slot} ұяшығына жазылды",
-    "enroll_error": "Саусақты жазу мүмкін болмады: {error}",
-    "enroll_cancelled": "Жазу тоқтатылды",
-    "cancel": "Болдырмау",
 
     "dur_d": "{n} күн",
     "dur_h": "{n} сағ",
@@ -899,18 +823,6 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
     "finger_slot": "Slot {slot}",
     "delete_finger_confirm": "Eliminare l'impronta nello slot {slot}?",
 
-    "enroll_title": "Registrazione del dito",
-    "enroll_progress": "Passo",
-    "enroll_step": "{n} di {m}",
-    "enroll_idle": "In attesa del sensore…",
-    "enroll_place": "Appoggia il dito sul sensore",
-    "enroll_lift": "Solleva il dito",
-    "enroll_processing": "Elaborazione…",
-    "enroll_done": "Dito registrato nello slot {slot}",
-    "enroll_error": "Registrazione non riuscita: {error}",
-    "enroll_cancelled": "Registrazione annullata",
-    "cancel": "Annulla",
-
     "dur_d": "{n} g",
     "dur_h": "{n} h",
     "dur_min": "{n} min",
@@ -969,18 +881,6 @@ const cancelEnroll = () => mutate(cancelFpEnroll);
     "no_fingers": "Keine Finger registriert",
     "finger_slot": "Platz {slot}",
     "delete_finger_confirm": "Fingerabdruck auf Platz {slot} löschen?",
-
-    "enroll_title": "Finger registrieren",
-    "enroll_progress": "Schritt",
-    "enroll_step": "{n} von {m}",
-    "enroll_idle": "Warten auf den Sensor…",
-    "enroll_place": "Legen Sie den Finger auf den Sensor",
-    "enroll_lift": "Heben Sie den Finger ab",
-    "enroll_processing": "Verarbeitung…",
-    "enroll_done": "Finger auf Platz {slot} registriert",
-    "enroll_error": "Registrierung fehlgeschlagen: {error}",
-    "enroll_cancelled": "Registrierung abgebrochen",
-    "cancel": "Abbrechen",
 
     "dur_d": "{n} T",
     "dur_h": "{n} h",

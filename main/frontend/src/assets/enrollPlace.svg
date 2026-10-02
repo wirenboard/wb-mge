@@ -1,0 +1,8 @@
+<svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+  <ellipse class="enrollArt-ring" cx="60" cy="98" rx="34" ry="11" stroke-width="5" />
+  <ellipse cx="60" cy="98" rx="20" ry="5.5" stroke-width="2.5" />
+  <path d="M46 4v44a14 14 0 0 0 28 0V4" />
+  <path d="M53 36h14v10a7 7 0 0 1-14 0z" />
+  <path d="M26 22v26m-7-7 7 7 7-7" />
+  <path d="M94 22v26m-7-7 7 7 7-7" />
+</svg>

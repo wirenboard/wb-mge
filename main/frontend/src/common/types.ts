@@ -136,6 +136,13 @@ export interface FpStatus {
   };
 }
 
+// A GET /fp/image answer as FingerprintImage draws it.
+export interface GrayImage {
+  pixels: Uint8Array;
+  width: number;
+  height: number;
+}
+
 // POST /fp/lock
 export interface FpLockRequest {
   on: boolean;

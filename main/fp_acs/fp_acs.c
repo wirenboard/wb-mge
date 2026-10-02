@@ -397,12 +397,29 @@ static bool fp_acs_cancel_pending(void)
     return cancel;
 }
 
+// Publishes the step, then sets the ring to match it, the same colours the web UI shows: breathing
+// blue asks for the finger, flashing purple says the take is being processed, flashing green asks to
+// lift the finger - not solid green, which is the idle light.
 static void fp_acs_enroll_step(fp_acs_enroll_state_t state, uint8_t step)
 {
     fp_acs_lock();
     fp_acs_enroll.state = state;
     fp_acs_enroll.step = step;
     fp_acs_unlock();
+
+    switch (state) {
+    case FP_ACS_ENROLL_STATE_PLACE:
+        fp_acs_led(R503_LED_BREATHING, R503_LED_BLUE);
+        break;
+    case FP_ACS_ENROLL_STATE_PROCESSING:
+        fp_acs_led(R503_LED_FLASHING, R503_LED_PURPLE);
+        break;
+    case FP_ACS_ENROLL_STATE_LIFT:
+        fp_acs_led(R503_LED_FLASHING, R503_LED_GREEN);
+        break;
+    default:
+        break;
+    }
 }
 
 static void fp_acs_enroll_end(fp_acs_enroll_state_t state, const char *error)
@@ -506,7 +523,6 @@ static void fp_acs_run_enroll(uint8_t user_id)
 
     ESP_LOGI(TAG, "Enrolling a finger of user %u", (unsigned)user_id);
     fp_acs_awaiting_lift = false;
-    fp_acs_led(R503_LED_FLASHING, R503_LED_PURPLE);
 
     uint8_t code = R503_CODE_OK;
     for (uint8_t take = 1; take <= FP_ACS_ENROLL_STEPS; take++) {

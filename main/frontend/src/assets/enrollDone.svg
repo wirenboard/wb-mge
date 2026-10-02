@@ -1,0 +1,5 @@
+<svg viewBox="0 0 120 120" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg">
+  <ellipse class="enrollArt-ring" cx="60" cy="98" rx="34" ry="11" stroke-width="5" />
+  <ellipse cx="60" cy="98" rx="20" ry="5.5" stroke-width="2.5" />
+  <path class="enrollArt-mark" d="M42 50l12 12 24-26" stroke-width="5" />
+</svg>
