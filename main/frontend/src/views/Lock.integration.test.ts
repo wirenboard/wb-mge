@@ -1,15 +1,20 @@
 /**
- * Integration tests for the status pills and the relay switch of Lock.vue. The status poll
- * (useFpStatus) is the real one; the settings are stubbed, and api answers GET /fp/status, GET
- * /fp/tg_chats and POST /fp/lock from the test.
+ * Integration tests for the status pills, the relay switch and the two settings cards of Lock.vue.
+ * The status poll (useFpStatus) is the real one; the settings are stubbed, and api answers GET
+ * /fp/status, GET /fp/tg_chats and POST /fp/lock from the test.
  *
  * LOCK-I-001 — before the first status answer neither card has a pill.
  * LOCK-I-002 — the relay pill: Online (ok) while the module answers, Offline (danger) otherwise.
- * LOCK-I-003 — the Telegram pill appears only once a token is set: Online (ok) or Offline (danger).
+ * LOCK-I-003 — the Telegram pill appears only once a token is set: Online (ok), or Offline (danger)
+ *               with the reason when the device gives one.
  * LOCK-I-004 — the pills follow the status as it changes.
  * LOCK-I-005 — the relay switch shows lock.on, posts the state asked for, and goes back to what
  *               the relay reports when the relay did not follow.
- * LOCK-I-006 — skipped, a known bug: the reason the bot is offline (telegram.error) is not shown.
+ * LOCK-I-006 — the Telegram card names the reason the bot is offline (telegram.error).
+ * LOCK-I-007 — the relay card saves lock_exit_input with the other lock keys.
+ * LOCK-I-008 — the Telegram card saves tg_notify_chat with the other bot keys.
+ * LOCK-I-009 — the relay configuration pill: lock.config_error as a reason, none before the first
+ *               try or once the module is configured, an unknown code shown as the device sent it.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -30,6 +35,7 @@ vi.mock('@/utils/api', () => ({
 }));
 
 const settingsRef = ref<Partial<Settings>>({});
+const updateSettingsMock = vi.fn();
 
 vi.mock('@/common/settings', () => ({
   SettingsRefreshError: class SettingsRefreshError extends Error {},
@@ -39,26 +45,28 @@ vi.mock('@/common/settings', () => ({
     isChanged: () => false,
     isLoading: ref(false),
     partialRefresh: vi.fn().mockResolvedValue(undefined),
-    updateSettings: vi.fn().mockResolvedValue(undefined),
+    updateSettings: updateSettingsMock,
     refresh: vi.fn(),
   }),
 }));
 
 const STATUS_POLL_MS = 1000;
 
-const makeStatus = (lock: FpStatus['lock'], telegram: FpStatus['telegram']): FpStatus => ({
+// config_error defaults to null: the relay module holds its configuration.
+const makeStatus = (lock: Partial<FpStatus['lock']>, telegram: FpStatus['telegram']): FpStatus => ({
   sensor: { online: true, capacity: 200, used: 3 },
   users_rev: 1,
   enroll: { state: 'idle', user_id: null, step: 0, steps: 5, slot: null, error: null },
   last_event: null,
   image: null,
-  lock,
+  lock: { on: false, online: true, config_error: null, ...lock },
   telegram,
 });
 
 const TG_OFF: FpStatus['telegram'] = { enabled: false, online: false, error: null };
 const TG_ONLINE: FpStatus['telegram'] = { enabled: true, online: true, error: null };
 const TG_OFFLINE: FpStatus['telegram'] = { enabled: true, online: false, error: 'HTTP 401' };
+const TG_OFFLINE_NO_REASON: FpStatus['telegram'] = { enabled: true, online: false, error: null };
 
 // null: GET /fp/status never answers.
 let status: FpStatus | null;
@@ -92,6 +100,9 @@ type LockWrapper = Awaited<ReturnType<typeof mountLock>>;
 const RELAY_CARD = 0;
 const TELEGRAM_CARD = 1;
 
+// The settings form of a card (the Telegram card also has the form that adds an allowed chat).
+const settingsForm = (wrapper: LockWrapper, card: number) => wrapper.findAll('section.card')[card].find('form');
+
 // The pills in the header of a card, as "<class> <text>".
 const pills = (wrapper: LockWrapper, card: number) =>
   wrapper.findAll('section.card')[card].findAll('.card-header .pill').map((pill) => {
@@ -109,9 +120,10 @@ const nextPoll = async () => {
 beforeEach(() => {
   hasSession.value = true;
   settingsRef.value = {
-    lock_mode: 'strike', lock_addr: 1, lock_channel: 1, lock_pulse_ms: 3000,
-    tg_api_url: 'https://api.telegram.org', tg_token: '', tg_admins: '',
+    lock_mode: 'strike', lock_addr: 1, lock_channel: 1, lock_pulse_ms: 3000, lock_exit_input: 'off',
+    tg_api_url: 'https://api.telegram.org', tg_token: '', tg_admins: '', tg_notify_chat: '',
   } as Partial<Settings>;
+  updateSettingsMock.mockReset().mockResolvedValue(undefined);
   status = makeStatus({ on: false, online: true }, TG_OFF);
   lockRequests = [];
   vi.mocked(api).mockReset().mockImplementation(async (path: string, options?: { json?: unknown }) => {
@@ -165,7 +177,8 @@ describe('Lock.vue — status pills', () => {
     const cases: [FpStatus['telegram'], string[]][] = [
       [TG_OFF, []],
       [TG_ONLINE, ['ok Online']],
-      [TG_OFFLINE, ['danger Offline']],
+      [TG_OFFLINE, ['danger Offline: HTTP 401']],
+      [TG_OFFLINE_NO_REASON, ['danger Offline']],
     ];
     for (const [telegram, expected] of cases) {
       status = makeStatus({ on: false, online: true }, telegram);
@@ -197,7 +210,7 @@ describe('Lock.vue — status pills', () => {
     status = makeStatus({ on: false, online: false }, TG_OFFLINE);
     await nextPoll();
     expect(pills(wrapper, RELAY_CARD)).toEqual(['danger Offline']);
-    expect(pills(wrapper, TELEGRAM_CARD)).toEqual(['danger Offline']);
+    expect(pills(wrapper, TELEGRAM_CARD)).toEqual(['danger Offline: HTTP 401']);
 
     // The token removed: the bot is off, which is not the same as offline.
     status = makeStatus({ on: false, online: true }, TG_OFF);
@@ -211,12 +224,64 @@ describe('Lock.vue — status pills', () => {
 
 describe('Lock.vue — why the bot is offline', () => {
   // Commit 58e9199c1 says the Lock page shows the bot offline "with that reason", and openapi.yaml
-  // documents telegram.error for it; Lock.vue renders only the Offline pill. Un-skip once it does.
-  it.skip('LOCK-I-006 BUG: the Telegram card names the reason the bot is offline', async () => {
+  // documents telegram.error for it.
+  it('LOCK-I-006: the Telegram card names the reason the bot is offline', async () => {
     for (const error of ['HTTP 401', 'invalid token']) {
       status = makeStatus({ on: false, online: true }, { enabled: true, online: false, error });
       const wrapper = await mountLock();
       expect(wrapper.findAll('section.card')[TELEGRAM_CARD].text(), error).toContain(error);
+      wrapper.unmount();
+    }
+  });
+});
+
+describe('Lock.vue — saving the cards', () => {
+  it('LOCK-I-007: the relay card saves the exit button input with the other lock keys', async () => {
+    const wrapper = await mountLock();
+    await wrapper.find('#lock_exit_input').setValue('3');
+    await settingsForm(wrapper, RELAY_CARD).trigger('submit');
+    await flushPromises();
+
+    expect(updateSettingsMock).toHaveBeenCalledTimes(1);
+    expect(updateSettingsMock).toHaveBeenCalledWith({
+      lock_mode: 'strike', lock_addr: 1, lock_channel: 1, lock_pulse_ms: 3000, lock_exit_input: '3',
+    });
+
+    wrapper.unmount();
+  });
+
+  it('LOCK-I-008: the Telegram card saves the notification chat with the other bot keys', async () => {
+    const wrapper = await mountLock();
+    await wrapper.find('#tg_notify_chat').setValue('-1001234567890');
+    await settingsForm(wrapper, TELEGRAM_CARD).trigger('submit');
+    await flushPromises();
+
+    expect(updateSettingsMock).toHaveBeenCalledTimes(1);
+    expect(updateSettingsMock).toHaveBeenCalledWith({
+      tg_api_url: 'https://api.telegram.org', tg_token: '', tg_admins: '', tg_notify_chat: '-1001234567890',
+    });
+
+    wrapper.unmount();
+  });
+});
+
+describe('Lock.vue — relay module configuration', () => {
+  it('LOCK-I-009: the relay card names why the module is not configured', async () => {
+    const cases: [string | null, string[]][] = [
+      ['ESP_ERR_INVALID_RESPONSE', [
+        'ok Online',
+        'danger Not configured: the module answers with an error (relay firmware older than 1.28?)',
+      ]],
+      ['ESP_ERR_TIMEOUT', ['ok Online', 'danger Not configured: no answer from the module']],
+      // No try since boot yet, and a module that holds its configuration: nothing to report.
+      ['ESP_ERR_NOT_FINISHED', ['ok Online']],
+      [null, ['ok Online']],
+      ['ESP_ERR_INVALID_STATE', ['ok Online', 'danger Not configured: ESP_ERR_INVALID_STATE']],
+    ];
+    for (const [configError, expected] of cases) {
+      status = makeStatus({ on: false, online: true, config_error: configError }, TG_OFF);
+      const wrapper = await mountLock();
+      expect(pills(wrapper, RELAY_CARD), String(configError)).toEqual(expected);
       wrapper.unmount();
     }
   });

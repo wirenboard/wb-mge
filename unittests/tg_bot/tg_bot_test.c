@@ -8,6 +8,8 @@
  * lands in the trace as "GET getUpdates" or "POST sendMessage" (the token never does), next to
  * "open" from the lock and "report.<result>" from fp_acs. The task loop is driven pass by pass:
  * each pass starts by reading tg_api_url, and the read after the last pass longjmps back here.
+ * The queue the sensor task reports fingerprint openings through is the shared in-memory FreeRTOS
+ * queue fake (mocks/freertos/queue.h).
  */
 
 #include <setjmp.h>
@@ -16,6 +18,7 @@
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 #include "freertos/task.h"
 
 #include "cJSON.h"
@@ -53,6 +56,7 @@ static void tg_bot_test_delay(const TickType_t ticks);
 #define TG_BOT_TEST_TOKEN           "123456:ABC-def_GHI"
 #define TG_BOT_TEST_ADMINS          "111,222"
 #define TG_BOT_TEST_TEXT_MAX        2048
+#define TG_BOT_TEST_NOTIFY_CHAT     "-100555"
 
 // Chats and senders, as the Bot API sends them.
 #define TG_BOT_TEST_GROUP           "{\"id\":-100123,\"title\":\"Office\",\"type\":\"supergroup\"}"
@@ -74,6 +78,8 @@ static tg_bot_test_hook_t tg_bot_test_hooks[8];
 static int                tg_bot_test_update_id;
 static char               tg_bot_test_text[TG_BOT_TEST_TEXT_MAX];
 static char               tg_bot_test_chat[64];
+// Run once, inside the next delay.
+static tg_bot_test_hook_t tg_bot_test_delay_hook;
 
 esp_err_t esp_crt_bundle_attach(void *conf)
 {
@@ -102,6 +108,11 @@ static esp_err_t tg_bot_test_setting_read(const char *key, char *value)
 static void tg_bot_test_delay(const TickType_t ticks)
 {
     trace_add("D%u", (unsigned)pdTICKS_TO_MS(ticks));
+    if (tg_bot_test_delay_hook != NULL) {
+        tg_bot_test_hook_t hook = tg_bot_test_delay_hook;
+        tg_bot_test_delay_hook = NULL;
+        hook();
+    }
     vTaskDelay(ticks);
 }
 
@@ -124,6 +135,10 @@ static void tg_bot_test_reset_statics(void)
     tg_bot_http = NULL;
     heap_caps_free(tg_bot_response);
     tg_bot_response = NULL;
+    if (tg_bot_notify_queue != NULL) {
+        vQueueDelete(tg_bot_notify_queue);
+    }
+    tg_bot_notify_queue = NULL;
     tg_bot_response_len = 0;
     tg_bot_response_overflow = false;
     tg_bot_server[0] = '\0';
@@ -133,6 +148,7 @@ static void tg_bot_test_reset_statics(void)
     tg_bot_backlog_dropped = false;
     tg_bot_booted = false;
     tg_bot_admins[0] = '\0';
+    tg_bot_notify_chat[0] = '\0';
     tg_bot_reply[0] = '\0';
     tg_bot_enabled = false;
     tg_bot_online = false;
@@ -190,6 +206,7 @@ void setUp(void)
 {
     tg_bot_test_reset_statics();
     esp_http_fake_reset();
+    mock_freertos_queue_reset();
     mock_freertos_task_reset();
     mock_heap_caps_reset();
     mock_log_reset();
@@ -200,6 +217,7 @@ void setUp(void)
     trace_reset();
     tg_bot_test_loop = false;
     memset(tg_bot_test_hooks, 0, sizeof(tg_bot_test_hooks));
+    tg_bot_test_delay_hook = NULL;
     tg_bot_test_update_id = 1;
     tg_bot_test_critical_entries = 0;
 
@@ -215,6 +233,7 @@ void tearDown(void)
 {
     tg_bot_test_reset_statics();
     esp_http_fake_reset();
+    mock_freertos_queue_reset();
 }
 
 
@@ -223,21 +242,48 @@ void tearDown(void)
 static void test_start_without_memory_leaves_the_bot_off(void)
 {
     tg_bot_test_reset_statics();
+    mock_freertos_queue_reset();
     mock_freertos_task_reset();
     mock_heap_caps_fail_count = 1;
     tg_bot_start();
     TEST_ASSERT_NULL(tg_bot_response);
+    TEST_ASSERT_NULL(tg_bot_notify_queue);
     TEST_ASSERT_EQUAL_INT(0, mock_xTaskCreate_data.called);
 }
 
 static void test_start_without_a_task_frees_the_buffer(void)
 {
     tg_bot_test_reset_statics();
+    mock_freertos_queue_reset();
     mock_freertos_task_reset();
     mock_xTaskCreate_data.should_fail = true;
     tg_bot_start();
     TEST_ASSERT_NULL(tg_bot_response);
     TEST_ASSERT_EQUAL_INT(1, mock_xTaskCreate_data.called);
+    // The queue is let go of, not deleted: the sensor task may be sending to it.
+    TEST_ASSERT_NULL(tg_bot_notify_queue);
+    TEST_ASSERT_EQUAL_INT(0, mock_vQueueDelete_data.called);
+    tg_bot_notify_fp_open("Ivan");
+    TEST_ASSERT_EQUAL_INT(0, mock_xQueueSend_data.called);
+}
+
+static void test_start_without_a_notification_queue_leaves_the_bot_off(void)
+{
+    tg_bot_test_reset_statics();
+    mock_freertos_queue_reset();
+    mock_freertos_task_reset();
+    mock_xQueueCreate_data.should_fail = true;
+    tg_bot_start();
+    TEST_ASSERT_NULL(tg_bot_response);
+    TEST_ASSERT_NULL(tg_bot_notify_queue);
+    TEST_ASSERT_EQUAL_INT(0, mock_xTaskCreate_data.called);
+}
+
+static void test_notification_queue_holds_four_user_names(void)
+{
+    TEST_ASSERT_NOT_NULL(tg_bot_notify_queue);
+    TEST_ASSERT_EQUAL_UINT(4, mock_xQueueCreate_data.max_len);
+    TEST_ASSERT_EQUAL_UINT(FP_STORE_NAME_MAX + 1, mock_xQueueCreate_data.item_size);
 }
 
 static void test_response_buffer_prefers_psram(void)
@@ -458,7 +504,8 @@ static void test_client_is_made_for_the_bare_server(void)
 {
     tg_bot_poll();
     TEST_ASSERT_EQUAL_STRING(TG_BOT_TEST_SERVER, esp_http_fake_config_url);
-    TEST_ASSERT_EQUAL_INT(35000, esp_http_fake_config.timeout_ms);
+    // The 5 s long poll and 10 s for the exchange around it.
+    TEST_ASSERT_EQUAL_INT(15000, esp_http_fake_config.timeout_ms);
     TEST_ASSERT_TRUE(esp_http_fake_config.crt_bundle_attach == esp_crt_bundle_attach);
     TEST_ASSERT_TRUE(esp_http_fake_config.event_handler == tg_bot_http_event);
 }
@@ -502,7 +549,7 @@ static void test_next_polls_wait_long_from_the_offset_and_greet_no_more(void)
     trace_reset();
     tg_bot_poll();
     TEST_ASSERT_EQUAL_STRING("GET getUpdates", trace_get());
-    TEST_ASSERT_EQUAL_STRING(TG_BOT_TEST_SERVER "/bot" TG_BOT_TEST_TOKEN "/getUpdates?offset=2&limit=1&timeout=25",
+    TEST_ASSERT_EQUAL_STRING(TG_BOT_TEST_SERVER "/bot" TG_BOT_TEST_TOKEN "/getUpdates?offset=2&limit=1&timeout=5",
                              tg_bot_test_last_request()->url);
     // A GET after a POST carries no body and no Content-Type.
     TEST_ASSERT_FALSE(tg_bot_test_last_request()->post);
@@ -832,6 +879,109 @@ static void test_message_without_a_sender_is_no_admins(void)
 }
 
 
+// ── Fingerprint opening reports ──────────────────────────────────────────────────────────
+
+static void tg_bot_test_hook_notify_anna(void)
+{
+    tg_bot_notify_fp_open("Anna");
+}
+
+static void tg_bot_test_hook_set_notify_chat_and_notify_anna(void)
+{
+    mock_settings_set(KEY_TG_NOTIFY_CHAT, TG_BOT_TEST_NOTIFY_CHAT);
+    tg_bot_notify_fp_open("Anna");
+}
+
+static void test_report_before_start_is_dropped(void)
+{
+    tg_bot_test_reset_statics();
+    mock_freertos_queue_reset();
+    tg_bot_notify_fp_open("Ivan");
+    TEST_ASSERT_EQUAL_INT(0, mock_xQueueSend_data.called);
+    TEST_ASSERT_EQUAL_size_t(0, mock_log_count());
+}
+
+static void test_report_is_queued_without_waiting(void)
+{
+    tg_bot_notify_fp_open("Ivan");
+    TEST_ASSERT_EQUAL_UINT(1, uxQueueMessagesWaiting(tg_bot_notify_queue));
+    TEST_ASSERT_EQUAL_UINT32(0, mock_xQueueSend_data.ticks);
+    TEST_ASSERT_EQUAL_INT(0, esp_http_fake_request_count);
+}
+
+static void test_report_goes_to_the_notify_chat_with_the_user_name(void)
+{
+    tg_bot_test_settled();
+    snprintf(tg_bot_notify_chat, sizeof(tg_bot_notify_chat), "%s", TG_BOT_TEST_NOTIFY_CHAT);
+    tg_bot_notify_fp_open("Иван Петров");
+    tg_bot_flush_notifications();
+    TEST_ASSERT_EQUAL_STRING("POST sendMessage", trace_get());
+    TEST_ASSERT_EQUAL_STRING("Door opened: Иван Петров (fingerprint)", tg_bot_test_reply_text());
+    TEST_ASSERT_EQUAL_STRING(TG_BOT_TEST_NOTIFY_CHAT, tg_bot_test_chat);
+    TEST_ASSERT_EQUAL_UINT(0, uxQueueMessagesWaiting(tg_bot_notify_queue));
+}
+
+static void test_longest_user_name_is_reported_whole(void)
+{
+    char name[FP_STORE_NAME_MAX + 1];
+    memset(name, 'n', FP_STORE_NAME_MAX);
+    name[FP_STORE_NAME_MAX] = '\0';
+    char expected[FP_STORE_NAME_MAX + 64];
+    snprintf(expected, sizeof(expected), "Door opened: %s (fingerprint)", name);
+
+    snprintf(tg_bot_notify_chat, sizeof(tg_bot_notify_chat), "%s", TG_BOT_TEST_NOTIFY_CHAT);
+    tg_bot_notify_fp_open(name);
+    tg_bot_flush_notifications();
+    TEST_ASSERT_EQUAL_STRING(expected, tg_bot_test_reply_text());
+}
+
+static void test_reports_beyond_four_waiting_are_dropped_with_a_log_line(void)
+{
+    const char *names[] = {"Anna", "Boris", "Vera", "Gleb", "Dina"};
+    for (size_t i = 0; i < (sizeof(names) / sizeof(names[0])); i++) {
+        tg_bot_notify_fp_open(names[i]);
+    }
+    TEST_ASSERT_EQUAL_UINT(4, uxQueueMessagesWaiting(tg_bot_notify_queue));
+    TEST_ASSERT_EQUAL_size_t(1, mock_log_count_matching("Notification queue full"));
+    TEST_ASSERT_NOT_NULL(mock_log_find("\"Dina\" is not reported"));
+
+    // The four that waited go out in the order they came.
+    snprintf(tg_bot_notify_chat, sizeof(tg_bot_notify_chat), "%s", TG_BOT_TEST_NOTIFY_CHAT);
+    tg_bot_flush_notifications();
+    TEST_ASSERT_EQUAL_INT(4, esp_http_fake_request_count);
+    for (int i = 0; i < 4; i++) {
+        char expected[64];
+        snprintf(expected, sizeof(expected), "Door opened: %s (fingerprint)", names[i]);
+        TEST_ASSERT_NOT_NULL_MESSAGE(strstr(esp_http_fake_requests[i].body, expected), expected);
+    }
+}
+
+static void test_reports_without_a_notify_chat_are_dropped_not_sent_later(void)
+{
+    tg_bot_notify_fp_open("Ivan");
+    tg_bot_flush_notifications();
+    TEST_ASSERT_EQUAL_INT(0, esp_http_fake_request_count);
+    TEST_ASSERT_EQUAL_UINT(0, uxQueueMessagesWaiting(tg_bot_notify_queue));
+
+    snprintf(tg_bot_notify_chat, sizeof(tg_bot_notify_chat), "%s", TG_BOT_TEST_NOTIFY_CHAT);
+    tg_bot_flush_notifications();
+    TEST_ASSERT_EQUAL_INT(0, esp_http_fake_request_count);
+}
+
+static void test_reports_without_a_usable_token_are_dropped(void)
+{
+    snprintf(tg_bot_notify_chat, sizeof(tg_bot_notify_chat), "%s", TG_BOT_TEST_NOTIFY_CHAT);
+    const char *tokens[] = {"", "123456:ABC def"};
+    for (size_t i = 0; i < (sizeof(tokens) / sizeof(tokens[0])); i++) {
+        tg_bot_use_settings(TG_BOT_TEST_SERVER, tokens[i]);
+        tg_bot_notify_fp_open("Ivan");
+        tg_bot_flush_notifications();
+        TEST_ASSERT_EQUAL_UINT_MESSAGE(0, uxQueueMessagesWaiting(tg_bot_notify_queue), tokens[i]);
+    }
+    TEST_ASSERT_EQUAL_INT(0, esp_http_fake_request_count);
+}
+
+
 // ── The task ─────────────────────────────────────────────────────────────────────────────
 
 static void tg_bot_test_hook_set_token(void)
@@ -852,7 +1002,8 @@ static void test_task_without_a_token_idles_and_rereads_the_settings(void)
     tg_bot_test_run_task(2);
     TEST_ASSERT_EQUAL_STRING("| D5000 | D5000", trace_get());
     TEST_ASSERT_EQUAL_STRING(DEFAULT_TG_API_URL, tg_bot_server);
-    TEST_ASSERT_EQUAL_INT(6, mock_settings_reads);
+    // tg_api_url, tg_token, tg_admins and tg_notify_chat on every pass.
+    TEST_ASSERT_EQUAL_INT(8, mock_settings_reads);
     TEST_ASSERT_EQUAL_INT(0, esp_http_fake_init_calls);
 }
 
@@ -877,7 +1028,7 @@ static void test_task_takes_up_a_token_and_then_long_polls(void)
     tg_bot_test_run_task(3);
     TEST_ASSERT_EQUAL_STRING("| D5000 | GET getUpdates | GET getUpdates", trace_get());
     TEST_ASSERT_NOT_NULL(strstr(esp_http_fake_requests[0].url, "offset=-1&limit=1&timeout=0"));
-    TEST_ASSERT_NOT_NULL(strstr(esp_http_fake_requests[1].url, "offset=0&limit=1&timeout=25"));
+    TEST_ASSERT_NOT_NULL(strstr(esp_http_fake_requests[1].url, "offset=0&limit=1&timeout=5"));
 }
 
 static void test_task_waits_10_s_after_a_failed_poll(void)
@@ -906,12 +1057,74 @@ static void test_task_drops_the_backlog_again_on_a_new_server(void)
 }
 
 
+static void test_task_reports_queued_openings_right_after_the_poll(void)
+{
+    tg_bot_test_reset_statics();
+    esp_http_fake_reset();
+    tg_bot_start();
+    mock_settings_set(KEY_TG_TOKEN, TG_BOT_TEST_TOKEN);
+    mock_settings_set(KEY_TG_NOTIFY_CHAT, TG_BOT_TEST_NOTIFY_CHAT);
+    tg_bot_notify_fp_open("Ivan");
+    tg_bot_test_run_task(1);
+    TEST_ASSERT_EQUAL_STRING("| GET getUpdates POST sendMessage", trace_get());
+    TEST_ASSERT_EQUAL_STRING("Door opened: Ivan (fingerprint)", tg_bot_test_reply_text());
+    TEST_ASSERT_EQUAL_STRING(TG_BOT_TEST_NOTIFY_CHAT, tg_bot_test_chat);
+}
+
+static void test_task_reports_openings_after_a_failed_poll_and_again_after_the_pause(void)
+{
+    tg_bot_test_reset_statics();
+    esp_http_fake_reset();
+    tg_bot_start();
+    mock_settings_set(KEY_TG_TOKEN, TG_BOT_TEST_TOKEN);
+    mock_settings_set(KEY_TG_NOTIFY_CHAT, TG_BOT_TEST_NOTIFY_CHAT);
+    esp_http_fake_respond(ESP_ERR_HTTP_CONNECT, 0, NULL);
+    tg_bot_notify_fp_open("Ivan");
+    tg_bot_test_delay_hook = tg_bot_test_hook_notify_anna;
+    tg_bot_test_run_task(1);
+    // The one queued before the poll goes out once it has failed; the one queued during the pause
+    // once the pause is over.
+    TEST_ASSERT_EQUAL_STRING("| GET getUpdates POST sendMessage D10000 POST sendMessage", trace_get());
+    TEST_ASSERT_NOT_NULL(strstr(esp_http_fake_requests[1].body, "Door opened: Ivan (fingerprint)"));
+    TEST_ASSERT_NOT_NULL(strstr(esp_http_fake_requests[2].body, "Door opened: Anna (fingerprint)"));
+}
+
+static void test_task_without_a_token_drops_the_reports(void)
+{
+    tg_bot_test_reset_statics();
+    esp_http_fake_reset();
+    tg_bot_start();
+    mock_settings_set(KEY_TG_NOTIFY_CHAT, TG_BOT_TEST_NOTIFY_CHAT);
+    tg_bot_notify_fp_open("Ivan");
+    tg_bot_test_run_task(1);
+    TEST_ASSERT_EQUAL_STRING("| D5000", trace_get());
+    TEST_ASSERT_EQUAL_UINT(0, uxQueueMessagesWaiting(tg_bot_notify_queue));
+    TEST_ASSERT_EQUAL_INT(0, esp_http_fake_request_count);
+}
+
+static void test_task_reads_the_notify_chat_on_every_pass(void)
+{
+    tg_bot_test_reset_statics();
+    esp_http_fake_reset();
+    tg_bot_start();
+    mock_settings_set(KEY_TG_TOKEN, TG_BOT_TEST_TOKEN);
+    tg_bot_notify_fp_open("Ivan");
+    tg_bot_test_hooks[1] = tg_bot_test_hook_set_notify_chat_and_notify_anna;
+    tg_bot_test_run_task(2);
+    // No chat on the first pass: Ivan's opening is dropped. The chat set, Anna's goes out.
+    TEST_ASSERT_EQUAL_STRING("| GET getUpdates | GET getUpdates POST sendMessage", trace_get());
+    TEST_ASSERT_EQUAL_STRING("Door opened: Anna (fingerprint)", tg_bot_test_reply_text());
+}
+
+
 int main(void)
 {
     UNITY_BEGIN();
 
     RUN_TEST(test_start_without_memory_leaves_the_bot_off);
     RUN_TEST(test_start_without_a_task_frees_the_buffer);
+    RUN_TEST(test_start_without_a_notification_queue_leaves_the_bot_off);
+    RUN_TEST(test_notification_queue_holds_four_user_names);
     RUN_TEST(test_response_buffer_prefers_psram);
 
     RUN_TEST(test_bot_tokens_are_valid);
@@ -966,11 +1179,23 @@ int main(void)
     RUN_TEST(test_admin_ids_match_whole);
     RUN_TEST(test_message_without_a_sender_is_no_admins);
 
+    RUN_TEST(test_report_before_start_is_dropped);
+    RUN_TEST(test_report_is_queued_without_waiting);
+    RUN_TEST(test_report_goes_to_the_notify_chat_with_the_user_name);
+    RUN_TEST(test_longest_user_name_is_reported_whole);
+    RUN_TEST(test_reports_beyond_four_waiting_are_dropped_with_a_log_line);
+    RUN_TEST(test_reports_without_a_notify_chat_are_dropped_not_sent_later);
+    RUN_TEST(test_reports_without_a_usable_token_are_dropped);
+
     RUN_TEST(test_task_without_a_token_idles_and_rereads_the_settings);
     RUN_TEST(test_task_never_sends_a_malformed_token);
     RUN_TEST(test_task_takes_up_a_token_and_then_long_polls);
     RUN_TEST(test_task_waits_10_s_after_a_failed_poll);
     RUN_TEST(test_task_drops_the_backlog_again_on_a_new_server);
+    RUN_TEST(test_task_reports_queued_openings_right_after_the_poll);
+    RUN_TEST(test_task_reports_openings_after_a_failed_poll_and_again_after_the_pause);
+    RUN_TEST(test_task_without_a_token_drops_the_reports);
+    RUN_TEST(test_task_reads_the_notify_chat_on_every_pass);
 
     return UNITY_END();
 }

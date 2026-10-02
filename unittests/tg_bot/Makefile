@@ -19,6 +19,8 @@ AUX_SRC += $(UNITTEST_DIR)/mocks/fp_acs/fp_lock_fake.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/fp_acs/fp_store_fake.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/fp_acs/setting_items_fake.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/fp_acs/trace.c
+# The notification queue between the sensor task and the bot: a working in-memory queue
+AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/queue.c
 AUX_SRC += $(UNITTEST_DIR)/mocks/freertos/task.c
 # Real implementation: the bot parses the Bot API's answers with it, and a mock would only
 # reimplement the very parsing under test.

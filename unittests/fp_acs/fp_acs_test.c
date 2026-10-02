@@ -5,9 +5,9 @@
  *
  * fp_acs.c is #included so that the test can reach its helpers (fp_acs_copy_chat(),
  * fp_acs_record_event(), ...), run one scan or one enrollment at a time, and reset its statics.
- * The sensor is a scripted fake (mocks/r503_fake.h), the store, the lock and the access log are
- * fakes too. Everything the code does to them lands in one trace, e.g. a granted scan:
- *     "GenImg Img2Tz1 Search open Led2.4 GenImg log UpImage"
+ * The sensor is a scripted fake (mocks/r503_fake.h), the store, the lock, the Telegram bot and the
+ * access log are fakes too. Everything the code does to them lands in one trace, e.g. a granted scan:
+ *     "GenImg Img2Tz1 Search open notify Led2.4 GenImg log UpImage"
  *
  * Delays advance the mock tick count, so the 30 s enrollment timeout passes in no time; the task
  * loop itself is driven like fp_lock's: every queue receive is one turn, and the receive after the
@@ -30,6 +30,7 @@
 #include "fp_log_fake.h"
 #include "fp_store_fake.h"
 #include "r503_fake.h"
+#include "tg_bot_fake.h"
 #include "trace.h"
 
 static BaseType_t fp_acs_test_receive(QueueHandle_t queue, void *const buffer, TickType_t ticks);
@@ -160,6 +161,7 @@ void setUp(void)
     fp_lock_fake_reset();
     fp_log_fake_reset();
     r503_fake_reset();
+    tg_bot_fake_reset();
     fp_acs_test_reset_statics();
     fp_acs_test_loop = false;
     fp_acs_test_trace_delays = false;
@@ -462,7 +464,7 @@ static void test_granted_finger_opens_then_is_captured_then_logged_then_uploaded
     r503_fake_push_search(ESP_OK, R503_CODE_OK, FP_ACS_TEST_SLOT, 150);
     fp_acs_scan();
 
-    TEST_ASSERT_EQUAL_STRING("GenImg Img2Tz1 Search open Led2.4 GenImg log UpImage", trace_get());
+    TEST_ASSERT_EQUAL_STRING("GenImg Img2Tz1 Search open notify Led2.4 GenImg log UpImage", trace_get());
     fp_acs_event_t event;
     TEST_ASSERT_TRUE(fp_acs_get_last_event(&event));
     TEST_ASSERT_EQUAL_INT(FP_ACS_SOURCE_FINGERPRINT, event.source);
@@ -479,6 +481,36 @@ static void test_granted_finger_opens_then_is_captured_then_logged_then_uploaded
     TEST_ASSERT_EQUAL_UINT32(1, status.image_seq);
     TEST_ASSERT_EQUAL_UINT32(event.seq, status.image_event_seq);
     TEST_ASSERT_TRUE(fp_acs_awaiting_lift);
+}
+
+static void test_granted_finger_is_reported_to_the_bot_by_the_user_name(void)
+{
+    r503_fake_push_gen_img(ESP_OK, R503_CODE_OK, 2);
+    r503_fake_push_search(ESP_OK, R503_CODE_OK, FP_ACS_TEST_SLOT, 150);
+    fp_acs_scan();
+    // Queued once the lock has the request: the opening does not wait for the bot.
+    TEST_ASSERT_NOT_NULL(strstr(trace_get(), "open notify"));
+    TEST_ASSERT_EQUAL_INT(1, tg_bot_fake_notify_calls);
+    TEST_ASSERT_EQUAL_STRING("Иван", tg_bot_fake_notify_name);
+}
+
+static void test_finger_not_granted_is_not_reported_to_the_bot(void)
+{
+    fp_store_fake_add_user(FP_ACS_TEST_OTHER_USER, "Anna", false, true, true, "");
+    fp_store_fake_add_slot(FP_ACS_TEST_OTHER_USER, 20);
+    fp_store_fake_add_user(5, "Boris", true, false, true, "");
+    fp_store_fake_add_slot(5, 21);
+    // Disabled, not allowed fingerprints, a template nobody owns.
+    const uint16_t pages[] = {20, 21, 99};
+    for (size_t i = 0; i < (sizeof(pages) / sizeof(pages[0])); i++) {
+        fp_acs_awaiting_lift = false;
+        r503_fake_push_gen_img(ESP_OK, R503_CODE_OK, 2);
+        r503_fake_push_search(ESP_OK, R503_CODE_OK, pages[i], 90);
+        fp_acs_scan();
+    }
+    TEST_ASSERT_EQUAL_INT(3, fp_log_fake_append_calls);
+    TEST_ASSERT_EQUAL_INT(0, fp_lock_fake_open_calls);
+    TEST_ASSERT_EQUAL_INT(0, tg_bot_fake_notify_calls);
 }
 
 static void test_disabled_user_is_denied_and_the_door_stays_shut(void)
@@ -563,7 +595,7 @@ static void test_finger_lifted_before_the_capture_leaves_the_event_without_an_im
     r503_fake_push_gen_img(ESP_OK, R503_CODE_OK, 1);
     r503_fake_push_search(ESP_OK, R503_CODE_OK, FP_ACS_TEST_SLOT, 150);
     fp_acs_scan();
-    TEST_ASSERT_EQUAL_STRING("GenImg Img2Tz1 Search open Led2.4 GenImg log", trace_get());
+    TEST_ASSERT_EQUAL_STRING("GenImg Img2Tz1 Search open notify Led2.4 GenImg log", trace_get());
     fp_acs_status_t status;
     fp_acs_get_status(&status);
     TEST_ASSERT_EQUAL_UINT32(0, status.image_seq);
@@ -1025,6 +1057,8 @@ int main(void)
 
     RUN_TEST(test_scan_without_a_finger_decides_nothing);
     RUN_TEST(test_granted_finger_opens_then_is_captured_then_logged_then_uploaded);
+    RUN_TEST(test_granted_finger_is_reported_to_the_bot_by_the_user_name);
+    RUN_TEST(test_finger_not_granted_is_not_reported_to_the_bot);
     RUN_TEST(test_disabled_user_is_denied_and_the_door_stays_shut);
     RUN_TEST(test_user_not_allowed_to_use_fingerprints_is_denied);
     RUN_TEST(test_template_nobody_owns_is_unknown);
