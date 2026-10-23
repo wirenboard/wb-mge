@@ -30,8 +30,11 @@ size_t mb_device_build_read_response(uint8_t unit_id, uint8_t fc,
 /*
  * Handle a Modbus TCP request addressed to the gateway itself (Unit ID 0xFF).
  * Parses the request frame, validates function code / length / quantity, and
- * builds EITHER a normal FC03/FC04 read response OR a Modbus exception ADU into
- * resp_buf. Always produces a ready-to-send ADU (never returns 0).
+ * builds EITHER a normal response OR a Modbus exception ADU into resp_buf.
+ * Always produces a ready-to-send ADU (never returns 0).
+ * Supported: FC03/FC04 (device-info registers), FC01/FC05 (coil 0: V-out enabled,
+ * the write is persisted as the vout setting), FC02 (discrete 0: V-out actually on,
+ * 1: V-out blocked by the supply voltage protection).
  *   req                  : full TCP frame starting at the MBAP header (>= header bytes).
  *   req_len              : total length of req in bytes.
  *   resp_buf             : output buffer, at least MODBUS_TCP_MAX_ADU_LEN bytes.

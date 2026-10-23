@@ -15,3 +15,5 @@ esp_err_t rs485_term_on_off(rs485_port_t port, bool on);
 esp_err_t rs485_pupd_on_off(rs485_port_t port, bool on);
 esp_err_t rs485_bus_vout_on_off(bool on);
 esp_err_t rs485_bus_vout_set_allowed(bool allowed);
+// The output is on only when enabled and allowed (not blocked by the supply voltage protection)
+void rs485_bus_vout_get_state(bool *enabled, bool *allowed);

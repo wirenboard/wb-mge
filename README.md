@@ -67,8 +67,8 @@ Separately, both ports together can run as a:
 The gateway itself answers Modbus polls on its own address **Unit ID 255 (0xFF)** — per the
 Modbus Messaging Implementation Guide this address is reserved for the TCP gateway itself.
 It works in both **Modbus TCP** and **Cache TCP** modes, regardless of cache state (in Modbus
-TCP mode such a request is NOT forwarded to RS-485). Read functions **FC03** and **FC04** are
-supported.
+TCP mode such a request is NOT forwarded to RS-485). Registers are read with **FC03** and
+**FC04**; V-out is controlled with **FC01**, **FC02** and **FC05** (see below).
 
 ### Registers (FC03/FC04, read-only)
 
@@ -128,7 +128,23 @@ supported.
   in particular of the bootloader-version field, which is **8 holding registers from 330**
   (330–337, `modbus_client -t0x03 -r330 -c8`) and is left undefined here.
 - Reading a range where at least one address is undefined returns exception **0x02** (illegal
-  data address); a function other than FC03/FC04 returns exception **0x01** (illegal function).
+  data address); a function other than FC01–FC05 returns exception **0x01** (illegal function).
+
+### V-out control (FC01/FC02/FC05)
+
+| Type     | Address | Access | Description                                                     |
+|----------|---------|--------|-----------------------------------------------------------------|
+| coil     | 0       | R/W    | V-out enabled; same as the `vout` setting, writes are persisted |
+| discrete | 0       | R      | V-out is actually on                                            |
+| discrete | 1       | R      | V-out is held off by the supply voltage protection              |
+
+The output is on only when coil 0 is set and the protection has not tripped. Example from a
+Wiren Board controller (cache server on its default port 504):
+
+```
+modbus_client -mtcp -p504 -a255 -t0x05 -r0 <ip> 0      # V-out off
+modbus_client -mtcp -p504 -a255 -t0x02 -r0 -c2 <ip>    # actual state + protection
+```
 
 ## Manual UI Test Procedures
 

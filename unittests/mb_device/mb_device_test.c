@@ -43,6 +43,13 @@ void mock_reset_reason_reset(void);
 /* unittests/mocks/esp_timer.c */
 void mock_esp_timer_reset(void);
 
+/* mocks/rs485_control.c */
+void mock_vout_set_state(bool enabled, bool allowed);
+void mock_update_vout_set_ret(esp_err_t ret);
+int  mock_update_vout_get_called(void);
+bool mock_update_vout_get_value(void);
+void mock_vout_reset(void);
+
 /* ---- Constants mirrored from mb_device.c (Unit ID, FCs, exceptions) ------ */
 
 #define DEV_UNIT_ID   0xFFu
@@ -133,6 +140,7 @@ void setUp(void)
     mock_heap_reset();
     mock_reset_reason_reset();
     mock_esp_timer_reset();
+    mock_vout_reset();
 
     /* Deterministic device identity for every test. */
     memset(&sys_info, 0, sizeof(sys_info));
@@ -685,23 +693,24 @@ void test_self_req_bad_fc_06(void)
     TEST_ASSERT_EQUAL_HEX16(tid_net, hdr->transaction_id); /* echoed verbatim */
 }
 
-/* ---- MBDEV-U-018: bad FC 0x01 -> exception 0x81/0x01 --------------------- */
+/* ---- MBDEV-U-018: bad FC 0x0F -> exception 0x8F/0x01 --------------------- */
 
-void test_self_req_bad_fc_01(void)
+void test_self_req_bad_fc_0f(void)
 {
     LOG_MESSAGE();
-    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-018: self-req bad FC 0x01 -> exception");
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-018: self-req bad FC 0x0F -> exception");
     LOG_MESSAGE();
 
     uint8_t req[260];
     uint8_t resp[260];
-    size_t req_len = make_req(req, 0x0001, DEV_UNIT_ID, 0x01u, 104u, 2u);
+    size_t req_len = make_req(req, 0x0001, DEV_UNIT_ID, 0x0Fu, 0u, 1u);
 
     size_t n = mb_device_handle_self_request(req, req_len, resp);
 
     TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, n);
-    TEST_ASSERT_EQUAL_HEX8(0x81u, resp[7]);  /* fc | 0x80        */
+    TEST_ASSERT_EQUAL_HEX8(0x8Fu, resp[7]);  /* fc | 0x80        */
     TEST_ASSERT_EQUAL_HEX8(0x01u, resp[8]);  /* ILLEGAL_FUNCTION */
+    TEST_ASSERT_EQUAL_INT(0, mock_update_vout_get_called());
 }
 
 /* ---- MBDEV-U-019: truncated request -> exception 0x03 -------------------- */
@@ -1087,6 +1096,168 @@ void test_info_block_readable_via_fc03(void)
 
 /* ---- main ---------------------------------------------------------------- */
 
+/* ---- MBDEV-U-032: FC01 coil 0 reflects V-out enabled --------------------- */
+
+void test_self_req_fc01_vout_coil(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-032: FC01 coil 0 = V-out enabled");
+    LOG_MESSAGE();
+
+    uint8_t req[260];
+    uint8_t resp[260];
+    size_t req_len = make_req(req, 0x3412, DEV_UNIT_ID, 0x01u, 0u, 1u);
+
+    /* Enabled but blocked: the coil shows what was requested, not the output. */
+    mock_vout_set_state(true, false);
+    size_t n = mb_device_handle_self_request(req, req_len, resp);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 2u, n);
+    TEST_ASSERT_EQUAL_HEX8(0x01u, resp[7]);
+    TEST_ASSERT_EQUAL_HEX8(1u, resp[8]);     /* byte count */
+    TEST_ASSERT_EQUAL_HEX8(0x01u, resp[9]);
+    TEST_ASSERT_EQUAL_UINT16(4u, resp_mbap_length(resp));
+    TEST_ASSERT_EQUAL_HEX16(0x3412, ((const mb_tcp_header_t *)resp)->transaction_id);
+
+    mock_vout_set_state(false, true);
+    n = mb_device_handle_self_request(req, req_len, resp);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 2u, n);
+    TEST_ASSERT_EQUAL_HEX8(0x00u, resp[9]);
+}
+
+/* ---- MBDEV-U-033: FC02 discrete 0..1 = active / blocked ------------------ */
+
+void test_self_req_fc02_vout_status(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-033: FC02 V-out active / blocked");
+    LOG_MESSAGE();
+
+    uint8_t req[260];
+    uint8_t resp[260];
+    size_t req_len = make_req(req, 0x0001, DEV_UNIT_ID, 0x02u, 0u, 2u);
+
+    static const struct {
+        bool    enabled;
+        bool    allowed;
+        uint8_t bits;
+    } cases[] = {
+        { false, true,  0x00u },
+        { true,  true,  0x01u },
+        { true,  false, 0x02u },
+        { false, false, 0x02u },
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        mock_vout_set_state(cases[i].enabled, cases[i].allowed);
+        size_t n = mb_device_handle_self_request(req, req_len, resp);
+        TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 2u, n);
+        TEST_ASSERT_EQUAL_HEX8(0x02u, resp[7]);
+        TEST_ASSERT_EQUAL_HEX8(1u, resp[8]);
+        TEST_ASSERT_EQUAL_HEX8(cases[i].bits, resp[9]);
+    }
+}
+
+/* ---- MBDEV-U-034: FC01/FC02 bad address / quantity ----------------------- */
+
+void test_self_req_bit_read_errors(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-034: FC01/FC02 bad address / quantity");
+    LOG_MESSAGE();
+
+    uint8_t req[260];
+    uint8_t resp[260];
+    size_t req_len;
+
+    /* coil 1 is not defined */
+    req_len = make_req(req, 0x0001, DEV_UNIT_ID, 0x01u, 0u, 2u);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, mb_device_handle_self_request(req, req_len, resp));
+    TEST_ASSERT_EQUAL_HEX8(0x81u, resp[7]);
+    TEST_ASSERT_EQUAL_HEX8(0x02u, resp[8]);
+
+    /* discrete 2 is not defined */
+    req_len = make_req(req, 0x0001, DEV_UNIT_ID, 0x02u, 1u, 2u);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, mb_device_handle_self_request(req, req_len, resp));
+    TEST_ASSERT_EQUAL_HEX8(0x82u, resp[7]);
+    TEST_ASSERT_EQUAL_HEX8(0x02u, resp[8]);
+
+    /* quantity 0 and quantity over 2000 */
+    req_len = make_req(req, 0x0001, DEV_UNIT_ID, 0x01u, 0u, 0u);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, mb_device_handle_self_request(req, req_len, resp));
+    TEST_ASSERT_EQUAL_HEX8(0x03u, resp[8]);
+
+    req_len = make_req(req, 0x0001, DEV_UNIT_ID, 0x02u, 0u, 2001u);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, mb_device_handle_self_request(req, req_len, resp));
+    TEST_ASSERT_EQUAL_HEX8(0x03u, resp[8]);
+
+    /* range past the end of the address space */
+    req_len = make_req(req, 0x0001, DEV_UNIT_ID, 0x01u, 0xFFFFu, 2u);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, mb_device_handle_self_request(req, req_len, resp));
+    TEST_ASSERT_EQUAL_HEX8(0x02u, resp[8]);
+}
+
+/* ---- MBDEV-U-035: FC05 coil 0 switches V-out, response echoes request ---- */
+
+void test_self_req_fc05_vout_write(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-035: FC05 coil 0 switches V-out");
+    LOG_MESSAGE();
+
+    uint8_t req[260];
+    uint8_t resp[260];
+
+    size_t req_len = make_req(req, 0x3412, DEV_UNIT_ID, 0x05u, 0u, 0xFF00u);
+    size_t n = mb_device_handle_self_request(req, req_len, resp);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 4u, n);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(req, resp, n);
+    TEST_ASSERT_EQUAL_UINT16(6u, resp_mbap_length(resp));
+    TEST_ASSERT_EQUAL_INT(1, mock_update_vout_get_called());
+    TEST_ASSERT_TRUE(mock_update_vout_get_value());
+
+    req_len = make_req(req, 0x3512, DEV_UNIT_ID, 0x05u, 0u, 0x0000u);
+    n = mb_device_handle_self_request(req, req_len, resp);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 4u, n);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(req, resp, n);
+    TEST_ASSERT_EQUAL_INT(2, mock_update_vout_get_called());
+    TEST_ASSERT_FALSE(mock_update_vout_get_value());
+}
+
+/* ---- MBDEV-U-036: FC05 errors -> exception ------------------------------- */
+
+void test_self_req_fc05_errors(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-036: FC05 bad value / address / failure");
+    LOG_MESSAGE();
+
+    uint8_t req[260];
+    uint8_t resp[260];
+    size_t req_len;
+
+    /* value other than 0xFF00 / 0x0000 */
+    req_len = make_req(req, 0x0001, DEV_UNIT_ID, 0x05u, 0u, 0x0001u);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, mb_device_handle_self_request(req, req_len, resp));
+    TEST_ASSERT_EQUAL_HEX8(0x85u, resp[7]);
+    TEST_ASSERT_EQUAL_HEX8(0x03u, resp[8]);
+
+    /* undefined coil */
+    req_len = make_req(req, 0x0001, DEV_UNIT_ID, 0x05u, 1u, 0xFF00u);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, mb_device_handle_self_request(req, req_len, resp));
+    TEST_ASSERT_EQUAL_HEX8(0x85u, resp[7]);
+    TEST_ASSERT_EQUAL_HEX8(0x02u, resp[8]);
+
+    /* rejected requests must not reach V-out */
+    TEST_ASSERT_EQUAL_INT(0, mock_update_vout_get_called());
+
+    /* the write itself failed */
+    mock_update_vout_set_ret(ESP_FAIL);
+    req_len = make_req(req, 0x0001, DEV_UNIT_ID, 0x05u, 0u, 0xFF00u);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, mb_device_handle_self_request(req, req_len, resp));
+    TEST_ASSERT_EQUAL_HEX8(0x85u, resp[7]);
+    TEST_ASSERT_EQUAL_HEX8(0x04u, resp[8]);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1110,7 +1281,7 @@ int main(void)
 
     /* TASK B: mb_device_handle_self_request */
     RUN_TEST(test_self_req_bad_fc_06);
-    RUN_TEST(test_self_req_bad_fc_01);
+    RUN_TEST(test_self_req_bad_fc_0f);
     RUN_TEST(test_self_req_truncated);
     RUN_TEST(test_self_req_count_zero);
     RUN_TEST(test_self_req_count_too_big);
@@ -1125,6 +1296,13 @@ int main(void)
     RUN_TEST(test_fw_numeric_no_suffix);
     RUN_TEST(test_pack_string_odd_boundary);
     RUN_TEST(test_info_block_readable_via_fc03);
+
+    /* V-out over coils / discrete inputs */
+    RUN_TEST(test_self_req_fc01_vout_coil);
+    RUN_TEST(test_self_req_fc02_vout_status);
+    RUN_TEST(test_self_req_bit_read_errors);
+    RUN_TEST(test_self_req_fc05_vout_write);
+    RUN_TEST(test_self_req_fc05_errors);
 
     return UNITY_END();
 }

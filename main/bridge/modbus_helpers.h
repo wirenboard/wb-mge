@@ -38,10 +38,11 @@ typedef struct __attribute__((packed)) {
 #define MODBUS_TCP_MAX_ADU_LEN 260u
 
 // Canonical Modbus exception codes (shared across the gateway)
-#define MODBUS_EXC_ILLEGAL_FUNCTION   0x01u  // Illegal function
-#define MODBUS_EXC_ILLEGAL_ADDRESS    0x02u  // Illegal data address
-#define MODBUS_EXC_ILLEGAL_DATA_VALUE 0x03u  // Illegal data value
-#define MODBUS_EXC_GW_TARGET_FAILED   0x0Bu  // Gateway target device failed to respond
+#define MODBUS_EXC_ILLEGAL_FUNCTION     0x01u  // Illegal function
+#define MODBUS_EXC_ILLEGAL_ADDRESS      0x02u  // Illegal data address
+#define MODBUS_EXC_ILLEGAL_DATA_VALUE   0x03u  // Illegal data value
+#define MODBUS_EXC_SLAVE_DEVICE_FAILURE 0x04u  // Slave device failure
+#define MODBUS_EXC_GW_TARGET_FAILED     0x0Bu  // Gateway target device failed to respond
 
 // Canonical Modbus read function codes (shared across the gateway).
 // FC01..FC04 are contiguous and non-zero — code relies on both properties.

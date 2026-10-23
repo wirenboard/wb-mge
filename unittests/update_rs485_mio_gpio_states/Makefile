@@ -15,6 +15,7 @@ AUX_SRC += mocks/rs485_control.c
 AUX_SRC += mocks/mio_control.c
 AUX_SRC += mocks/setting_items.c
 AUX_SRC += mocks/port_manager.c
+AUX_SRC += mocks/settings_save_timer.c
 
 # Include directories
 INC += $(UNITTEST_DIR)

@@ -10,6 +10,10 @@ extern int mock_port_manager_set_tx_disabled_called;
 extern unsigned mock_port_manager_set_tx_disabled_port[];
 extern bool mock_port_manager_set_tx_disabled_value[];
 extern void mock_port_manager_reset(void);
+extern bool mock_port_manager_ports_frozen;
+
+extern int mock_settings_save_timer_wait_called;
+extern void mock_settings_save_timer_reset(void);
 
 void setUp(void)
 {
@@ -17,6 +21,7 @@ void setUp(void)
     mock_mio_control_reset();
     mock_setting_items_reset();
     mock_port_manager_reset();
+    mock_settings_save_timer_reset();
 }
 
 void tearDown(void)
@@ -446,6 +451,75 @@ void test_update_serial_tx_disabled_mixed(void)
         "Port 1 tx_disabled should be false");
 }
 
+// Tests for update_rs485_vout()
+void test_update_rs485_vout_saves_and_applies(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test update_rs485_vout - changed value is saved and applied");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_bool(KEY_485_VOUT, false);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, update_rs485_vout(true), "update_rs485_vout should succeed");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_settings_save_timer_wait_called,
+        "settings_save_timer_wait should be called once");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_setting_items_save_bool_called,
+        "setting_items_save_bool should be called once");
+    TEST_ASSERT_TRUE_MESSAGE(setting_items_read_bool(KEY_485_VOUT), "vout setting should be saved as true");
+    verify_rs485_vout_call(true);
+}
+
+void test_update_rs485_vout_same_value_not_saved(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test update_rs485_vout - unchanged value skips NVS write");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_bool(KEY_485_VOUT, false);
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, update_rs485_vout(false), "update_rs485_vout should succeed");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_settings_save_timer_wait_called,
+        "settings_save_timer_wait should not be called");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_setting_items_save_bool_called,
+        "setting_items_save_bool should not be called");
+    verify_rs485_vout_call(false);
+}
+
+void test_update_rs485_vout_frozen_saves_only(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test update_rs485_vout - frozen ports: saved, not applied");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_bool(KEY_485_VOUT, true);
+    mock_port_manager_ports_frozen = true;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_OK, update_rs485_vout(false), "update_rs485_vout should succeed");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, mock_setting_items_save_bool_called,
+        "setting_items_save_bool should be called once");
+    TEST_ASSERT_FALSE_MESSAGE(setting_items_read_bool(KEY_485_VOUT), "vout setting should be saved as false");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_rs485_bus_vout_on_off_called,
+        "rs485_bus_vout_on_off should not be called while ports are frozen");
+}
+
+void test_update_rs485_vout_save_failure(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "Test update_rs485_vout - NVS failure: error, output untouched");
+    LOG_MESSAGE();
+
+    mock_setting_items_set_bool(KEY_485_VOUT, false);
+    mock_setting_items_save_bool_ret = ESP_FAIL;
+
+    TEST_ASSERT_EQUAL_MESSAGE(ESP_FAIL, update_rs485_vout(true), "update_rs485_vout should return the save error");
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, mock_rs485_bus_vout_on_off_called,
+        "rs485_bus_vout_on_off should not be called after a failed save");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -471,6 +545,11 @@ int main(void)
     RUN_TEST(test_update_serial_tx_disabled_both_disabled);
     RUN_TEST(test_update_serial_tx_disabled_both_enabled);
     RUN_TEST(test_update_serial_tx_disabled_mixed);
+
+    RUN_TEST(test_update_rs485_vout_saves_and_applies);
+    RUN_TEST(test_update_rs485_vout_same_value_not_saved);
+    RUN_TEST(test_update_rs485_vout_frozen_saves_only);
+    RUN_TEST(test_update_rs485_vout_save_failure);
 
     return UNITY_END();
 }

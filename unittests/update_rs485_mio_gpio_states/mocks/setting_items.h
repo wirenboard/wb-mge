@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include "esp_err.h"
 
 #define MAX_FUNCTION_CALLS                  20
 #define SETTING_ITEM_MAX_STR_LEN            64
@@ -17,6 +18,10 @@
 extern int mock_setting_items_read_bool_called;
 extern char mock_setting_items_read_bool_keys[MAX_FUNCTION_CALLS][SETTING_ITEM_MAX_STR_LEN];
 
+extern int mock_setting_items_save_bool_called;
+extern esp_err_t mock_setting_items_save_bool_ret;
+
 bool setting_items_read_bool(const char *key);
+esp_err_t setting_items_save_bool(const char *key, bool value);
 void mock_setting_items_set_bool(const char *key, bool value);
 void mock_setting_items_reset(void);
