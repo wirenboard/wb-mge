@@ -100,6 +100,18 @@ esp_err_t rs485_bus_vout_set_allowed(bool allowed)
     return ret;
 }
 
+void rs485_bus_vout_get_state(bool *enabled, bool *allowed)
+{
+    if (rs485_bus_vout_mutex != NULL) {
+        xSemaphoreTake(rs485_bus_vout_mutex, portMAX_DELAY);
+    }
+    *enabled = rs485_bus_vout_ctrl.enabled;
+    *allowed = rs485_bus_vout_ctrl.allowed;
+    if (rs485_bus_vout_mutex != NULL) {
+        xSemaphoreGive(rs485_bus_vout_mutex);
+    }
+}
+
 static esp_err_t last_error(esp_err_t ret, esp_err_t err)
 {
     if (err != ESP_OK) {

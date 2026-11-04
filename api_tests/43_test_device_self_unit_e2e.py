@@ -35,8 +35,10 @@ Register map (unit 0xFF), confirmed against main/bridge/mb_device.c:
   FC03 holding: the SAME map. FC03 and FC04 share one address space — every
                address above, the signature included, answers on both function
                codes with the same value.
+  FC01/FC05 coil 0: V-out enabled (the write is persisted as the vout setting).
+  FC02 discrete:   0 V-out actually on; 1 V-out blocked by the supply protection.
   An address defined in neither map -> exception 0x02.
-  Any fc not in {0x03,0x04} on unit 0xFF -> exception 0x01.
+  Any fc not in {0x01,0x02,0x03,0x04,0x05} on unit 0xFF -> exception 0x01.
 """
 
 import qemu_ports
@@ -878,18 +880,18 @@ def test_self_unit_bootloader_field_not_claimed(api, gateway_slave):
 
 @pytest.mark.qemu
 def test_self_unit_bad_fc_exception(api, gateway_slave):
-    """An unsupported FC (FC01 coils) at unit 0xFF -> exception 0x01."""
+    """An unsupported FC (FC06 write single register) at unit 0xFF -> exception 0x01."""
     _tid, unit_id, resp_fc, payload = read_self_regs(
-        "127.0.0.1", GATEWAY_HOST_PORT, 0x01, 0, 1
+        "127.0.0.1", GATEWAY_HOST_PORT, 0x06, 0, 1
     )
     assert resp_fc & 0x80, \
-        f"FC01 on self-unit should return an exception, got FC=0x{resp_fc:02X}"
-    assert resp_fc == (0x01 | 0x80), \
-        f"expected exception FC 0x81, got 0x{resp_fc:02X}"
+        f"FC06 on self-unit should return an exception, got FC=0x{resp_fc:02X}"
+    assert resp_fc == (0x06 | 0x80), \
+        f"expected exception FC 0x86, got 0x{resp_fc:02X}"
     assert len(payload) >= 1, f"exception response has no code: {payload.hex()}"
     assert payload[0] == 0x01, \
         f"expected exception code 0x01 (ILLEGAL_FUNCTION), got 0x{payload[0]:02X}"
-    print("✓ self-unit FC01 (unsupported) -> exception 0x01")
+    print("✓ self-unit FC06 (unsupported) -> exception 0x01")
 
 
 # --------------------------------------------------------------------------- #
@@ -1016,3 +1018,41 @@ def test_self_unit_cache_timeout_reg(api, cache_server):
         if restore.status_code != 200:
             print(f"✗ failed to restore cache_value_timeout_s={original_timeout}: "
                   f"HTTP {restore.status_code}")
+
+
+@pytest.mark.qemu
+def test_self_unit_vout_coil(api, cache_server):
+    """FC05 coil 0 at unit 0xFF switches V-out: FC01/FC02 and GET /settings follow."""
+    host, port = cache_server
+
+    settings_resp = api.get_settings()
+    assert settings_resp.status_code == 200, \
+        f"GET /settings failed: HTTP {settings_resp.status_code}"
+    original_vout = settings_resp.json()["vout"]
+
+    try:
+        for on in (not original_vout, original_vout):
+            value = 0xFF00 if on else 0x0000
+            _tid, _unit_id, resp_fc, payload = read_self_regs(host, port, 0x05, 0, value)
+            assert resp_fc == 0x05, \
+                f"FC05 returned FC=0x{resp_fc:02X}, payload={payload.hex()}"
+            assert payload == struct.pack(">HH", 0, value), \
+                f"FC05 response must echo the request, got {payload.hex()}"
+
+            _tid, _unit_id, resp_fc, payload = read_self_regs(host, port, 0x01, 0, 1)
+            assert resp_fc == 0x01, f"FC01 returned FC=0x{resp_fc:02X}"
+            assert payload[1] == int(on), f"coil 0 = {payload[1]}, expected {int(on)}"
+
+            # QEMU has no supply voltage protection: V-out is never blocked.
+            _tid, _unit_id, resp_fc, payload = read_self_regs(host, port, 0x02, 0, 2)
+            assert resp_fc == 0x02, f"FC02 returned FC=0x{resp_fc:02X}"
+            assert payload[1] == int(on), \
+                f"discrete 0..1 = {payload[1]:#04x}, expected {int(on):#04x}"
+
+            assert api.get_settings().json()["vout"] is on, "vout setting does not follow the coil"
+        print("✓ self-unit FC05 coil 0 switches V-out, FC01/FC02 and /settings follow")
+    finally:
+        restore = api.update_settings({"vout": original_vout})
+        # print instead of assert: an assert in teardown would mask a test failure.
+        if restore.status_code != 200:
+            print(f"✗ failed to restore vout={original_vout}: HTTP {restore.status_code}")

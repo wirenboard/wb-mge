@@ -1,5 +1,6 @@
 #include "setting_items.h"
 #include "bridge/port_manager.h"
+#include "settings_save_timer.h"
 #include "esp_log.h"
 
 #include <stdbool.h>
@@ -27,6 +28,30 @@ void update_rs485_control(void)
     rs485_bus_vout_on_off(vout_enabled);
 
     ESP_LOGI(TAG, "RS485 control updated");
+}
+
+// Saves V-out as the vout setting and applies it. While the factory clock_out test owns
+// V-out the value is only saved: the test's exit path applies it, as for POST /settings.
+esp_err_t update_rs485_vout(bool enabled)
+{
+    esp_err_t ret = ESP_OK;
+
+    if (setting_items_read_bool(KEY_485_VOUT) != enabled) {
+        settings_save_timer_auto_init();
+        settings_save_timer_wait();
+        ret = setting_items_save_bool(KEY_485_VOUT, enabled);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to save vout setting");
+            return ret;
+        }
+    }
+
+    if (!port_manager_ports_frozen()) {
+        ret = rs485_bus_vout_on_off(enabled);
+    }
+
+    ESP_LOGI(TAG, "VOUT set to %s", enabled ? "on" : "off");
+    return ret;
 }
 
 // Updates the IO bus (MIO) enable state according to current settings.

@@ -5,6 +5,7 @@
 #include "cache_multimaster.h"
 #include "cache_modbus_server.h"
 #include "serial.h"
+#include "slot_relay.h"
 #include "setting_items.h"
 #include "settings_manager.h"
 #include "rs485_stats.h"
@@ -363,7 +364,7 @@ static serial_desc_t *get_port_serial_desc(unsigned index)
 // Per-port init / deinit
 // ────────────────────────────────────────────────────────────────
 
-static esp_err_t port_init_mode(unsigned index, pm_mode_t mode)
+static esp_err_t port_init_mode_impl(unsigned index, pm_mode_t mode)
 {
     ESP_LOGI(TAG, "Port[%u]: Initializing mode '%s'", index + 1, port_manager_mode_to_str(mode));
 
@@ -475,6 +476,27 @@ static esp_err_t port_init_mode(unsigned index, pm_mode_t mode)
     return ESP_OK;
 }
 
+static esp_err_t port_init_mode(unsigned index, pm_mode_t mode)
+{
+    bool is_slot_port = (index == SLOT_RELAY_PORT_INDEX);
+
+    if (is_slot_port && (mode != PM_MODE_DISABLED)) {
+        slot_relay_release();
+    }
+
+    esp_err_t ret = port_init_mode_impl(index, mode);
+
+    if (is_slot_port) {
+        // A failed init also lands here as DISABLED: the UART does not hold the pin then either.
+        serial_desc_t *sd = get_port_serial_desc(index);
+        if ((pm_ctx[index].mode == PM_MODE_DISABLED) || ((sd != NULL) && serial_tx_disabled(sd))) {
+            slot_relay_acquire();
+        }
+    }
+
+    return ret;
+}
+
 static void port_deinit_mode(unsigned index)
 {
     pm_mode_t mode = pm_ctx[index].mode;
@@ -529,6 +551,10 @@ static void port_deinit_mode(unsigned index)
     // The cache overlay setting (pm_ctx[index].cache_overlay) is intentionally NOT
     // cleared here: it must survive transport-mode changes.
     pm_ctx[index].mode = PM_MODE_DISABLED;
+
+    if (index == SLOT_RELAY_PORT_INDEX) {
+        slot_relay_acquire();
+    }
 
     // The global cache pool is intentionally NOT freed here. cache_overlay is
     // unchanged, so the pool (and its accumulated data) must persist across a
@@ -853,7 +879,16 @@ esp_err_t port_manager_set_tx_disabled(unsigned port_index, bool disabled)
         pm_unlock(port_index);
         return ESP_OK;
     }
+    // Only on a real change: every POST /settings lands here and must not drop the relay.
+    bool relay_affected = ((port_index == SLOT_RELAY_PORT_INDEX) && (serial_tx_disabled(sd) != disabled));
+    if (relay_affected && (!disabled)) {
+        slot_relay_release();
+    }
     esp_err_t ret = serial_set_tx_disabled(sd, disabled);
+    // Reads the flag back: a failed re-enable keeps TX disabled and the pin off the UART.
+    if (relay_affected && serial_tx_disabled(sd)) {
+        slot_relay_acquire();
+    }
     pm_unlock(port_index);
     return ret;
 }

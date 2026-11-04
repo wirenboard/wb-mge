@@ -28,6 +28,18 @@ bool setting_items_read_bool(const char *key)
     return false;
 }
 
+int mock_setting_items_save_bool_called = 0;
+esp_err_t mock_setting_items_save_bool_ret = ESP_OK;
+
+esp_err_t setting_items_save_bool(const char *key, bool value)
+{
+    mock_setting_items_save_bool_called++;
+    if (mock_setting_items_save_bool_ret == ESP_OK) {
+        mock_setting_items_set_bool(key, value);
+    }
+    return mock_setting_items_save_bool_ret;
+}
+
 void mock_setting_items_set_bool(const char *key, bool value)
 {
     for (int i = 0; i < mock_settings_count; i++) {
@@ -48,6 +60,8 @@ void mock_setting_items_reset(void)
 {
     mock_settings_count = 0;
     mock_setting_items_read_bool_called = 0;
+    mock_setting_items_save_bool_called = 0;
+    mock_setting_items_save_bool_ret = ESP_OK;
     memset(mock_settings, 0, sizeof(mock_settings));
     memset(mock_setting_items_read_bool_keys, 0, sizeof(mock_setting_items_read_bool_keys));
 }

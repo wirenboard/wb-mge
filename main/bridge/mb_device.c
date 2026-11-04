@@ -6,6 +6,9 @@
 #include "voltage_monitor.h"
 #include "setting_items.h"
 #include "cache_multimaster.h"
+#include "rs485_control.h"
+#include "slot_relay.h"
+#include "update_rs485_mio_gpio_states.h"
 
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
@@ -28,10 +31,25 @@
 
 #define MB_DEV_FC_READ_HOLDING_REGS  MODBUS_FC_READ_HOLDING_REGS
 #define MB_DEV_FC_READ_INPUT_REGS    MODBUS_FC_READ_INPUT_REGS
+#define MB_DEV_FC_READ_COILS         MODBUS_FC_READ_COILS
+#define MB_DEV_FC_READ_DISCRETE      MODBUS_FC_READ_DISCRETE_INPUTS
+#define MB_DEV_FC_WRITE_SINGLE_COIL  0x05u
 
 /* ---- Modbus limits ------------------------------------------------------- */
 
 #define MB_DEV_MAX_REGISTERS         125u  /* max registers per FC03/FC04 read */
+#define MB_DEV_MAX_BITS              2000u /* max bits per FC01/FC02 read      */
+
+#define MB_DEV_COIL_ON               0xFF00u
+#define MB_DEV_COIL_OFF              0x0000u
+
+/* ---- Coils (FC01/FC05) and discrete inputs (FC02) ------------------------ */
+
+#define COIL_VOUT_ENABLED     0u  /* V-out requested on, persisted as the vout setting */
+#define COIL_SLOT_RELAY       1u  /* WB-MGU slot relay, undefined on other boards      */
+
+#define DI_VOUT_ACTIVE        0u  /* V-out is actually on: enabled and not blocked      */
+#define DI_VOUT_BLOCKED       1u  /* V-out is held off by the supply voltage protection */
 
 /* ---- Register address map (shared by FC03 and FC04) ----------------------- */
 
@@ -385,6 +403,101 @@ static bool device_get_reg(uint16_t addr, uint16_t *val)
     return false;
 }
 
+static bool device_get_coil(uint16_t addr, bool *val)
+{
+    if (addr == COIL_VOUT_ENABLED) {
+        bool allowed;
+        rs485_bus_vout_get_state(val, &allowed);
+        return true;
+    }
+    if (addr == COIL_SLOT_RELAY) {
+        return slot_relay_get(val) == ESP_OK;
+    }
+    return false;
+}
+
+static bool device_get_discrete(uint16_t addr, bool *val)
+{
+    if ((addr == DI_VOUT_ACTIVE) || (addr == DI_VOUT_BLOCKED)) {
+        bool enabled;
+        bool allowed;
+        rs485_bus_vout_get_state(&enabled, &allowed);
+        *val = (addr == DI_VOUT_ACTIVE) ? (enabled && allowed) : (!allowed);
+        return true;
+    }
+    return false;
+}
+
+/* FC01/FC02 response. Returns the wire length, or 0 with *exc_out set. */
+static size_t build_bits_response(uint8_t unit_id, uint8_t fc, uint16_t tid,
+                                  uint16_t start_addr, uint16_t count,
+                                  uint8_t *resp_buf, uint8_t *exc_out)
+{
+    if (((uint32_t)start_addr + (uint32_t)count) > 0x10000u) {
+        *exc_out = MB_DEV_EX_ILLEGAL_ADDRESS;
+        return 0;
+    }
+
+    uint8_t *payload    = resp_buf + sizeof(mb_tcp_header_t);
+    uint8_t  byte_count = (uint8_t)((count + 7u) / 8u);
+    memset(payload, 0, 1u + byte_count);
+    payload[0] = byte_count;
+
+    for (uint16_t i = 0; i < count; i++) {
+        uint16_t addr  = (uint16_t)(start_addr + i);
+        bool     bit   = false;
+        bool     found = (fc == MB_DEV_FC_READ_COILS) ? device_get_coil(addr, &bit)
+                                                      : device_get_discrete(addr, &bit);
+        if (!found) {
+            *exc_out = MB_DEV_EX_ILLEGAL_ADDRESS;
+            return 0;
+        }
+        if (bit) {
+            payload[1u + (i / 8u)] |= (uint8_t)(1u << (i % 8u));
+        }
+    }
+
+    mb_tcp_header_t *resp_hdr = (mb_tcp_header_t *)resp_buf;
+    resp_hdr->transaction_id = tid;
+    resp_hdr->protocol_id    = MODBUS_TCP_PROTOCOL_ID;
+    resp_hdr->unit_id        = unit_id;
+    resp_hdr->function       = fc;
+    resp_hdr->length         = modbus_swap16((uint16_t)(1u + 1u + 1u + byte_count));
+
+    return sizeof(mb_tcp_header_t) + 1u + (size_t)byte_count;
+}
+
+/* FC05 response: the request echoed back. Returns the wire length, or 0 with *exc_out set. */
+static size_t handle_write_single_coil(const uint8_t *req, uint16_t addr, uint16_t value,
+                                       uint8_t *resp_buf, uint8_t *exc_out)
+{
+    if ((value != MB_DEV_COIL_ON) && (value != MB_DEV_COIL_OFF)) {
+        *exc_out = MB_DEV_EX_ILLEGAL_DATA_VALUE;
+        return 0;
+    }
+
+    esp_err_t err = ESP_ERR_NOT_SUPPORTED;
+    if (addr == COIL_VOUT_ENABLED) {
+        err = update_rs485_vout(value == MB_DEV_COIL_ON);
+    } else if (addr == COIL_SLOT_RELAY) {
+        err = slot_relay_set(value == MB_DEV_COIL_ON);
+    }
+
+    if (err != ESP_OK) {
+        switch (err) {
+            case ESP_ERR_NOT_SUPPORTED: *exc_out = MB_DEV_EX_ILLEGAL_ADDRESS; break;
+            case ESP_ERR_INVALID_STATE: *exc_out = MODBUS_EXC_SLAVE_DEVICE_BUSY; break;
+            default:                    *exc_out = MODBUS_EXC_SLAVE_DEVICE_FAILURE; break;
+        }
+        return 0;
+    }
+
+    size_t len = sizeof(mb_tcp_header_t) + 4u;
+    memcpy(resp_buf, req, len);
+    ((mb_tcp_header_t *)resp_buf)->length = modbus_swap16(6u);
+    return len;
+}
+
 /* ---- Public API ---------------------------------------------------------- */
 
 bool mb_device_is_self(uint8_t unit_id)
@@ -447,9 +560,14 @@ size_t mb_device_handle_self_request(const uint8_t *req, size_t req_len,
     uint8_t  unit_id = req_hdr->unit_id;
     uint8_t  fc      = req_hdr->function;
 
-    if (fc != MB_DEV_FC_READ_HOLDING_REGS && fc != MB_DEV_FC_READ_INPUT_REGS) {
+    bool is_reg_read   = ((fc == MB_DEV_FC_READ_HOLDING_REGS) || (fc == MB_DEV_FC_READ_INPUT_REGS));
+    bool is_bit_read   = ((fc == MB_DEV_FC_READ_COILS) || (fc == MB_DEV_FC_READ_DISCRETE));
+    bool is_coil_write = (fc == MB_DEV_FC_WRITE_SINGLE_COIL);
+
+    if ((!is_reg_read) && (!is_bit_read) && (!is_coil_write)) {
         return modbus_pdu_build_exception(resp_buf, tid, unit_id, fc, MB_DEV_EX_ILLEGAL_FUNCTION);
     }
+    /* All supported requests carry two 16-bit fields: address and quantity (or coil value). */
     if (req_len < sizeof(mb_tcp_header_t) + 4u) {
         return modbus_pdu_build_exception(resp_buf, tid, unit_id, fc, MB_DEV_EX_ILLEGAL_DATA_VALUE);
     }
@@ -458,13 +576,22 @@ size_t mb_device_handle_self_request(const uint8_t *req, size_t req_len,
     uint16_t start = 0;
     uint16_t count = 0;
     modbus_pdu_parse_read_request(pdu, &start, &count);
-    if (count < 1u || count > MB_DEV_MAX_REGISTERS) {
-        return modbus_pdu_build_exception(resp_buf, tid, unit_id, fc, MB_DEV_EX_ILLEGAL_DATA_VALUE);
-    }
 
     uint8_t exc = MB_DEV_EX_ILLEGAL_ADDRESS;
-    size_t rlen = mb_device_build_read_response(unit_id, fc, tid, start, count,
-                                                resp_buf, &exc);
+    size_t rlen = 0;
+    if (is_coil_write) {
+        rlen = handle_write_single_coil(req, start, count, resp_buf, &exc);
+    } else if (is_bit_read) {
+        if ((count < 1u) || (count > MB_DEV_MAX_BITS)) {
+            return modbus_pdu_build_exception(resp_buf, tid, unit_id, fc, MB_DEV_EX_ILLEGAL_DATA_VALUE);
+        }
+        rlen = build_bits_response(unit_id, fc, tid, start, count, resp_buf, &exc);
+    } else {
+        if ((count < 1u) || (count > MB_DEV_MAX_REGISTERS)) {
+            return modbus_pdu_build_exception(resp_buf, tid, unit_id, fc, MB_DEV_EX_ILLEGAL_DATA_VALUE);
+        }
+        rlen = mb_device_build_read_response(unit_id, fc, tid, start, count, resp_buf, &exc);
+    }
     if (rlen == 0) {
         return modbus_pdu_build_exception(resp_buf, tid, unit_id, fc, exc);
     }

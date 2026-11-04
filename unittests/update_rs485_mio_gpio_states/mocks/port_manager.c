@@ -16,8 +16,16 @@ esp_err_t port_manager_set_tx_disabled(unsigned port_index, bool disabled)
     return ESP_OK;
 }
 
+bool mock_port_manager_ports_frozen = false;
+
+bool port_manager_ports_frozen(void)
+{
+    return mock_port_manager_ports_frozen;
+}
+
 void mock_port_manager_reset(void)
 {
+    mock_port_manager_ports_frozen = false;
     mock_port_manager_set_tx_disabled_called = 0;
     memset(mock_port_manager_set_tx_disabled_port, 0, sizeof(mock_port_manager_set_tx_disabled_port));
     memset(mock_port_manager_set_tx_disabled_value, 0, sizeof(mock_port_manager_set_tx_disabled_value));
