@@ -17,6 +17,7 @@ AUX_SRC += mocks/sniffer.c
 AUX_SRC += mocks/cache_multimaster.c
 AUX_SRC += mocks/cache_modbus_server.c
 AUX_SRC += mocks/serial.c
+AUX_SRC += mocks/slot_relay.c
 AUX_SRC += mocks/setting_items.c
 AUX_SRC += mocks/settings_manager.c
 AUX_SRC += mocks/rs485_stats.c

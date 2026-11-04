@@ -1,6 +1,7 @@
 #include "unity.h"
 
 #include "port_manager.h"
+#include "slot_relay.h"
 #include "sniffer.h"
 #include "setting_items.h"
 #include "bridge_mock.h"
@@ -95,6 +96,11 @@ extern esp_err_t g_mock_port_mode_collision_ret;
 
 /* repeater.c mock state is declared in repeater_mock.h */
 
+/* slot_relay.c mock */
+extern int mock_slot_relay_acquire_called;
+extern int mock_slot_relay_release_called;
+void mock_slot_relay_reset(void);
+
 /* ── setUp / tearDown ───────────────────────────────────────────────────── */
 
 void setUp(void)
@@ -116,6 +122,7 @@ void setUp(void)
     mock_rs485_stats_reset_all();
     mock_json_utils_reset();
     mock_repeater_reset();
+    mock_slot_relay_reset();
     g_mock_port_mode_collision_ret = ESP_OK;   // no collision unless a test opts in
 }
 
@@ -3284,6 +3291,85 @@ void test_cache_is_armed_for_a_port_brought_up_in_the_boot_window(void)
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ * Slot relay: the DE pin of port 2 belongs to the relay while the port is closed or its TX is off
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+void test_slot_relay_follows_tx_disabled(void)
+{
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode(SLOT_RELAY_PORT_INDEX, PM_MODE_PASSIVE));
+    mock_slot_relay_reset();
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_tx_disabled(SLOT_RELAY_PORT_INDEX, true));
+    TEST_ASSERT_EQUAL_INT(1, mock_slot_relay_acquire_called);
+    TEST_ASSERT_EQUAL_INT(0, mock_slot_relay_release_called);
+
+    /* The same value again is what every POST /settings does: the relay must keep its state. */
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_tx_disabled(SLOT_RELAY_PORT_INDEX, true));
+    TEST_ASSERT_EQUAL_INT(1, mock_slot_relay_acquire_called);
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_tx_disabled(SLOT_RELAY_PORT_INDEX, false));
+    TEST_ASSERT_EQUAL_INT(1, mock_slot_relay_release_called);
+    TEST_ASSERT_EQUAL_INT(1, mock_slot_relay_acquire_called);
+
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_tx_disabled(SLOT_RELAY_PORT_INDEX, false));
+    TEST_ASSERT_EQUAL_INT(1, mock_slot_relay_release_called);
+}
+
+void test_slot_relay_ignores_tx_disabled_on_port_1(void)
+{
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode(0, PM_MODE_PASSIVE));
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_tx_disabled(0, true));
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_tx_disabled(0, false));
+    TEST_ASSERT_EQUAL_INT(0, mock_slot_relay_acquire_called);
+    TEST_ASSERT_EQUAL_INT(0, mock_slot_relay_release_called);
+}
+
+void test_slot_relay_acquired_when_port_opens_with_tx_disabled(void)
+{
+    TEST_ASSERT_EQUAL(ESP_OK, setting_items_save_bool(KEY_485_TX_DISABLED_2, true));
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode(SLOT_RELAY_PORT_INDEX, PM_MODE_PASSIVE));
+    mock_slot_relay_reset();
+
+    /* Re-applying the settings closes and reopens the port. */
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_apply_settings(SLOT_RELAY_PORT_INDEX));
+    TEST_ASSERT_EQUAL_INT(1, mock_slot_relay_release_called);
+    TEST_ASSERT_EQUAL_INT(2, mock_slot_relay_acquire_called);    /* close, then TX off on reopen */
+}
+
+void test_slot_relay_follows_port_2_mode(void)
+{
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode(SLOT_RELAY_PORT_INDEX, PM_MODE_PASSIVE));
+    TEST_ASSERT_EQUAL_INT(1, mock_slot_relay_release_called);
+
+    /* Opening the port must end with the pin released: no acquire after the release. */
+    int acquired = mock_slot_relay_acquire_called;
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode(SLOT_RELAY_PORT_INDEX, PM_MODE_DISABLED));
+    TEST_ASSERT_GREATER_THAN_INT(acquired, mock_slot_relay_acquire_called);
+    TEST_ASSERT_EQUAL_INT(1, mock_slot_relay_release_called);
+}
+
+void test_slot_relay_ignores_port_1(void)
+{
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode(0, PM_MODE_PASSIVE));
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode(0, PM_MODE_DISABLED));
+    TEST_ASSERT_EQUAL_INT(0, mock_slot_relay_acquire_called);
+    TEST_ASSERT_EQUAL_INT(0, mock_slot_relay_release_called);
+}
+
+void test_slot_relay_acquired_after_failed_open(void)
+{
+    mock_bridge_port_init_should_fail = true;
+    TEST_ASSERT_NOT_EQUAL(ESP_OK, port_manager_set_mode(SLOT_RELAY_PORT_INDEX, PM_MODE_TCP_BRIDGE));
+    TEST_ASSERT_EQUAL(PM_MODE_DISABLED, port_manager_get_mode(SLOT_RELAY_PORT_INDEX));
+
+    /* Rollback goes through port_init_mode() too, so count only what the outcome requires. */
+    TEST_ASSERT_GREATER_OR_EQUAL_INT(1, mock_slot_relay_release_called);
+    int acquired = mock_slot_relay_acquire_called;
+    TEST_ASSERT_EQUAL(ESP_OK, port_manager_set_mode(SLOT_RELAY_PORT_INDEX, PM_MODE_DISABLED));
+    TEST_ASSERT_GREATER_THAN_INT(acquired, mock_slot_relay_acquire_called);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
  * Unity runner
  * ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -3456,6 +3542,14 @@ int port_manager_test(void)
     RUN_TEST(test_init_subsystems_normalises_the_overlay_below_the_one_shot_guard);
     RUN_TEST(test_init_subsystems_normalises_the_overlay_above_the_subsystem_inits);
     RUN_TEST(test_cache_is_armed_for_a_port_brought_up_in_the_boot_window);
+
+    /* Slot relay */
+    RUN_TEST(test_slot_relay_follows_port_2_mode);
+    RUN_TEST(test_slot_relay_ignores_port_1);
+    RUN_TEST(test_slot_relay_acquired_after_failed_open);
+    RUN_TEST(test_slot_relay_follows_tx_disabled);
+    RUN_TEST(test_slot_relay_ignores_tx_disabled_on_port_1);
+    RUN_TEST(test_slot_relay_acquired_when_port_opens_with_tx_disabled);
 
     return UNITY_END();
 }

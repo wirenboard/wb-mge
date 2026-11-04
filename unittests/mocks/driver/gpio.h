@@ -10,6 +10,7 @@ typedef enum {
     GPIO_NUM_9 = 9,
     GPIO_NUM_10 = 10,
     GPIO_NUM_12 = 12,
+    GPIO_NUM_13 = 13,
     GPIO_NUM_14 = 14,
     GPIO_NUM_15 = 15,
 } gpio_num_t;

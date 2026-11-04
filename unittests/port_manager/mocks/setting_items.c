@@ -10,6 +10,7 @@ int mock_cache_port = 0;
 
 /* Stored mock values for per-port cache overlay (cache_en_1 / cache_en_2) */
 bool mock_cache_en[BRIDGES_COUNT] = {false, false};
+static bool mock_tx_disabled_2 = false;
 
 /* Count how many times save was called (for diagnostics) */
 int mock_setting_items_save_called = 0;
@@ -94,6 +95,9 @@ bool setting_items_read_bool(const char *key)
     if (strcmp(key, KEY_CACHE_MODBUS_SERVER_ENABLED) == 0) {
         return mock_cache_server_enabled;
     }
+    if (strcmp(key, KEY_485_TX_DISABLED_2) == 0) {
+        return mock_tx_disabled_2;
+    }
     int ci = index_from_cache_en_key(key);
     if (ci >= 0) {
         return mock_cache_en[ci];
@@ -119,6 +123,9 @@ esp_err_t setting_items_save_bool(const char *key, bool value)
         (mock_setting_items_save_bool_fail_key != NULL &&
          strcmp(key, mock_setting_items_save_bool_fail_key) == 0)) {
         return ESP_FAIL;  /* NVS write failed: stored value left unchanged */
+    }
+    if (strcmp(key, KEY_485_TX_DISABLED_2) == 0) {
+        mock_tx_disabled_2 = value;
     }
     int ci = index_from_cache_en_key(key);
     if (ci >= 0) {
@@ -146,6 +153,7 @@ void mock_setting_items_reset(void)
     mock_cache_port = 0;
     mock_cache_en[0] = false;
     mock_cache_en[1] = false;
+    mock_tx_disabled_2 = false;
     mock_setting_items_save_called = 0;
     mock_setting_items_save_bool_called = 0;
     mock_setting_items_save_should_fail = false;

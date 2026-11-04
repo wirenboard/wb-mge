@@ -42,6 +42,7 @@ typedef struct __attribute__((packed)) {
 #define MODBUS_EXC_ILLEGAL_ADDRESS      0x02u  // Illegal data address
 #define MODBUS_EXC_ILLEGAL_DATA_VALUE   0x03u  // Illegal data value
 #define MODBUS_EXC_SLAVE_DEVICE_FAILURE 0x04u  // Slave device failure
+#define MODBUS_EXC_SLAVE_DEVICE_BUSY    0x06u  // Slave device busy
 #define MODBUS_EXC_GW_TARGET_FAILED     0x0Bu  // Gateway target device failed to respond
 
 // Canonical Modbus read function codes (shared across the gateway).

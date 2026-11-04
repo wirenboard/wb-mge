@@ -49,6 +49,9 @@ void mock_update_vout_set_ret(esp_err_t ret);
 int  mock_update_vout_get_called(void);
 bool mock_update_vout_get_value(void);
 void mock_vout_reset(void);
+void mock_slot_relay_set_ret(esp_err_t ret);
+bool mock_slot_relay_get_state(void);
+int  mock_slot_relay_get_set_called(void);
 
 /* ---- Constants mirrored from mb_device.c (Unit ID, FCs, exceptions) ------ */
 
@@ -1258,6 +1261,69 @@ void test_self_req_fc05_errors(void)
     TEST_ASSERT_EQUAL_HEX8(0x04u, resp[8]);
 }
 
+/* ---- MBDEV-U-037: coil 1 drives the slot relay --------------------------- */
+
+void test_self_req_slot_relay_coil(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-037: coil 1 = slot relay");
+    LOG_MESSAGE();
+
+    uint8_t req[260];
+    uint8_t resp[260];
+    size_t req_len;
+    size_t n;
+
+    mock_slot_relay_set_ret(ESP_OK);
+
+    req_len = make_req(req, 0x0001, DEV_UNIT_ID, 0x05u, 1u, 0xFF00u);
+    n = mb_device_handle_self_request(req, req_len, resp);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 4u, n);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(req, resp, n);
+    TEST_ASSERT_TRUE(mock_slot_relay_get_state());
+    TEST_ASSERT_EQUAL_INT(0, mock_update_vout_get_called());
+
+    /* coils 0..1 in one read: V-out off, relay on */
+    req_len = make_req(req, 0x0001, DEV_UNIT_ID, 0x01u, 0u, 2u);
+    n = mb_device_handle_self_request(req, req_len, resp);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 2u, n);
+    TEST_ASSERT_EQUAL_HEX8(0x02u, resp[9]);
+
+    req_len = make_req(req, 0x0001, DEV_UNIT_ID, 0x05u, 1u, 0x0000u);
+    n = mb_device_handle_self_request(req, req_len, resp);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 4u, n);
+    TEST_ASSERT_FALSE(mock_slot_relay_get_state());
+}
+
+/* ---- MBDEV-U-038: coil 1 errors -> busy / failure ------------------------ */
+
+void test_self_req_slot_relay_errors(void)
+{
+    LOG_MESSAGE();
+    LOG_COLORED_MESSAGE(CONS_COLOR_LIGHT_BLUE, "MBDEV-U-038: coil 1 busy / failure");
+    LOG_MESSAGE();
+
+    uint8_t req[260];
+    uint8_t resp[260];
+    size_t req_len = make_req(req, 0x0001, DEV_UNIT_ID, 0x05u, 1u, 0xFF00u);
+
+    mock_slot_relay_set_ret(ESP_ERR_INVALID_STATE);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, mb_device_handle_self_request(req, req_len, resp));
+    TEST_ASSERT_EQUAL_HEX8(0x85u, resp[7]);
+    TEST_ASSERT_EQUAL_HEX8(0x06u, resp[8]);
+
+    mock_slot_relay_set_ret(ESP_FAIL);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, mb_device_handle_self_request(req, req_len, resp));
+    TEST_ASSERT_EQUAL_HEX8(0x04u, resp[8]);
+
+    /* a bad value never reaches the relay */
+    int called = mock_slot_relay_get_set_called();
+    req_len = make_req(req, 0x0001, DEV_UNIT_ID, 0x05u, 1u, 0x0001u);
+    TEST_ASSERT_EQUAL_UINT(MBAP_LEN + 1u, mb_device_handle_self_request(req, req_len, resp));
+    TEST_ASSERT_EQUAL_HEX8(0x03u, resp[8]);
+    TEST_ASSERT_EQUAL_INT(called, mock_slot_relay_get_set_called());
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1303,6 +1369,8 @@ int main(void)
     RUN_TEST(test_self_req_bit_read_errors);
     RUN_TEST(test_self_req_fc05_vout_write);
     RUN_TEST(test_self_req_fc05_errors);
+    RUN_TEST(test_self_req_slot_relay_coil);
+    RUN_TEST(test_self_req_slot_relay_errors);
 
     return UNITY_END();
 }

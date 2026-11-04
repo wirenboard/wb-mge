@@ -7,6 +7,7 @@
 #include "setting_items.h"
 #include "cache_multimaster.h"
 #include "rs485_control.h"
+#include "slot_relay.h"
 #include "update_rs485_mio_gpio_states.h"
 
 #include "esp_timer.h"
@@ -45,6 +46,7 @@
 /* ---- Coils (FC01/FC05) and discrete inputs (FC02) ------------------------ */
 
 #define COIL_VOUT_ENABLED     0u  /* V-out requested on, persisted as the vout setting */
+#define COIL_SLOT_RELAY       1u  /* WB-MGU slot relay, undefined on other boards      */
 
 #define DI_VOUT_ACTIVE        0u  /* V-out is actually on: enabled and not blocked      */
 #define DI_VOUT_BLOCKED       1u  /* V-out is held off by the supply voltage protection */
@@ -408,6 +410,9 @@ static bool device_get_coil(uint16_t addr, bool *val)
         rs485_bus_vout_get_state(val, &allowed);
         return true;
     }
+    if (addr == COIL_SLOT_RELAY) {
+        return slot_relay_get(val) == ESP_OK;
+    }
     return false;
 }
 
@@ -470,12 +475,20 @@ static size_t handle_write_single_coil(const uint8_t *req, uint16_t addr, uint16
         *exc_out = MB_DEV_EX_ILLEGAL_DATA_VALUE;
         return 0;
     }
-    if (addr != COIL_VOUT_ENABLED) {
-        *exc_out = MB_DEV_EX_ILLEGAL_ADDRESS;
-        return 0;
+
+    esp_err_t err = ESP_ERR_NOT_SUPPORTED;
+    if (addr == COIL_VOUT_ENABLED) {
+        err = update_rs485_vout(value == MB_DEV_COIL_ON);
+    } else if (addr == COIL_SLOT_RELAY) {
+        err = slot_relay_set(value == MB_DEV_COIL_ON);
     }
-    if (update_rs485_vout(value == MB_DEV_COIL_ON) != ESP_OK) {
-        *exc_out = MODBUS_EXC_SLAVE_DEVICE_FAILURE;
+
+    if (err != ESP_OK) {
+        switch (err) {
+            case ESP_ERR_NOT_SUPPORTED: *exc_out = MB_DEV_EX_ILLEGAL_ADDRESS; break;
+            case ESP_ERR_INVALID_STATE: *exc_out = MODBUS_EXC_SLAVE_DEVICE_BUSY; break;
+            default:                    *exc_out = MODBUS_EXC_SLAVE_DEVICE_FAILURE; break;
+        }
         return 0;
     }
 
