@@ -79,6 +79,34 @@ static esp_netif_t* s_eth_netif = NULL;
         esp_eth_config_t config = ETH_DEFAULT_CONFIG(mac, phy);
 
         err = esp_eth_driver_install(&config, &s_eth_handle);
+
+        #if ETH_PHY_RTL8201
+            // The board footprint also takes pin-compatible PHYs from other vendors
+            // (e.g. Motorcomm YT8522H). The IDF RTL8201 driver rejects them in init()
+            // with "wrong chip ID" (OUI/model check), so fall back to the generic
+            // IEEE 802.3 driver: straps already set PHY address 0, RMII and REF_CLK
+            // output, nothing vendor-specific has to be written.
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "RTL8201 init failed (%s), retrying with generic 802.3 PHY driver",
+                         esp_err_to_name(err));
+                // esp_eth_driver_install() leaves the MAC initialised when phy->init()
+                // fails (its error path only frees the driver struct), so undo that
+                // before installing again with the same MAC object.
+                mac->deinit(mac);
+                if (phy != NULL) {
+                    phy->del(phy);
+                }
+                phy = esp_eth_phy_new_generic(&phy_config);
+                config.phy = phy;
+                err = esp_eth_driver_install(&config, &s_eth_handle);
+                if (err == ESP_OK) {
+                    ESP_LOGI(TAG, "Ethernet PHY: generic 802.3 driver");
+                }
+            } else {
+                ESP_LOGI(TAG, "Ethernet PHY: RTL8201");
+            }
+        #endif
+
         if (err != ESP_OK){
             if (s_eth_handle != NULL) {
                 esp_eth_driver_uninstall(s_eth_handle);
