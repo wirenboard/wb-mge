@@ -1,3 +1,8 @@
+2026-11-13 Andrey Spiryakin <andrey.spiryakin@wirenboard.com>
+    * version:  1.3.3
+    * added:    Ethernet on boards fitted with a PHY pin-compatible with the RTL8201FI, such as the Motorcomm YT8522H — when the RTL8201 driver rejects the chip ID, the generic IEEE 802.3 PHY driver is installed instead
+    * improve:  host unit tests for the Ethernet driver installation, including the fallback to the generic PHY driver
+
 2026-08-25 Vlad Zaytsev <vlad.zaitsev@wirenboard.com>
     * version:  1.3.2
     * change:   test-suite and CI release — no firmware source changed in this release
