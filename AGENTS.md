@@ -131,6 +131,8 @@ Element→Modifier separator: camelCase (no additional separator): `.menu-itemAc
 |----------|--------|--------|-------|-------|--------|--------|--------|--------|--------|---------|
 | RTL8201FI | MDIO  | MDC    | CLK   | RST   | TXD0   | TXD1   | TXEN   | RXD0   | RXD1   | CRS_DV  |
 
+The same footprint (U6) also takes the pin-compatible Motorcomm YT8522H. The IDF RTL8201 driver rejects it with "wrong chip ID", so `ethernet_init()` installs the driver a second time with the generic IEEE 802.3 PHY (`esp_eth_phy_new_generic()`); PHY address 0, RMII mode and the REF_CLK output come from straps on the board. Keep that fallback: without it Ethernet does not come up on YT8522H boards.
+
 ### GPIO Expander TCA9535 (I2C address: 0x20)
 
 ESP32 connects to TCA9535 via: SDA → GPIO32, SCL → GPIO33.
