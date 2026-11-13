@@ -89,14 +89,18 @@ static esp_netif_t* s_eth_netif = NULL;
             if (err != ESP_OK) {
                 ESP_LOGW(TAG, "RTL8201 init failed (%s), retrying with generic 802.3 PHY driver",
                          esp_err_to_name(err));
-                // esp_eth_driver_install() leaves the MAC initialised when phy->init()
-                // fails (its error path only frees the driver struct), so undo that
-                // before installing again with the same MAC object.
-                mac->deinit(mac);
+                // A failed esp_eth_driver_install() frees its driver object, but the MAC
+                // still points at the mediator inside it, and mac->init()/deinit() call
+                // through that mediator. del() does not, so both objects are recreated.
+                if (mac != NULL) {
+                    mac->del(mac);
+                }
                 if (phy != NULL) {
                     phy->del(phy);
                 }
+                mac = esp_eth_mac_new_esp32(&esp32_emac_config, &mac_config);
                 phy = esp_eth_phy_new_generic(&phy_config);
+                config.mac = mac;
                 config.phy = phy;
                 err = esp_eth_driver_install(&config, &s_eth_handle);
                 if (err == ESP_OK) {
