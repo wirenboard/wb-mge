@@ -60,7 +60,7 @@ graph TD
     T["🧪 Run API tests"] --> qemu-test
     R["⚡ QEMU without port"] --> qemu-run
     M["🔍 QEMU console"] --> qemu-monitor
-    C["🧹 Clean QEMU artifacts"] --> qemu-clean
+    C["🧹 Clean all of build/"] --> qemu-clean
 
     qemu-build --> build-frontend
     qemu-build --> build-idf-project-qemu
@@ -89,7 +89,7 @@ graph TD
 - `qemu-web`, `qemu-run`, `qemu-test` — always compile QEMU firmware (incremental, fast if nothing changed) before running,
   and hold the working-tree lock across that build and the run
 - `qemu-monitor` — no dependencies: connects to an already-running QEMU instance
-- `qemu-clean` — removes build/ and sdkconfig.qemu\_build
+- `qemu-clean` — removes build/ entirely, hardware builds of every signature included, and sdkconfig.qemu\_build
 - `*-locked` — internal targets. The public `qemu-web` / `qemu-run` / `qemu-test` do nothing
   but take the working-tree lock and re-enter make on these; the image build is a
   prerequisite of the `-locked` target so that it happens INSIDE the lock. Do not invoke
@@ -220,7 +220,7 @@ make qemu-monitor            # Connect monitor to already-running QEMU (no build
 make qemu-test               # Compile firmware + create images, then run pytest suite
 make qemu-coverage           # Build instrumented firmware, run tests (no reboot), pull /gcov, build coverage report
 make qemu-bin-path           # Print path to qemu-system-xtensa binary
-make qemu-clean              # Remove build/ and sdkconfig.qemu_build
+make qemu-clean              # Remove build/ entirely (every signature's hardware build too) and sdkconfig.qemu_build
 ```
 
 ## Firmware code coverage (`make qemu-coverage`)

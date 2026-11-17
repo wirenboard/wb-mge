@@ -296,7 +296,7 @@ graph TD
     T["🧪 Run API tests in QEMU"] --> qemu-test
     R["⚡ Run QEMU basic mode"] --> qemu-run
     MC["🔍 QEMU console"] --> qemu-monitor
-    CQ["🧹 Clean QEMU artifacts"] --> qemu-clean
+    CQ["🧹 Clean all of build/"] --> qemu-clean
 
     qemu-build --> build-frontend
     qemu-build --> build-idf-project-qemu
@@ -601,7 +601,7 @@ pkill -9 -f qemu-system-xtensa
 
 - Первый запуск загружает ~2 ГБ тулчейнов и компонентов (EIM + xtensa toolchain + managed components IDF); на чистом хосте ожидайте около ~10 минут.
 - Инструменты ESP-IDF занимают ~5 ГБ в `/root/.espressif`. Перед началом выделите не менее 15 ГБ свободного места на диске.
-- `make qemu-create-flash-image` зависит от `build-idf-project-qemu` и перед объединением образов компилирует прошивку QEMU (инкрементально). Если в `build/` находится аппаратная сборка, автоматически выполняется `fullclean` и пересборка для QEMU.
+- `make qemu-create-flash-image` зависит от `build-idf-project-qemu` и перед объединением образов компилирует прошивку QEMU (инкрементально). Сборка для QEMU идёт в самом `build/`, а аппаратная — в `build/<сигнатура>`, так что общего кэша CMake у них больше нет; если в `build/` всё же обнаружится не-QEMU-сборка (ручной `idf.py build`), автоматически выполняется `fullclean` и пересборка для QEMU.
 
 ## Постоянное отключение Wi-Fi
 

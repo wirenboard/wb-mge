@@ -288,7 +288,7 @@ graph TD
     T["🧪 Run API tests in QEMU"] --> qemu-test
     R["⚡ Run QEMU basic mode"] --> qemu-run
     MC["🔍 QEMU console"] --> qemu-monitor
-    CQ["🧹 Clean QEMU artifacts"] --> qemu-clean
+    CQ["🧹 Clean all of build/"] --> qemu-clean
 
     qemu-build --> build-frontend
     qemu-build --> build-idf-project-qemu
@@ -590,7 +590,7 @@ pkill -9 -f qemu-system-xtensa
 
 - Initial run downloads ~2 GB of toolchains/components (EIM + xtensa toolchain + IDF managed components); expect ~10 minutes on a fresh host.
 - ESP-IDF tools occupy ~5 GB under `/root/.espressif`. Allocate at least 15 GB of free disk before starting.
-- `make qemu-create-flash-image` depends on `build-idf-project-qemu` and compiles QEMU firmware (incremental) before merging images. If `build/` contains a hardware build, it automatically runs `fullclean` and rebuilds for QEMU.
+- `make qemu-create-flash-image` depends on `build-idf-project-qemu` and compiles QEMU firmware (incremental) before merging images. The QEMU flavour builds in `build/` itself, while a hardware build goes to `build/<signature>`, so the two no longer share a CMake cache; if a non-QEMU build is nevertheless found in `build/` (a manual `idf.py build`), it automatically runs `fullclean` and rebuilds for QEMU.
 
 ## Permanently Disabling Wi-Fi
 

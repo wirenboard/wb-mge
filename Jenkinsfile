@@ -484,9 +484,34 @@ pipeline {
             when { expression { env.NIGHTLY_COVERAGE_SKIP != 'true' } }
             steps {
                 script {
-                    sh 'bash -c "source /opt/esp/idf/export.sh && make build-idf-project"'
-                    // copy binaries to separate 'result' directory because s3_uploader job searches for files there
-                    sh 'mkdir -p result && cp release/*.bin result/'
+                    // One build per signature in MODEL_LIST, which 'make -s print-models' prints,
+                    // so this stage needs no change when a signature is added — what a new
+                    // signature does need is listed at MODEL_LIST in the Makefile, and the release
+                    // channel it is published into lives outside this repository. Each signature
+                    // builds into its own build/<signature> dir (see BUILD_DIR in the Makefile),
+                    // so the builds do not invalidate each other's cache and no clean is needed
+                    // between them.
+                    //
+                    // The copy into result/ happens after EACH build, not once at the end:
+                    // 'prepare_release' empties release/ before it puts this signature's binary
+                    // there, so release/ only ever holds the last one. result/ is where they
+                    // accumulate, and it is a separate directory because the s3_uploader job
+                    // searches for files there — the archiveArtifacts below hands it every one.
+                    //
+                    // The list goes through a variable rather than straight into `for`: a word
+                    // list is not a command whose status 'set -e' can see, so a failed
+                    // 'make print-models' would leave the loop empty and this stage green with
+                    // nothing built. An assignment does carry the status.
+                    sh '''#!/bin/bash
+                        set -e
+                        source /opt/esp/idf/export.sh
+                        mkdir -p result
+                        signatures=$(make -s print-models)
+                        for signature in $signatures; do
+                            make TARGET="$signature" build-idf-project
+                            cp release/*.bin result/
+                        done
+                    '''
                 }
             }
             post {

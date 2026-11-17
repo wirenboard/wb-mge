@@ -19,11 +19,12 @@ Runner.GCC_FLAGS_MAPPING['-mlongcalls'] = ''
 
 # Skip pyclang's `idf.py reconfigure` step: it regenerates compile_commands.json
 # from the *currently active* sdkconfig, which on this project can disagree with
-# the sdkconfig the build/ tree was actually compiled against (we have separate
-# native and QEMU sdkconfigs). That mismatch flips preprocessor flags like
-# QEMU_BUILD between 0/1 vs. what the headers in build/config/sdkconfig.h expect,
-# producing spurious "unknown type" errors. We rely on the caller (make / CI)
-# to ensure the CDB is current before invoking us.
+# the sdkconfig the build tree was actually compiled against (we have separate
+# per-signature and QEMU sdkconfigs). That mismatch flips preprocessor flags like
+# QEMU_BUILD between 0/1 vs. what the headers in <build dir>/config/sdkconfig.h
+# expect — that dir being build/<signature> for a hardware build and build/ for
+# the QEMU one — producing spurious "unknown type" errors. We rely on the
+# caller (make / CI) to ensure the CDB is current before invoking us.
 Runner.idf_reconfigure = lambda self: self
 
 from pyclang.scripts.idf_clang_tidy import main  # noqa: E402
