@@ -258,6 +258,9 @@ make
 make test
 ```
 
+End-to-end-тесты в QEMU и то, что нужно установить для каждого набора тестов, описаны в разделе
+«Запуск тестов» ниже.
+
 Если компоненты собираются отдельно, то сначала соберите frontend:
 
 ```bash
@@ -292,7 +295,7 @@ graph TD
 ```mermaid
 graph TD
     BQ["🔨 Build for QEMU"] --> qemu-build
-    W["🌐 QEMU web UI at localhost:8080"] --> qemu-web
+    W["🌐 QEMU web UI at localhost:21000 (slot 0)"] --> qemu-web
     T["🧪 Run API tests in QEMU"] --> qemu-test
     R["⚡ Run QEMU basic mode"] --> qemu-run
     MC["🔍 QEMU console"] --> qemu-monitor
@@ -301,12 +304,19 @@ graph TD
     qemu-build --> build-frontend
     qemu-build --> build-idf-project-qemu
 
-    qemu-web --> qemu-create-flash-image
-    qemu-web --> qemu-create-efuse-image
-    qemu-run --> qemu-create-flash-image
-    qemu-run --> qemu-create-efuse-image
-    qemu-test --> qemu-create-flash-image
-    qemu-test --> qemu-create-efuse-image
+    qemu-web --> L1["🔒 tree lock"]
+    qemu-run --> L1
+    qemu-test --> L1
+    L1 --> qemu-web-locked
+    L1 --> qemu-run-locked
+    L1 --> qemu-test-locked
+
+    qemu-web-locked --> qemu-create-flash-image
+    qemu-web-locked --> qemu-create-efuse-image
+    qemu-run-locked --> qemu-create-flash-image
+    qemu-run-locked --> qemu-create-efuse-image
+    qemu-test-locked --> qemu-create-flash-image
+    qemu-test-locked --> qemu-create-efuse-image
     qemu-create-flash-image --> build-idf-project-qemu
     build-idf-project-qemu --> qemu-apply-idf-patches
     build-idf-project --> apply-idf-patches
@@ -344,6 +354,7 @@ docker run --rm -it -v $(pwd):/root/esp/project wb-mge-builder
 ### 3. Сборка внутри контейнера
 
 Сборка внутри контейнера не отличается от обычной сборки (см. раздел "Инструкции по ручной сборке", пункт 5).
+Запуск тестов в контейнере описан в разделе «Запуск тестов» ниже.
 
 ### Альтернатива: сборка одной командой
 
@@ -353,6 +364,11 @@ docker run --rm -it -v $(pwd):/root/esp/project wb-mge-builder
 docker run --rm -v $(pwd):/root/esp/project wb-mge-builder make
 ```
 
+> **Примечание:** после `docker run … make` артефакты в `build/` и `release/` принадлежат root.
+> Перед следующей сборкой на хосте выполните `sudo make clean` или `sudo rm -rf build release`.
+> На хосте без ESP-IDF `make clean` удаляет только `build/` и останавливается с
+> `ESP-IDF v5.4.4 is not available`; очищайте тогда через контейнер:
+> `docker run --rm -v "$(pwd)":/root/esp/project wb-mge-builder make clean`.
 
 ## Прошивка устройства
 
@@ -478,31 +494,82 @@ docker run --rm -v $(pwd):/root/esp/project wb-mge-builder make clean
 docker rmi wb-mge-builder
 ```
 
-## Настройка тестовой инфраструктуры с нуля (Debian 13)
+## Запуск тестов
 
-Шаги для подготовки чистого хоста Debian 13 (trixie) для сборки прошивки QEMU и запуска набора тестов `api_tests/` от начала до конца. Выполняется от имени `root`.
+В репозитории три набора тестов:
 
-### 1. Системные пакеты
+| Набор | Команда | Что запускается |
+| ----- | ------- | --------------- |
+| Юнит-тесты на C | `make unittests` | каждый каталог `unittests/*/`: сборка хостовым `gcc` с Unity из ESP-IDF и запуск |
+| Тесты фронтенда | `make test-frontend` | Vitest в `main/frontend/` |
+| End-to-end-тесты API | `make qemu-test` | набор pytest из `api_tests/` против прошивки, запущенной в QEMU |
+
+`make test` запускает первые два. `make qemu-test` компилирует прошивку QEMU (инкрементально),
+записывает свежие образы flash и eFuse (`qemu-create-flash-image`, `qemu-create-efuse-image`),
+загружает QEMU, прогоняет pytest и завершает QEMU. Веб-фронтенд, который вшивается в прошивку, она
+не собирает, поэтому в свежем клоне перед ней один раз нужен `make qemu-build` (фронтенд + прошивка
+QEMU).
+
+Окружение берётся либо из Docker-образа этого репозитория, либо с хоста Debian 13, настроенного с
+нуля. Оба рецепта ниже прогнаны ровно в том виде, как написаны, каждый из свежего клона; время и
+результаты этих прогонов — в разделе «Чего ожидать».
+
+### Тесты в Docker
+
+На хосте нужны только Docker и git. В образе (см. «Сборка с использованием Docker») есть ESP-IDF
+v5.4.4 с уже наложенными патчами IDF из `patches/`, Node.js 20, QEMU для xtensa и готовое
+Python-окружение для `api_tests/` в `/opt/api_tests_venv`.
+
+```bash
+git clone https://github.com/wirenboard/wb-mge.git
+cd wb-mge
+docker build -t wb-mge-builder .
+docker run --rm -v "$(pwd)":/root/esp/project wb-mge-builder make test
+docker run --rm -v "$(pwd)":/root/esp/project wb-mge-builder make qemu-build
+docker run --rm -v "$(pwd)":/root/esp/project wb-mge-builder make qemu-test
+```
+
+- Клон должен лежать на той машине, где работает демон Docker: `-v "$(pwd)":…` называет путь на
+  хосте демона. С удалённым демоном (`DOCKER_HOST`, `docker context`) контейнер получит пустой
+  каталог с таким именем на удалённом хосте, и `make` остановится с
+  `No rule to make target 'test'`.
+- В свежем клоне нет `api_tests/.venv`, поэтому `make qemu-test` берёт интерпретатор из
+  `/opt/api_tests_venv` (см. `PYTEST_PYTHON` в шаге 6 ниже).
+- Всё, что контейнер пишет в клон, — `build/`, `release/`, `main/frontend/dist/`,
+  `main/frontend/node_modules/` — принадлежит root; см. примечание в разделе «Сборка с
+  использованием Docker».
+
+### Тесты на чистом хосте Debian 13
+
+Шаги для подготовки чистого хоста Debian 13 (trixie) к сборке прошивки и запуску всех трёх наборов
+тестов. Выполняется от имени `root`; перед началом выделите не менее 15 ГБ свободного места на
+диске. Каждый блок можно вставить в новый shell: ни один не
+полагается на текущий каталог или переменные, оставшиеся от предыдущего.
+
+#### 1. Системные пакеты
+
+`build-essential` даёт хостовый `gcc`, которым собираются юнит-тесты на C; остальное нужно ESP-IDF,
+EIM и QEMU.
 
 ```bash
 apt-get update
 apt-get install -y --no-install-recommends \
     ca-certificates curl gnupg lsb-release \
-    git make cmake ninja-build \
+    git make cmake ninja-build build-essential \
     python3 python3-pip python3-venv \
     libusb-1.0-0 libssl-dev libffi-dev \
     libsdl2-2.0-0 libpixman-1-0 libslirp0 libglib2.0-0 \
     file flex bison gperf wget xz-utils dfu-util
 ```
 
-### 2. Node.js 20.x
+#### 2. Node.js 20.x
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
 apt-get install -y nodejs
 ```
 
-### 3. ESP-IDF v5.4.4 via EIM (Espressif Installation Manager)
+#### 3. ESP-IDF v5.4.4 через EIM (Espressif Installation Manager)
 
 Добавьте официальный apt-репозиторий EIM и установите `eim-cli`:
 
@@ -513,6 +580,10 @@ apt-get update
 apt-get install -y eim-cli
 ```
 
+`apt-get update` предупреждает здесь `OpenPGP signature verification failed: https://dl.espressif.com/dl/eim/apt
+stable InRelease ... Missing key 06E9A6C0325E124198C685F18B1F38BDC9383E1D`. Так и должно быть:
+`[trusted=yes]` заставляет apt принять репозиторий без ключа, и `eim-cli` устанавливается.
+
 Установите ESP-IDF (использует `/var/tmp/eim-work` как временную директорию, чтобы не переполнить `/tmp`):
 
 ```bash
@@ -520,13 +591,22 @@ mkdir -p /var/tmp/eim-work
 TMPDIR=/var/tmp/eim-work eim install --idf-versions v5.4.4 --target esp32 --non-interactive true -v
 ```
 
+Под конец `eim` печатает `Error: No such command 'cooking'` и
+`WARN - Downloading required components failed.`; когда `components-file.espressif.com` отвечает
+медленно, перед ними идут traceback с таймаутом чтения и `WARN - Failed to synchronize components.`.
+Установка всё равно завершается с кодом 0, и на проект это не влияет: нужные ему managed components
+(`main/idf_component.yml`, `dependencies.lock`) скачивает его первая сборка.
+
 После установки ESP-IDF находится в `/root/.espressif/v5.4.4/esp-idf` и активируется командой:
 
 ```bash
 source /root/.espressif/tools/activate_idf_v5.4.4.sh
 ```
 
-### 4. QEMU xtensa
+`make` делает эту активацию сам (`scripts/idf_env.sh`), так что она нужна только для ручного запуска
+инструментов IDF, как в следующем шаге.
+
+#### 4. QEMU xtensa
 
 EIM не устанавливает QEMU. Используйте `idf_tools.py` из активированного окружения:
 
@@ -537,17 +617,17 @@ python "$IDF_PATH/tools/idf_tools.py" install qemu-xtensa
 
 Бинарный файл будет размещён по пути `/root/.espressif/tools/tools/qemu-xtensa/esp_develop_*/qemu/bin/qemu-system-xtensa` — цели `make qemu-*` обнаруживают его автоматически.
 
-### 5. Клонирование репозитория
+#### 5. Клонирование репозитория
 
 ```bash
 cd /root
 git clone https://github.com/wirenboard/wb-mge.git
-cd wb-mge
 ```
 
-### 6. Python virtualenv для `api_tests/`
+#### 6. Python virtualenv для `api_tests/`
 
 ```bash
+cd /root/wb-mge
 python3 -m venv api_tests/.venv
 api_tests/.venv/bin/pip install -r api_tests/requirements.txt
 ```
@@ -557,51 +637,80 @@ api_tests/.venv/bin/pip install -r api_tests/requirements.txt
 `/opt/api_tests_venv/bin/python` (CI/Docker-образ, где venv запечён заранее). Для явного выбора:
 `make qemu-test PYTEST_PYTHON=/path/to/python`.
 
-### 7. Сборка прошивки + frontend и запуск тестов
-
-Соберите всё для QEMU (frontend + прошивка с конфигурацией QEMU):
+#### 7. Запуск тестов
 
 ```bash
 cd /root/wb-mge
+make test
 make qemu-build
-```
-
-Сгенерируйте образы flash и eFuse:
-
-```bash
-make qemu-create-flash-image
-make qemu-create-efuse-image
-```
-
-Запустите набор API-тестов (загружает QEMU, запускает pytest, завершает QEMU):
-
-```bash
 make qemu-test
 ```
 
-Запуск тестов по имени:
+`make qemu-create-flash-image`, с которой начинается `make qemu-test`, зависит от
+`build-idf-project-qemu` и перед объединением образов компилирует прошивку QEMU (инкрементально).
+Если в `build/` находится аппаратная сборка, автоматически выполняется `fullclean` и пересборка для
+QEMU.
 
-```bash
-make qemu-test PYTEST_ARGS="-k test_auth"
-```
+### Чего ожидать
 
-Запуск QEMU с веб-интерфейсом на http://localhost:8080:
+Оба рецепта прогнаны на одной ВМ с 72 vCPU (Xeon E5-2697 v4, 2,3 ГГц), которую они делили с
+другими задачами; два прогона `make qemu-test` шли одновременно.
 
-```bash
-make qemu-web
-```
+| Шаг | Docker | Debian 13 |
+| --- | ------ | --------- |
+| Окружение | `docker build`: 39 мин, из них 31 — скачивание `espressif/idf:v5.4.4`; образ занимает 5,7 ГБ | шаги 1–6: 14 мин, из них 10 — `eim install`; скачано 1,1 ГБ; 4,6 ГБ в `/root/.espressif`, всего 6,5 ГБ на диске |
+| `make test` | 4 мин | 4 мин |
+| `make qemu-build` | 4 мин | 7 мин |
+| `make qemu-test` | 3 ч 14 мин: 184 passed, 9 failed, 40 errors, 1 skipped | 3 ч 4 мин: 226 passed, 2 failed, 1 skipped |
 
-Если предыдущий запуск QEMU оставил зависший процесс, завершите его перед повторным запуском:
+- `make test` печатает строку Unity `N Tests 0 Failures 0 Ignored` для каждого бинарника юнит-тестов
+  (49 бинарников, 1130 тестов) и заканчивается строками Vitest `Test Files  25 passed (25)` и
+  `Tests  758 passed (758)`. Оба рецепта дали ровно это.
+- `make qemu-test` собирает 229 тестов и заканчивается итоговой строкой pytest, например
+  `2 failed, 226 passed, 1 skipped, 38 warnings in 11007.26s (3:03:27)`; если хоть один тест упал
+  или дал ошибку, `make` завершается с ошибкой. Отчёт JUnit пишется в `build/qemu_test_report.xml`,
+  вывод консоли прошивки — в `build/qemu_test.log`. Единственный пропущенный тест,
+  `15_test_ws_pong_race.py`, отключён в коде.
+- Падение с `requests.exceptions.ReadTimeout` или `Failed: Timeout` значит, что прошивка в QEMU не
+  ответила вовремя: запрос ждёт 10–30 с, тест целиком — 180 с (`pytest.ini`). Набор чувствителен к
+  медленному или занятому процессору; в CI (`Jenkinsfile`) он идёт около 2 ч, и падение там помечает
+  сборку как нестабильную, а не проваленную. В прогонах выше
+  `11_test_cache.py::test_cache_multimaster` упал так в обоих рецептах, а
+  `44_test_io_state_bus.py::test_initial_dump_contains_all_signals` упал один раз, в Debian, с
+  `Native GPIO G34 missing from initial dump`. В Docker таймауты задели гораздо больше тестов:
+  в основном `POST /settings` не отвечал за 30 с, после чего фикстуры целых файлов тестов падали с
+  ошибкой. Второй прогон в Docker, один на той же машине, за первые 36 минут пошёл так же.
 
-```bash
-pkill -9 -f qemu-system-xtensa
-```
+### Часть тестов, веб-интерфейс, зависший QEMU
 
-### Примечания
+- Один файл или фильтр по имени: `make qemu-test PYTEST_ARGS="01_test_auth.py"`,
+  `make qemu-test PYTEST_ARGS="-k test_session_management"`. В Docker то же самое дописывается в
+  конец строки: `docker run --rm -v "$(pwd)":/root/esp/project wb-mge-builder make qemu-test PYTEST_ARGS="01_test_auth.py"`.
+  Прогон `01_test_auth.py` (5 тестов) занимает 2–3 минуты вместе с проверкой сборки прошивки.
+- `make qemu-collect-only` выводит список собранных тестов, не собирая прошивку и не запуская QEMU.
+- `make qemu-web` запускает прошивку с веб-интерфейсом на http://localhost:21000 (логин и пароль
+  `admin` / `admin`). 21000 — веб-порт слота портов 0, слота по умолчанию; все порты хоста следуют
+  за `WB_MGE_PORT_SLOT`, и `make qemu-ports` печатает порты текущего слота. Это для варианта с
+  Debian: QEMU пробрасывает порты на `127.0.0.1` той машины, где запущен, а в контейнере это
+  собственный loopback контейнера.
+- Если `make qemu-test` сразу после сборки останавливается с
+  `A QEMU process is already running against this tree's flash image`, значит, ещё работает QEMU,
+  оставшийся от прерванного прогона в этом клоне. Сообщение называет процесс; завершите его из
+  корня клона:
 
-- Первый запуск загружает ~2 ГБ тулчейнов и компонентов (EIM + xtensa toolchain + managed components IDF); на чистом хосте ожидайте около ~10 минут.
-- Инструменты ESP-IDF занимают ~5 ГБ в `/root/.espressif`. Перед началом выделите не менее 15 ГБ свободного места на диске.
-- `make qemu-create-flash-image` зависит от `build-idf-project-qemu` и перед объединением образов компилирует прошивку QEMU (инкрементально). Если в `build/` находится аппаратная сборка, автоматически выполняется `fullclean` и пересборка для QEMU.
+  ```bash
+  pkill -9 -f "file=$(pwd)/build/qemu_flash.bin,"
+  ```
+
+  Шаблон называет образ flash этого клона; голый `pkill -f qemu-system-xtensa` убивает и QEMU
+  других клонов, запущенные параллельно. В Docker контейнер с `--rm` забирает свой QEMU с собой.
+- `Port conflict on slot 0 (from default) — cannot start QEMU safely` перечисляет порты слота,
+  которые уже занял другой процесс — прогон в другом клоне или посторонний сервис. Другому клону
+  отдельный слот задаётся через `WB_MGE_PORT_SLOT`.
+
+Порты, блокировка «один прогон на клон» и сама сборка QEMU описаны в
+[README_QEMU.md](README_QEMU.md); устройство набора и запуск против реального устройства — в
+[api_tests/README_API_Tests.md](api_tests/README_API_Tests.md).
 
 ## Постоянное отключение Wi-Fi
 

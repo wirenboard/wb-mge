@@ -48,7 +48,7 @@ The Makefile activates the EIM environment automatically — no manual `source` 
 The command automatically:
 1. Recompiles QEMU firmware if sources changed (incremental, does NOT rebuild frontend)
 2. Generates QEMU flash image
-3. Kills any existing QEMU processes
+3. Kills a QEMU left running from this checkout (QEMUs of other checkouts are left alone)
 4. Starts QEMU with port forwarding (localhost:21000 → ESP32:80, for slot 0)
 
 ## 🔗 Make Dependency Graph
