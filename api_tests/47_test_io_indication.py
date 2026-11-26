@@ -110,7 +110,7 @@ _LONG_PRESS_VERDICT_MARGIN_S = 1.0
 # sdkconfig.qemu.minimal:1300 (CONFIG_LOG_DEFAULT_LEVEL=3, so INFO is emitted at runtime)
 # and :1304 (CONFIG_LOG_MAXIMUM_LEVEL=4, which is what keeps ESP_LOGI in the binary at all).
 # Cited against sdkconfig.qemu.minimal and NOT against sdkconfig.qemu_build: the latter is
-# generated, is ignored by .gitignore:24 and is deleted by `qemu-clean` (qemu.mk:371), so a
+# generated, is ignored by .gitignore:24 and is deleted by `qemu-clean` (qemu.mk:375), so a
 # reader on a fresh clone would find no such file.
 #
 # THE ORDER THEY APPEAR IN MATTERS, and three of the five mean "about to start", not "done".

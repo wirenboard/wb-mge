@@ -223,7 +223,11 @@ qemu-web-locked: qemu-create-flash-image qemu-create-efuse-image
 	    : "'make qemu-run' in a sibling checkout while the echo above said 'THIS tree'." ; \
 	    : "Nothing is lost by dropping it: an idf.py-launched QEMU in THIS tree cannot be" ; \
 	    : "running, because qemu-run/qemu-web/qemu-test all hold the tree lock we hold now." ; \
-	    pkill -f "file=$(QEMU_FLASH_IMAGE)," 2>/dev/null || true; \
+	    : "The pattern must also start at the QEMU binary: this recipe's own shell carries" ; \
+	    : "'file=<image>,' in its argv (here and in -drive below), and procps pkill on Linux" ; \
+	    : "matches it, so a bare 'file=<image>,' made 'make qemu-web' kill itself. BSD pkill" ; \
+	    : "skips its own ancestors, which is why macOS never showed it." ; \
+	    pkill -f "^[^ ]*qemu-system-xtensa .*file=$(QEMU_FLASH_IMAGE)," 2>/dev/null || true; \
 	    sleep 1; \
 	    $(find_qemu_bin); \
 	    if [ -z "$$QEMU_BIN" ]; then \

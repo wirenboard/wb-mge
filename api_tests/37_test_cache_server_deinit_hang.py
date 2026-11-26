@@ -320,12 +320,12 @@ def _skip_detector_disarmed(reason: str) -> typing.NoReturn:
     -v -s --tb=short, no -r flag) pytest truncates the reason in its own result line to
     `SKIPPED (DETECTOR-DISARME...)`, cutting the marker mid-word, so neither artefact would
     carry it without help. Where the full text DOES land:
-      - build/qemu_test_report.xml, as <skipped message="...">. qemu.mk:278-280 passes
+      - build/qemu_test_report.xml, as <skipped message="...">. qemu.mk:282-284 passes
         --junitxml, and the Jenkinsfile stage 'E2E tests (QEMU)' publishes that file from its
         `post { always { ... } }` block — the `junit` step for the Tests tab, `archiveArtifacts`
         for the raw XML — so it survives whatever the build result was. Cited by stage and step
         name rather than by line number: line numbers there have gone stale twice already.
-      - the pytest CONSOLE output — the Jenkins build log — via the print below. qemu.mk:279
+      - the pytest CONSOLE output — the Jenkins build log — via the print below. qemu.mk:283
         runs pytest with no redirect, and -s means nothing captures this.
     NOT build/qemu_test.log, and getting this wrong is worse than saying nothing: that path is
     QEMU_LOG_PATH (conftest.py), opened as `log_handle` in conftest's qemu_process fixture and

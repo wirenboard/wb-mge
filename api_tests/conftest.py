@@ -450,7 +450,7 @@ def _check_no_foreign_qemu_in_tree():
             "  so the tree lock did not catch it). It still writes NVS into that image.",
             "  Kill it, e.g. (the pattern is anchored the same way the match above is, so",
             "  it cannot hit a QEMU in another tree whose path merely ends with ours):",
-            f"    pkill -f 'file={QEMU_FLASH_PATH},'",
+            f"    pkill -f '^[^ ]*qemu-system-xtensa .*file={QEMU_FLASH_PATH},'",
         ]),
         returncode=1,
     )
@@ -509,7 +509,7 @@ def _check_no_stale_qemu():
         "  Another run in the same WB_MGE_PORT_SLOT, or an unrelated listener, holds "
         "them.",
         "  Use a different WB_MGE_PORT_SLOT, or kill the stale instance "
-        f"(pkill -f 'file={QEMU_FLASH_PATH},' if it is a leaked QEMU from this tree).",
+        f"(pkill -f '^[^ ]*qemu-system-xtensa .*file={QEMU_FLASH_PATH},' if it is a leaked QEMU from this tree).",
     ]
     pytest.exit("\n".join(lines), returncode=1)
 
@@ -1138,7 +1138,7 @@ def build_gateway_fixture(port_num: int, uart_tcp_port: int,
                     # among hundreds of lines of test output.
                     #
                     # It does NOT reach CI's JUnit XML, and no argument here should rest on
-                    # the idea that it does. qemu.mk:280 writes that file and the Jenkinsfile
+                    # the idea that it does. qemu.mk:284 writes that file and the Jenkinsfile
                     # publishes it, but pytest implements pytest_warning_recorded only in its
                     # terminal reporter (_pytest/terminal.py) — _pytest/junitxml.py implements
                     # no warning hook at all, so warnings are simply absent from the XML.

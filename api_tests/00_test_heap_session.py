@@ -641,7 +641,7 @@ def test_heap_baseline(api, request):
         f"(tcp_bridge on both ports, cache server enabled) — `make qemu-test` does it on every "
         f"run, a direct `pytest --qemu --qemu-skip-build` does not. DROP THAT FLAG rather than "
         f"deleting build/qemu_flash.bin: qemu-create-flash-image is phony and regenerates the "
-        f"image unconditionally (qemu.mk:148-152, :373), while with --qemu-skip-build still on "
+        f"image unconditionally (qemu.mk:148-152, :377), while with --qemu-skip-build still on "
         f"the command line conftest does not rebuild anything and exits on the missing file "
         f"instead (the flash/efuse existence check in conftest's qemu_process fixture), "
         f"killing the run with an unrelated error. Enabling one port, or the cache Modbus "
