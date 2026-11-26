@@ -179,35 +179,47 @@ processes killed): the process name `qemu-system-xtensa` is longer than 15
 characters, and without `-f` `pkill` matches against the 15-char-truncated name
 in `/proc/PID/comm`, which mismatches the real one.
 
-**Always** use `-f` (match against the full command line):
+**Always** use `-f` (match against the full command line), and scope the pattern
+to this checkout's flash image: other checkouts run their own QEMU in parallel on
+other port slots (`WB_MGE_PORT_SLOT`), and a bare `pkill -f qemu-system-xtensa`
+kills them too. From the root of the checkout:
 ```bash
-pkill -9 -f qemu-system-xtensa
+pkill -9 -f "^[^ ]*qemu-system-xtensa .*file=$(pwd)/build/qemu_flash.bin,"
 ```
+The `^[^ ]*qemu-system-xtensa ` anchor keeps the pattern off the shell that runs
+the command: on Linux `pkill` also matches its own parent shell when that shell's
+command line contains the pattern (a `bash -c "…"` with the path spelled out).
 
 Verify it actually died:
 ```bash
-pgrep -af qemu-system-xtensa            # must be empty
-ss -tnlp 2>/dev/null | grep 8080        # port must be free
+pgrep -af "^[^ ]*qemu-system-xtensa .*file=$(pwd)/build/qemu_flash.bin,"   # must be empty
+ss -tnlp 2>/dev/null | grep 21000       # web port of slot 0 must be free; `make qemu-ports` lists the slot's ports
 ```
 
 ### Killing the wrapper bash script does NOT kill the QEMU child
 
-`pkill -9 -f make qemu-tests` kills the script but the `qemu-system-xtensa` it
-spawned keeps running → it still holds port 8080 → the next QEMU cannot bind
-(`Could not set up host forwarding rule`) → the next run is garbage. After
-killing any test-runner script, always also explicitly kill its children:
+`pkill -9 -f "make qemu-test"` kills the script but the `qemu-system-xtensa` it
+spawned keeps running → it still holds this checkout's flash image and its slot's
+ports → the next `make qemu-test` here stops with `A QEMU process is already
+running against this tree's flash image`, and a run from another checkout on the
+same slot stops with `Port conflict on slot 0 …`. After killing any test-runner
+script, always also explicitly kill its children:
 ```bash
-pkill -9 -f qemu-system-xtensa
-pkill -9 -f pytest
+pkill -9 -f "^[^ ]*qemu-system-xtensa .*file=$(pwd)/build/qemu_flash.bin,"
+pkill -9 -f "^[^ ]*python[^ ]* -m pytest .*junitxml=$(pwd)/build/qemu_test_report.xml"
 ```
 
 ### `qemu_flash.bin` is a writable MTD!
 
 The firmware writes to the NVS partition and those changes **persist in the
-file** across QEMU runs. Tests that change network settings (e.g. `eth_dhcpc=false`
-plus a static IP) leave the flash in a state where the next boot makes the
-server unreachable on the QEMU network (`hostfwd` only NATs to the
-DHCP-assigned 10.0.2.15). Before each test run **always** regenerate the image:
+file** for the rest of the run, across the firmware reboots the tests do. Tests
+that change network settings (e.g. `eth_dhcpc=false` plus a static IP) leave the
+flash in a state where the next boot makes the server unreachable on the QEMU
+network (`hostfwd` only NATs to the DHCP-assigned 10.0.2.15). `make qemu-test`,
+`make qemu-web` and `make qemu-run` rewrite the image from the build
+(`qemu-create-flash-image`, `esptool merge_bin`) before every start, so each run
+boots with factory NVS. Regenerate it by hand only before starting QEMU some
+other way:
 ```bash
 rm -f build/qemu_flash.bin && make qemu-create-flash-image
 ```
