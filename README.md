@@ -662,7 +662,8 @@ the two `make qemu-test` runs overlapped.
   `44_test_io_state_bus.py::test_initial_dump_contains_all_signals` failed once, on Debian, with
   `Native GPIO G34 missing from initial dump`. In Docker the timeouts hit far more tests: mostly
   `POST /settings` did not answer within 30 s, and then the fixtures of whole test files errored
-  out. A second Docker run, alone on the same machine, went the same way in its first 36 minutes.
+  out; the VM stayed busy with other jobs throughout (load average 10–29). The same image runs the
+  suite, without the reboot tests, in CI every night (stage "Coverage (QEMU e2e)") and passes there.
 
 ### Narrowing a run, the web UI, a stale QEMU
 
