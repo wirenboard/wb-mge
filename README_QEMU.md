@@ -84,7 +84,7 @@ graph TD
 
 - `qemu-build` — full build target (frontend + firmware)
 - `qemu-create-flash-image` — depends on `build-idf-project-qemu`: compiles QEMU firmware (incremental) then merges into a single .bin
-- `qemu-apply-idf-patches` — called automatically by `build-idf-project-qemu`: applies idempotent patches to IDF source files required for QEMU builds (UART teardown fix bug01, OpenEth ISR DRAM log fix bug04, LACT timer NULL ISR guard bug05) via patches/apply_idf_patch.py
+- `qemu-apply-idf-patches` — called automatically by `build-idf-project-qemu`: applies idempotent patches to IDF source files required for QEMU builds (UART teardown fix bug01, OpenEth ISR DRAM log fix bug04, LACT timer NULL ISR guard bug05, UART RX FIFO flush before interrupt enable bug06) via patches/apply_idf_patch.py
 - `qemu-create-efuse-image` — no dependencies: creates the eFuse image once
 - `qemu-web`, `qemu-run`, `qemu-test` — always compile QEMU firmware (incremental, fast if nothing changed) before running,
   and hold the working-tree lock across that build and the run
