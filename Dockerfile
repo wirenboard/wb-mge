@@ -40,6 +40,10 @@ RUN python3 /tmp/patches/apply_idf_patch.py bug01-uart-driver-delete-intr-order.
  && python3 /tmp/patches/apply_idf_patch.py bug05-lact-timer-null-isr-guard.patch \
  && python3 /tmp/patches/apply_idf_patch.py bug06-uart-install-rxfifo-storm.patch
 
+# s3cmd for the 'Upload to S3' stage of the Jenkinsfile. Its own layer at the end of the file,
+# so that adding it does not rebuild the toolchain layers above.
+RUN apt-get update && apt-get install -y --no-install-recommends s3cmd && apt-get clean
+
 WORKDIR /root/esp/project
 
 CMD ["/bin/bash"]

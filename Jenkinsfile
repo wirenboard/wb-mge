@@ -1,3 +1,7 @@
+// The uploadFwResults step comes from the firmware CI library
+// https://github.com/wirenboard/jenkins-pipeline-lib-fw
+@Library('fwci@master') _
+
 pipeline {
     agent {
         dockerfile {
@@ -7,7 +11,6 @@ pipeline {
         }
     }
     options {
-        copyArtifactPermission('/s3_uploader');
         // Serialise a branch's builds against each other. This is about the QEMU e2e suite,
         // not tidiness: that suite is CPU-starvation sensitive, and under contention its
         // data-path tests get exactly zero bytes back (sent=..., got='' — never a partial
@@ -80,16 +83,16 @@ pipeline {
         // a description saying why — see that stage for why it must not end NOT_BUILT.
         //
         // Be honest about the baseline. The design this replaced was a separate pollSCM job, and
-        // on a day with no pushes it built NOTHING: zero node time, zero s3_uploader invocations.
+        // on a day with no pushes it built NOTHING: zero node time, zero S3 uploads.
         // A plain cron cannot reproduce that, because it always starts a build. What that build
         // costs on a quiet night is its fixed overhead and nothing else — an executor on 'devenv',
         // the implicit checkout, a cached image build, a container start, and the precheck's
         // bounded walk over previous build records. No sh step runs, nothing is compiled or
-        // tested, and s3_uploader is not invoked.
+        // tested, and nothing is uploaded to S3.
         // (An earlier version of this comment argued that a quiet night costs "an ordinary build
         // rather than an ordinary build plus ~2 h of coverage". That measured against the wrong
         // baseline — the baseline is zero — and it described the state before the whole-file
-        // guard existed, which was ~365 extra full builds and ~365 extra s3_uploader invocations
+        // guard existed, which was ~365 extra full builds and ~365 extra S3 uploads
         // a year where the replaced design ran none.)
         parameterizedCron(env.BRANCH_NAME == 'main' ? 'H 2 * * * %RUN_COVERAGE=true;RUN_E2E=false' : '')
     }
@@ -130,8 +133,8 @@ pipeline {
         // pipeline — lints, unit tests, frontend, firmware build and clang-tidy — runs on any
         // build that is not a nightly the precheck decided to skip. 'Upload to S3' is the one
         // exception: it also refuses builds a TIMER started, so a coverage-only nightly that DOES
-        // measure still builds and tests everything but no longer re-invokes s3_uploader for the
-        // revision the day's push build already handed to it. That stage recognises the timer two
+        // measure still builds and tests everything but no longer re-uploads the
+        // revision the day's push build already uploaded. That stage recognises the timer two
         // independent ways — an env flag this file sets, and 'triggeredBy' conditions — because
         // neither one covers every timer on its own; see it for which covers what, and for what is
         // and is not known about the consequences. A nightly the precheck skips runs none of them.
@@ -148,7 +151,7 @@ pipeline {
             //
             // The verdict controls the WHOLE build, not merely the coverage stages.
             // NIGHTLY_COVERAGE_SKIP appears as a conjunct in every other stage's 'when' in this
-            // file, so a skipped nightly runs no lint, no test, no build and no s3_uploader — see
+            // file, so a skipped nightly runs no lint, no test, no build and no S3 upload — see
             // the trigger comment at the top for the cost that leaves and why the alternative was
             // ~365 pointless full builds a year. This stage is the one stage deliberately NOT
             // guarded by the flag: it is what sets it.
@@ -227,7 +230,7 @@ pipeline {
                         // Export the timer fact for 'Upload to S3'. NIGHTLY_COVERAGE_SKIP below
                         // answers a NARROWER question — "this commit already has a combined
                         // report" — and the nightly whose commit HAS changed leaves it unset, so a
-                        // stage guarded on it alone still hands s3_uploader a revision the daytime
+                        // stage guarded on it alone still re-uploads a revision the daytime
                         // push build already uploaded. This flag is the timer fact itself: set for
                         // every timer-started build THAT REACHES THIS STAGE, whether coverage then
                         // runs or is skipped, and set for nothing else — a human who ticks
@@ -485,7 +488,7 @@ pipeline {
             steps {
                 script {
                     sh 'bash -c "source /opt/esp/idf/export.sh && make build-idf-project"'
-                    // copy binaries to separate 'result' directory because s3_uploader job searches for files there
+                    // copy binaries to separate 'result' directory because the 'Upload to S3' stage takes the files from there
                     sh 'mkdir -p result && cp release/*.bin result/'
                 }
             }
@@ -844,8 +847,8 @@ pipeline {
             // only when this commit already HAS a combined report; the other nightly shape — the
             // one whose commit changed, so coverage actually measures (RUN_COVERAGE=true,
             // RUN_E2E=false, from the parameterizedCron trigger at the top of this file) — leaves
-            // it unset and used to walk straight into this stage, re-invoking s3_uploader for the
-            // very revision the day's push build had already handed over. A publish nobody asked
+            // it unset and used to walk straight into this stage, re-uploading the very revision
+            // the day's push build had already uploaded. A publish nobody asked
             // for, at 02:00, with nobody around to see it.
             //
             // Why TWO timer conditions and not one. Each covers exactly what the other misses:
@@ -887,24 +890,18 @@ pipeline {
             // somebody can see, whereas the repeated publish it replaces was invisible by
             // construction.
             //
-            // The guards matter most HERE, and the reason is written into the paragraph below:
-            // what an upload of an already-uploaded revision does could NOT be established from
-            // this repository, and the standing advice is to assume a nightly on the default
-            // branch DOES re-upload. An effect nobody can characterise, repeated 365 times a year
-            // for revisions the daytime build already handed over, is not something to leave
-            // running for want of the three conditions below. Uncertainty argues for not firing
-            // it, not for firing it anyway.
-            //
-            // What that upload actually does: s3_uploader is a freestyle job whose only build
-            // step clones wirenboard/wbfw-s3-uploader and runs s3-upload.sh, so the branch logic
-            // lives in a separate repository. Its UPLOAD_FROM_BRANCH parameter ("Upload results to
-            // S3 even if it is not master branch", default false, and this stage passes the
-            // build's own value) reads as though non-release branches are skipped, but whether
-            // 'main' counts as that release branch is exactly the part not verifiable here.
-            // What it cannot do is publish instrumented firmware: 'Build firmware' copies
-            // release/*.bin into result/ and archives them from there in its post { success }
-            // block, both long before the coverage stages rebuild with instrumentation, and what
-            // s3_uploader works from is this build's ARCHIVED artifacts.
+            // What the upload does: the uploadFwResults step of the fwci library takes
+            // result/*.bin from this workspace — the release binaries 'Build firmware' copied
+            // there — and puts each one into the firmware bucket under its signature as
+            // <version>.bin, latest.bin and latest.txt. On 'main' that happens on every build,
+            // into the 'main' channel, and overwrites the objects of the same version; on any
+            // other branch, pull requests included, only when the build was started with
+            // UPLOAD_FROM_BRANCH, into 'unstable/<branch>'. So a nightly on 'main' WOULD
+            // re-upload the revision the daytime build already published, 365 times a year,
+            // and the three conditions below are what stops it.
+            // What it cannot do is publish instrumented firmware: result/ is filled once, by
+            // 'Build firmware', long before the coverage stages rebuild with instrumentation,
+            // and no later stage writes there.
             //
             // The NIGHTLY_COVERAGE_SKIP conjunct can no longer be the deciding one, and is kept as
             // defence in depth rather than as a live reason. It is set only on a path that already
@@ -916,16 +913,10 @@ pipeline {
             // its own terms should the timer flag ever be narrowed.
             //
             // What that conjunct is about, on the day it is the one doing the work: a skipped
-            // nightly has no artifacts of its own. The uploader is a separate job that copies the
-            // archived artifacts of the build it is pointed at — hence
-            // copyArtifactPermission('/s3_uploader') in options at the top of this file, and hence
-            // the UPSTREAM_JOB_NAME/BUILD parameters passed below. It runs
-            // in its own workspace, possibly on another node, so this job's result/ directory is
-            // not what it reads. On a skipped nightly 'Build firmware' never runs, so its
-            // post { success } archiveArtifacts never runs either and the build ends with nothing
-            // archived at all; the uploader pointed at that build number would find nothing to
-            // copy and at best fail pointlessly. What it would NOT do is publish some earlier
-            // build's binaries — the build it is given is this one.
+            // nightly builds nothing of its own. The upload reads result/ in the workspace, and
+            // the workspace outlives builds: on a skipped nightly neither 'Clean' nor 'Build
+            // firmware' runs, so result/ still holds the binaries of whichever build used this
+            // workspace last, and an upload would publish those under this build's name.
             when {
                 allOf {
                     expression { env.NIGHTLY_COVERAGE_SKIP != 'true' && env.NIGHTLY_TIMER_BUILD != 'true' }
@@ -934,11 +925,9 @@ pipeline {
                 }
             }
             steps {
-                build job: 's3_uploader', parameters: [
-                    string(name: 'UPSTREAM_JOB_NAME', value: env.JOB_NAME),
-                    string(name: 'BUILD', value: env.BUILD_NUMBER),
-                    booleanParam(name: 'UPLOAD_FROM_BRANCH', value: params.UPLOAD_FROM_BRANCH)
-                ]
+                script {
+                    uploadFwResults(uploadFromBranch: params.UPLOAD_FROM_BRANCH)
+                }
             }
         }
     }
